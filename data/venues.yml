@@ -1,0 +1,182 @@
+# Venues used by the 2026 Eliteserien and Toppserien clubs.
+#
+# verified: false — assembled from web search plus general knowledge while the
+# sandbox egress proxy blocked Wikipedia and the stats sites. Capacities and
+# especially coordinates are approximate; correct them here and nothing else
+# needs to change. `python cli.py validate` checks what can be checked
+# mechanically (ids resolve, coordinates inside Norway, no duplicates).
+verified: false
+sources:
+  - "wikipedia:2026_Eliteserien (via web search snippets)"
+  - "wikipedia:2026_Toppserien (via web search snippets)"
+  - "wikipedia:List_of_Eliteserien_venues"
+
+venues:
+  - id: color_line_stadion
+    name: Color Line Stadion
+    city: Ålesund
+    lat: 62.4706
+    lon: 6.2431
+    capacity: 10778
+    surface: artificial
+
+  - id: aspmyra_stadion
+    name: Aspmyra Stadion
+    city: Bodø
+    lat: 67.2735
+    lon: 14.3969
+    capacity: 8270
+    surface: artificial
+
+  - id: brann_stadion
+    name: Brann Stadion
+    city: Bergen
+    lat: 60.3572
+    lon: 5.3487
+    capacity: 17317
+    surface: grass
+
+  - id: fredrikstad_stadion
+    name: Fredrikstad Stadion
+    city: Fredrikstad
+    lat: 59.2076
+    lon: 10.9298
+    capacity: 12560
+    surface: artificial
+
+  - id: briskeby_arena
+    name: Briskeby Arena
+    city: Hamar
+    lat: 60.7945
+    lon: 11.0680
+    capacity: 8068
+    surface: artificial
+
+  - id: kfum_arena
+    name: KFUM Arena
+    city: Oslo
+    lat: 59.8990
+    lon: 10.8180
+    capacity: 3000
+    surface: artificial
+
+  - id: kristiansund_stadion
+    name: Kristiansund Stadion
+    city: Kristiansund
+    lat: 63.1130
+    lon: 7.7400
+    capacity: 4444
+    surface: artificial
+
+  - id: araasen_stadion
+    name: Åråsen Stadion
+    city: Lillestrøm
+    lat: 59.9520
+    lon: 11.0500
+    capacity: 11500
+    surface: artificial
+
+  - id: aker_stadion
+    name: Aker Stadion
+    city: Molde
+    lat: 62.7378
+    lon: 7.1595
+    capacity: 11249
+    surface: grass
+
+  - id: lerkendal_stadion
+    name: Lerkendal Stadion
+    city: Trondheim
+    lat: 63.4126
+    lon: 10.4033
+    capacity: 21166
+    surface: grass
+
+  - id: jotun_arena
+    name: Jotun Arena
+    city: Sandefjord
+    lat: 59.1300
+    lon: 10.2200
+    capacity: 6582
+    surface: artificial
+
+  - id: sarpsborg_stadion
+    name: Sarpsborg Stadion
+    city: Sarpsborg
+    lat: 59.2830
+    lon: 11.1100
+    capacity: 7500
+    surface: artificial
+
+  - id: sor_arena
+    name: Sør Arena
+    city: Kristiansand
+    lat: 58.1500
+    lon: 8.0080
+    capacity: 14300
+    surface: grass
+
+  - id: romssa_arena
+    name: Romssa Arena
+    city: Tromsø
+    lat: 69.6490
+    lon: 18.9720
+    capacity: 6801
+    surface: artificial
+
+  - id: intility_arena
+    name: Intility Arena
+    city: Oslo
+    lat: 59.9130
+    lon: 10.7900
+    capacity: 16555
+    surface: artificial
+
+  - id: sr_bank_arena
+    name: SR-Bank Arena
+    city: Stavanger
+    lat: 58.9330
+    lon: 5.7300
+    capacity: 15900
+    surface: grass
+
+  # Toppserien-only venues
+  - id: haugesund_stadion
+    name: Haugesund Stadion
+    city: Haugesund
+    lat: 59.4130
+    lon: 5.2700
+    capacity: 8754
+    surface: artificial
+
+  - id: aka_arena
+    name: AKA Arena
+    city: Hønefoss
+    lat: 60.1670
+    lon: 10.2600
+    capacity: 4120
+    surface: artificial
+
+  - id: kringsjaa_kunstgress
+    name: Kringsjå Kunstgress
+    city: Oslo
+    lat: 59.9640
+    lon: 10.7350
+    capacity: 450
+    surface: artificial
+
+  - id: roa_kunstgress
+    name: Røa Kunstgress
+    city: Oslo
+    lat: 59.9440
+    lon: 10.6390
+    capacity: 450
+    surface: artificial
+
+  - id: nadderud_stadion
+    name: Nadderud Stadion
+    city: Bærum
+    lat: 59.9070
+    lon: 10.5760
+    capacity: 4938
+    surface: artificial

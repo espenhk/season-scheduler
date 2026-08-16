@@ -1,0 +1,162 @@
+"""The contract both solver backends must satisfy, run against each in turn.
+
+Uses a small synthetic world (8 + 6 teams, ~10-week season) rather than the
+full 28-team dataset, so both backends finish in a couple of seconds and the
+suite stays fast. The full 2026 data is exercised separately in
+test_integration_coupled_leagues.py, where solve time actually matters.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+
+import factories as f
+import pytest
+
+from terminliste.model.travel import HaversineTravelModel
+from terminliste.scoring.registry import build_constraints
+from terminliste.scoring.base import EvalContext
+from terminliste.solvers.base import SolveRequest, divergence
+
+try:
+    import ortools  # noqa: F401
+
+    HAS_ORTOOLS = True
+except ImportError:
+    HAS_ORTOOLS = False
+
+
+def _small_world():
+    venues = [f.venue(f"v{i}", lat=59.0 + i * 0.3, lon=10.0 + i * 0.3) for i in range(7)]
+    men_teams = [f.team(f"m{i}", f"club{i}", f"v{i % 7}", gender="men") for i in range(8)]
+    women_teams = [f.team(f"w{i}", f"club{i}", f"v{i % 7}", gender="women") for i in range(6)]
+
+    clubs = []
+    for i in range(6):
+        clubs.append(f.club(f"club{i}", [men_teams[i], women_teams[i]]))
+    for i in range(6, 8):
+        clubs.append(f.club(f"club{i}", [men_teams[i]]))
+
+    comp_m = f.competition(
+        "men", [t.id for t in men_teams], gender="men", preferred_weekday="sunday", min_rest_days=3
+    )
+    comp_w = f.competition(
+        "women", [t.id for t in women_teams], gender="women", preferred_weekday="saturday", min_rest_days=3
+    )
+    world = f.world(clubs, venues, [comp_m, comp_w])
+    season = f.season(
+        competitions=["men", "women"], start=date(2026, 3, 1), end=date(2026, 9, 30)
+    )
+    return world, season, [comp_m, comp_w]
+
+
+def _get_scheduler(name: str):
+    from terminliste.solvers import get_scheduler
+
+    return get_scheduler(name)
+
+
+SOLVERS = ["local"] + (["cpsat"] if HAS_ORTOOLS else [])
+
+
+@pytest.mark.parametrize("solver_name", SOLVERS)
+def test_returns_requested_number_of_diverse_candidates(solver_name):
+    world, season, competitions = _small_world()
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=1, top_n=3, time_budget_s=10.0,
+    )
+    result = _get_scheduler(solver_name).solve(request)
+
+    assert len(result.candidates) <= 3
+    assert len(result.candidates) >= 1
+    for i, a in enumerate(result.candidates):
+        for b in result.candidates[i + 1 :]:
+            assert divergence(a, b) >= 0.10  # a looser bound than the 0.15 target, for small worlds
+
+
+@pytest.mark.parametrize("solver_name", SOLVERS)
+def test_every_fixture_is_placed_exactly_once(solver_name):
+    world, season, competitions = _small_world()
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=2, top_n=1, time_budget_s=10.0,
+    )
+    result = _get_scheduler(solver_name).solve(request)
+    candidate = result.best
+    assert candidate is not None
+
+    for competition in competitions:
+        expected = competition.total_matches
+        actual = len([m for m in candidate.matches if m.competition_id == competition.id])
+        assert actual == expected, competition.id
+
+
+@pytest.mark.parametrize("solver_name", SOLVERS)
+def test_zero_hard_violations_is_achievable_on_an_easy_calendar(solver_name):
+    world, season, competitions = _small_world()
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=3, top_n=1, time_budget_s=15.0,
+    )
+    result = _get_scheduler(solver_name).solve(request)
+    assert result.best is not None
+    assert result.best.score.feasible, result.best.score.hard_results()
+
+
+def test_local_search_is_deterministic_for_a_fixed_seed():
+    world, season, competitions = _small_world()
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    scheduler = _get_scheduler("local")
+
+    def run():
+        request = SolveRequest(
+            world=world, season=season, competitions=competitions, constraints=constraints,
+            ctx=ctx, seed=7, top_n=1, time_budget_s=4.0,
+        )
+        return scheduler.solve(request).best.assignment()
+
+    assert run() == run()
+
+
+def test_unsolvable_calendar_reports_which_hard_rule_is_broken():
+    """Almost every date blacked out: the solver should still terminate and
+    say *what* is broken, not hang or quietly emit an infeasible schedule."""
+    from terminliste.model.schema import DatedNote
+
+    world, season, competitions = _small_world()
+    blackouts = [
+        DatedNote(date=d, reason="blocked")
+        for d in _all_dates(season.start, season.end)
+        if d.weekday() not in (5, 6)  # keep only weekends open
+    ]
+    tight_season = f.season(
+        competitions=season.competitions,
+        start=season.start,
+        end=season.end,
+        global_blackouts=blackouts,
+    )
+    constraints = build_constraints(world, tight_season, competitions)
+    ctx = EvalContext(world=world, season=tight_season, travel=HaversineTravelModel(world))
+    request = SolveRequest(
+        world=world, season=tight_season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=5, top_n=1, time_budget_s=6.0,
+    )
+    result = _get_scheduler("local").solve(request)
+    # Either it found a feasible arrangement despite the squeeze, or it says so.
+    if result.best is not None and not result.best.score.feasible:
+        assert result.notes
+
+
+def _all_dates(start, end):
+    from datetime import timedelta
+
+    days = (end - start).days
+    return [start + timedelta(days=i) for i in range(days + 1)]

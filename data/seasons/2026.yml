@@ -1,0 +1,55 @@
+id: 2026
+year: 2026
+
+# The Norwegian season runs from spring thaw to early winter. 30 Eliteserien
+# rounds have to fit inside this window with at least 3 days between a team's
+# matches, which is what makes the calendar tight rather than trivial.
+start: 2026-03-28
+end: 2026-12-06
+
+competitions:
+  - eliteserien_2026
+  - toppserien_2026
+
+# Dates on which nobody plays, in any competition.
+global_blackouts:
+  - {date: 2026-04-03, reason: "Langfredag (Good Friday)"}
+  - {date: 2026-04-05, reason: "Første påskedag (Easter Sunday)"}
+  - {date: 2026-05-17, reason: "Grunnlovsdagen — national day, no matches"}
+  - {date: 2026-06-23, reason: "Sankthansaften"}
+  - {date: 2026-12-24, reason: "Julaften"}
+
+# Dates that are legal but discouraged; scheduling here costs
+# `soft_venue_preference` points rather than being rejected outright.
+discouraged_dates:
+  - {date: 2026-07-04, reason: "Peak summer holiday — low attendance"}
+  - {date: 2026-07-11, reason: "Peak summer holiday — low attendance"}
+  - {date: 2026-07-18, reason: "Peak summer holiday — low attendance"}
+
+# Per-venue unavailability: concerts, athletics meets, ground works.
+venue_blackouts:
+  - {venue: intility_arena, date: 2026-06-13, reason: "Concert"}
+  - {venue: intility_arena, date: 2026-06-14, reason: "Concert (teardown)"}
+  - {venue: lerkendal_stadion, date: 2026-07-25, reason: "Concert"}
+  - {venue: brann_stadion, date: 2026-08-15, reason: "Concert"}
+  - {venue: araasen_stadion, date: 2026-05-30, reason: "Ground works"}
+
+# Dates that must carry a match, with a named team at home.
+#
+# May 16 is the eve of the national day: the big clubs want a home game with
+# the city already full. `hard: true` means the solver must satisfy it; flip to
+# false to demote it to a scored preference instead.
+fixed_requirements:
+  - id: may16_valerenga
+    date: 2026-05-16
+    home_team: valerenga_m
+    competition: eliteserien_2026
+    hard: true
+    reason: "May 16 — Vålerenga at home in Oslo on the eve of the national day"
+
+  - id: may16_rosenborg_w
+    date: 2026-05-16
+    home_team: rosenborg_w
+    competition: toppserien_2026
+    hard: true
+    reason: "May 16 — Rosenborg women at home at Lerkendal"

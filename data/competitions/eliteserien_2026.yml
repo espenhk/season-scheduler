@@ -1,0 +1,57 @@
+id: eliteserien_2026
+name: Eliteserien
+season: 2026
+gender: men
+format: league
+
+# Double league: everyone meets twice, once home and once away. The second leg
+# is the mirror of the first, so all first meetings are complete before any
+# second meeting starts. Set to 1 for a single league; the round generator
+# handles any value.
+rounds_per_pairing: 2
+
+# 16 teams -> 15 rounds per leg -> 30 rounds, 240 matches.
+team_count: 16
+teams:
+  - aalesund_m
+  - bodo_glimt_m
+  - brann_m
+  - fredrikstad_m
+  - hamkam_m
+  - kfum_oslo_m
+  - kristiansund_m
+  - lillestrom_m
+  - molde_m
+  - rosenborg_m
+  - sandefjord_m
+  - sarpsborg08_m
+  - start_m
+  - tromso_m
+  - valerenga_m
+  - viking_m
+
+# Eliteserien wants the bulk of its matches on Sunday.
+preferred_weekday: sunday
+
+# Hard rule parameters.
+min_rest_days: 3
+
+# How far an individual match may float from its round's anchor date. A ±3 day
+# window turns a round into a Friday-to-Monday weekend, which is the freedom
+# the solver needs to avoid venue clashes and chase back-to-back home days.
+match_window_days: 3
+
+# Soft-constraint weights. Positive-weighted constraints award points, negative
+# ones deduct them; the report ranks by the resulting signed contribution.
+# Tuning the schedule is an edit here, not a code change.
+weights:
+  preferred_weekday: 4.0
+  consecutive_home_days: 25.0
+  consecutive_away_days: 15.0
+  home_away_breaks: 8.0
+  home_away_balance: 6.0
+  rest_comfort: 3.0
+  soft_venue_preference: 5.0
+
+# Rest beyond the hard minimum that we would like every team to get.
+comfortable_rest_days: 6

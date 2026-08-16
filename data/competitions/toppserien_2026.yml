@@ -1,0 +1,42 @@
+id: toppserien_2026
+name: Toppserien
+season: 2026
+gender: women
+format: league
+
+rounds_per_pairing: 2
+
+# 12 teams -> 11 rounds per leg -> 22 rounds, 132 matches.
+team_count: 12
+teams:
+  - aalesund_w
+  - bodo_glimt_w
+  - brann_w
+  - haugesund_w
+  - honefoss_w
+  - lsk_kvinner_w
+  - lyn_w
+  - molde_w
+  - roa_w
+  - rosenborg_w
+  - stabak_w
+  - valerenga_w
+
+# Saturday, deliberately the day before Eliteserien's Sunday: it makes the
+# back-to-back home weekend the natural outcome for the six dual clubs rather
+# than something the solver has to fight the weekday preference to reach.
+preferred_weekday: saturday
+
+min_rest_days: 3
+match_window_days: 3
+
+weights:
+  preferred_weekday: 4.0
+  consecutive_home_days: 25.0
+  consecutive_away_days: 15.0
+  home_away_breaks: 8.0
+  home_away_balance: 6.0
+  rest_comfort: 3.0
+  soft_venue_preference: 5.0
+
+comfortable_rest_days: 6

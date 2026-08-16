@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }}</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1c1c1a;
+    --muted: #6b6b66;
+    --line: #e0e0da;
+    --good: #1e8449;
+    --bad: #c0392b;
+    --accent: #2471a3;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 20px 80px; }
+  header h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.01em; }
+  header .sub { color: var(--muted); font-size: 14px; }
+  .notes {
+    margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid var(--bad);
+    background: #fdf0ee; font-size: 14px;
+  }
+  .warnings {
+    margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid #b9770e;
+    background: #fdf6ea; font-size: 14px;
+  }
+  .warnings div { margin: 2px 0; }
+  .hardbox {
+    margin-top: 22px; padding: 16px 18px; border-radius: 8px;
+    border: 1px solid #f2c6c0; background: #fdf4f3;
+  }
+  .hardbox h3 { margin: 0 0 10px; font-size: 14px; color: var(--bad); text-transform: uppercase; letter-spacing: 0.05em; }
+  .hardbox .item { border-left-color: var(--bad); }
+
+  /* -- option tabs -- */
+  .tabs { display: flex; gap: 6px; margin: 28px 0 0; flex-wrap: wrap; }
+  .tab {
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    padding: 9px 16px; border-radius: 7px 7px 0 0; cursor: pointer;
+    font-size: 14px; font-weight: 600; border-bottom: none;
+  }
+  .tab .score { color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .tab[aria-selected="true"] { background: var(--ink); color: #fff; }
+  .tab[aria-selected="true"] .score { color: #c9c9c4; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 0 8px 8px 8px; padding: 24px;
+  }
+  .panel[hidden] { display: none; }
+
+  /* -- score header -- */
+  .scoreline { display: flex; align-items: baseline; gap: 20px; flex-wrap: wrap; }
+  .total { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; }
+  .total small { font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+  .badge {
+    font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 20px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .badge.ok { background: #e4f3ea; color: var(--good); }
+  .badge.fail { background: #fbe6e3; color: var(--bad); }
+
+  .headlines { display: flex; gap: 28px; margin: 20px 0 4px; flex-wrap: wrap; }
+  .headline .v { font-size: 24px; font-weight: 700; }
+  .headline .l { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+  /* -- upsides / problems -- */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 26px; }
+  @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+  .col h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 10px; color: var(--muted); }
+  .item { border-left: 3px solid var(--line); padding: 8px 0 8px 12px; margin-bottom: 10px; }
+  .item.up { border-left-color: var(--good); }
+  .item.down { border-left-color: var(--bad); }
+  .item .top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .item .name { font-weight: 600; font-size: 14px; }
+  .item .delta { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; white-space: nowrap; }
+  .up .delta { color: var(--good); }
+  .down .delta { color: var(--bad); }
+  .item .desc { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .item ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: #45453f; }
+  .item li { margin: 2px 0; }
+  .item .more { color: var(--muted); font-size: 12px; font-style: italic; }
+
+  /* -- full breakdown table -- */
+  details { margin-top: 26px; }
+  summary { cursor: pointer; font-weight: 600; font-size: 14px; padding: 6px 0; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .kind { font-size: 11px; padding: 2px 7px; border-radius: 4px; background: #eeeee9; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .kind.hard { background: #eef4fa; color: var(--accent); }
+  tr.violated td { background: #fdf4f3; }
+
+  /* -- calendar -- */
+  .cal-wrap { overflow-x: auto; }
+  .comp { margin-top: 30px; }
+  .comp h3 { font-size: 16px; margin: 0 0 2px; }
+  .comp .meta { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .round { border-top: 1px solid var(--line); padding: 10px 0; display: grid; grid-template-columns: 130px 1fr; gap: 14px; }
+  .round .rlabel { font-size: 12px; color: var(--muted); }
+  .round .rlabel b { display: block; color: var(--ink); font-size: 14px; }
+  .fixtures { display: flex; flex-wrap: wrap; gap: 6px; }
+  .fx {
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px;
+    font-size: 12.5px; background: #fcfcfb; white-space: nowrap;
+  }
+  .fx .d { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+  .fx .h { font-weight: 600; }
+  .fx.paired { border-color: var(--good); background: #f1f9f4; }
+  .fx .star { color: var(--good); font-weight: 700; margin-left: 5px; }
+  .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin: 14px 0 0; align-items: center; }
+  footer { margin-top: 40px; color: var(--muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>{{ title }}</h1>
+  <div class="sub">
+    {{ season.start.strftime('%d %B %Y') }} – {{ season.end.strftime('%d %B %Y') }}
+    · solver <b>{{ result.solver }}</b>
+    {% if result.iterations %}· {{ '{:,}'.format(result.iterations) }} iterations{% endif %}
+    · {{ '%.1f'|format(result.elapsed_s) }}s
+  </div>
+</header>
+
+{% if result.notes %}
+<div class="notes">
+  {% for note in result.notes %}<div>{{ note }}</div>{% endfor %}
+</div>
+{% endif %}
+
+{% if warnings %}
+<div class="warnings">
+  <div style="font-weight:700;margin-bottom:4px">Coverage notes</div>
+  {% for warning in warnings %}<div>⚠ {{ warning }}</div>{% endfor %}
+</div>
+{% endif %}
+
+<div class="tabs" role="tablist">
+  {% for option in options %}
+  <button class="tab" role="tab" data-panel="panel-{{ loop.index }}"
+          aria-selected="{{ 'true' if loop.first else 'false' }}">
+    {{ option.label }}<span class="score">{{ '%.0f'|format(option.soft_total) }}</span>
+  </button>
+  {% endfor %}
+</div>
+
+{% for option in options %}
+<section class="panel" id="panel-{{ loop.index }}" role="tabpanel" {% if not loop.first %}hidden{% endif %}>
+
+  <div class="scoreline">
+    <div class="total">{{ '%.1f'|format(option.soft_total) }}<small>schedule score</small></div>
+    {% if option.feasible %}
+      <span class="badge ok">feasible · 0 hard violations</span>
+    {% else %}
+      <span class="badge fail">{{ option.hard_violations }} hard violation{{ '' if option.hard_violations == 1 else 's' }}</span>
+    {% endif %}
+  </div>
+
+  <div class="headlines">
+    {% for headline in option.headlines %}
+    <div class="headline">
+      <div class="v">{{ headline.value }}</div>
+      <div class="l">{{ headline.label }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if option.hard_violation_detail %}
+  <div class="hardbox">
+    <h3>Broken hard rules — this schedule is not usable as-is</h3>
+    {% for row in option.hard_violation_detail %}
+    <div class="item down">
+      <div class="top">
+        <span class="name">{{ row.id.replace('_', ' ') }}</span>
+        <span class="delta">{{ row.count }} violation{{ '' if row.count == 1 else 's' }}</span>
+      </div>
+      <div class="desc">{{ row.description }}</div>
+      {% if row.examples %}
+      <ul>{% for example in row.examples %}<li>{{ example }}</li>{% endfor %}</ul>
+      {% if row.more %}<div class="more">…and {{ row.more }} more</div>{% endif %}
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="cols">
+    <div class="col">
+      <h3>{{ 'Every upside' if option.full else 'Biggest upsides' }}</h3>
+      {% for row in option.upsides %}
+      <div class="item up">
+        <div class="top">
+          <span class="name">{{ row.id.replace('_', ' ') }}</span>
+          <span class="delta">+{{ '%.0f'|format(row.total) }}</span>
+        </div>
+        <div class="desc">{{ row.description }} ({{ row.count }})</div>
+        {% if row.examples %}
+        <ul>{% for example in row.examples %}<li>{{ example }}</li>{% endfor %}</ul>
+        {% if row.more %}<div class="more">…and {{ row.more }} more</div>{% endif %}
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="desc">Nothing scored positively.</div>
+      {% endfor %}
+    </div>
+
+    <div class="col">
+      <h3>{{ 'Every problem (including the hard rules above)' if option.full else 'Biggest problems' }}</h3>
+      {% for row in option.problems %}
+      <div class="item down">
+        <div class="top">
+          <span class="name">{{ row.id.replace('_', ' ') }}</span>
+          <span class="delta">{{ '%.0f'|format(row.total) }}</span>
+        </div>
+        <div class="desc">{{ row.description }} ({{ row.count }})</div>
+        {% if row.examples %}
+        <ul>{% for example in row.examples %}<li>{{ example }}</li>{% endfor %}</ul>
+        {% if row.more %}<div class="more">…and {{ row.more }} more</div>{% endif %}
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="desc">Nothing scored negatively.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <details>
+    <summary>Full score breakdown — every rule</summary>
+    <table>
+      <thead>
+        <tr><th>Rule</th><th>Type</th><th class="num">Contribution</th><th class="num">Events</th><th>Examples</th></tr>
+      </thead>
+      <tbody>
+      {% for row in option.breakdown %}
+        <tr {% if row.kind == 'hard' and row.count %}class="violated"{% endif %}>
+          <td>
+            <b>{{ row.id.replace('_', ' ') }}</b><br>
+            <span style="color:var(--muted);font-size:13px">{{ row.description }}</span>
+          </td>
+          <td><span class="kind {{ row.kind }}">{{ row.kind }}</span></td>
+          <td class="num">{{ '%+.1f'|format(row.total) if row.total else '—' }}</td>
+          <td class="num">{{ row.count }}</td>
+          <td>
+            {% if row.examples %}
+            <ul style="margin:0;padding-left:16px">
+              {% for example in row.examples %}<li>{{ example }}</li>{% endfor %}
+            </ul>
+            {% if row.more %}<span class="more">…and {{ row.more }} more</span>{% endif %}
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </details>
+
+  <div class="cal-wrap">
+  {% for competition in option.competitions %}
+    <div class="comp">
+      <h3>{{ competition.name }}</h3>
+      <div class="meta">
+        {{ competition.match_count }} matches over {{ competition.rounds|length }} rounds ·
+        prefers {{ competition.preferred_weekday }}
+      </div>
+      {% for round in competition.rounds %}
+      <div class="round">
+        <div class="rlabel">
+          <b>Round {{ round.index }}</b>
+          {{ round.dates }} · leg {{ round.leg }}
+        </div>
+        <div class="fixtures">
+          {% for match in round.matches %}
+          <span class="fx {% if match.paired %}paired{% endif %}"
+                title="{{ match.venue }}">
+            <span class="d">{{ match.weekday }} {{ match.date.strftime('%d/%m') }}</span>
+            {% if match.color %}<span class="swatch" style="background:{{ match.color }}"></span>{% endif %}
+            <span class="h">{{ match.home }}</span>
+            <span style="color:var(--muted)"> v </span>{{ match.away }}
+            {% if match.paired %}<span class="star" title="back-to-back home day with the club's other team">◆</span>{% endif %}
+          </span>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  {% endfor %}
+  </div>
+
+  <div class="legend">
+    <span><span class="star">◆</span> back-to-back home day for a dual club</span>
+    {% for club in dual_clubs %}
+    <span><span class="swatch" style="background:{{ club_colors[club.id] }}"></span>{{ club.name }}</span>
+    {% endfor %}
+  </div>
+
+</section>
+{% endfor %}
+
+<footer>
+  Generated by terminliste. Club, venue and league data is assembled from public sources
+  and marked <code>verified: false</code> — check <code>data/</code> before using this for anything real.
+</footer>
+
+</div>
+
+<script>
+  document.querySelectorAll('.tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      document.querySelectorAll('.tab').forEach(function (other) {
+        other.setAttribute('aria-selected', String(other === tab));
+      });
+      document.querySelectorAll('.panel').forEach(function (panel) {
+        panel.hidden = panel.id !== tab.dataset.panel;
+      });
+    });
+  });
+</script>
+</body>
+</html>

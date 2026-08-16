@@ -1,0 +1,326 @@
+"""Hard constraints, tested at their boundary rather than the happy path.
+
+Each rule gets one test that it fires exactly at the edge (not one day inside
+it) and one test that a clean schedule scores it at zero — a constraint that
+always fires quietly, even on a perfectly good schedule, is the easiest kind
+of bug to ship undetected.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+
+import factories as f
+from terminliste.scoring.base import EvalContext, evaluate
+from terminliste.scoring.hard import (
+    BlackoutDates,
+    ClubHomeClash,
+    FixedDateRequirement,
+    LegOrdering,
+    MinRestDays,
+    OneMatchPerTeamPerDay,
+    VenueDoubleBooking,
+)
+
+
+class _StubTravel:
+    def hours(self, a, b):
+        return 1.0
+
+
+def _ctx(world, season):
+    return EvalContext(world=world, season=season, travel=_StubTravel(), detail=True)
+
+
+# -- min_rest_days -----------------------------------------------------------
+
+
+def test_min_rest_fires_at_a_two_day_gap_but_not_three():
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v2")
+    v2 = f.venue("v2")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp = f.competition("comp", ["t1", "t2"], min_rest_days=3)
+    world = f.world(clubs, [v, v2], [comp])
+    season = f.season(competitions=["comp"])
+
+    constraint = MinRestDays(competitions=[comp])
+
+    # Exactly the minimum: 3 days apart -> no violation.
+    ok_matches = [
+        f.match("comp", "t1", "t2", date(2026, 6, 1), "v1", round_index=0),
+        f.match("comp", "t2", "t1", date(2026, 6, 4), "v2", round_index=1),
+    ]
+    result = evaluate(ok_matches, [constraint], _ctx(world, season))
+    assert result.hard_violations == 0
+
+    # One day short: 2 days apart -> violation.
+    bad_matches = [
+        f.match("comp", "t1", "t2", date(2026, 6, 1), "v1", round_index=0),
+        f.match("comp", "t2", "t1", date(2026, 6, 3), "v2", round_index=1),
+    ]
+    result = evaluate(bad_matches, [constraint], _ctx(world, season))
+    # Counted once per team whose own sequence has the short gap — both teams'
+    # sequences see it here, since it's the same two matches for both.
+    assert result.hard_violations == 2
+
+
+def test_min_rest_fires_on_same_day_double_booking():
+    v = f.venue("v1")
+    v2 = f.venue("v2")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v2")
+    t3 = f.team("t3", "c3", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2]), f.club("c3", [t3])]
+    comp = f.competition("comp", ["t1", "t2", "t3"], min_rest_days=3)
+    world = f.world(clubs, [v, v2], [comp])
+    season = f.season(competitions=["comp"])
+
+    matches = [
+        f.match("comp", "t1", "t2", date(2026, 6, 1), "v1", round_index=0),
+        f.match("comp", "t1", "t3", date(2026, 6, 1), "v1", round_index=1),
+    ]
+    result = evaluate(matches, [MinRestDays(competitions=[comp])], _ctx(world, season))
+    assert result.hard_violations >= 1
+
+
+# -- blackout_dates ------------------------------------------------------
+
+
+def test_blackout_dates_fires_only_on_the_blacked_out_date():
+    from terminliste.model.schema import DatedNote
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp = f.competition("comp", ["t1", "t2"])
+    world = f.world(clubs, [v], [comp])
+    blackout_day = date(2026, 5, 17)
+    season = f.season(
+        competitions=["comp"], global_blackouts=[DatedNote(date=blackout_day, reason="national day")]
+    )
+
+    on_blackout = [f.match("comp", "t1", "t2", blackout_day, "v1")]
+    result = evaluate(on_blackout, [BlackoutDates()], _ctx(world, season))
+    assert result.hard_violations == 1
+
+    day_after = [f.match("comp", "t1", "t2", blackout_day.replace(day=18), "v1")]
+    result = evaluate(day_after, [BlackoutDates()], _ctx(world, season))
+    assert result.hard_violations == 0
+
+
+# -- venue_double_booking -------------------------------------------------
+
+
+def test_venue_double_booking_fires_when_two_matches_share_a_venue_and_date():
+    v1 = f.venue("v1")
+    teams = [f.team(f"t{i}", f"c{i}", "v1") for i in range(4)]
+    clubs = [f.club(f"c{i}", [teams[i]]) for i in range(4)]
+    comp = f.competition("comp", [t.id for t in teams])
+    world = f.world(clubs, [v1], [comp])
+    season = f.season(competitions=["comp"])
+
+    same_day = [
+        f.match("comp", "t0", "t1", date(2026, 6, 1), "v1", round_index=0),
+        f.match("comp", "t2", "t3", date(2026, 6, 1), "v1", round_index=0),
+    ]
+    result = evaluate(same_day, [VenueDoubleBooking()], _ctx(world, season))
+    assert result.hard_violations == 1
+
+    different_days = [
+        f.match("comp", "t0", "t1", date(2026, 6, 1), "v1", round_index=0),
+        f.match("comp", "t2", "t3", date(2026, 6, 2), "v1", round_index=1),
+    ]
+    result = evaluate(different_days, [VenueDoubleBooking()], _ctx(world, season))
+    assert result.hard_violations == 0
+
+
+# -- club_home_clash -------------------------------------------------------
+
+
+def test_club_home_clash_fires_when_a_clubs_two_teams_are_both_home_at_different_venues():
+    v1, v2 = f.venue("v1"), f.venue("v2")
+    men = f.team("dual_m", "dual", "v1", gender="men")
+    women = f.team("dual_w", "dual", "v2", gender="women")
+    other_m = f.team("other_m", "other", "v1", gender="men")
+    other_w = f.team("other_w", "other2", "v2", gender="women")
+    clubs = [
+        f.club("dual", [men, women]),
+        f.club("other", [other_m]),
+        f.club("other2", [other_w]),
+    ]
+    comp_m = f.competition("elite", ["dual_m", "other_m"], gender="men")
+    comp_w = f.competition("topp", ["dual_w", "other_w"], gender="women")
+    world = f.world(clubs, [v1, v2], [comp_m, comp_w])
+    season = f.season(competitions=["elite", "topp"])
+
+    both_home = [
+        f.match("elite", "dual_m", "other_m", date(2026, 6, 1), "v1"),
+        f.match("topp", "dual_w", "other_w", date(2026, 6, 1), "v2"),
+    ]
+    result = evaluate(both_home, [ClubHomeClash()], _ctx(world, season))
+    assert result.hard_violations == 1
+
+    # One away instead -> no clash.
+    one_away = [
+        f.match("elite", "dual_m", "other_m", date(2026, 6, 1), "v1"),
+        f.match("topp", "other_w", "dual_w", date(2026, 6, 1), "v2"),
+    ]
+    result = evaluate(one_away, [ClubHomeClash()], _ctx(world, season))
+    assert result.hard_violations == 0
+
+
+def test_club_home_clash_does_not_double_count_a_shared_venue_case():
+    """Same club, same venue, same day is venue_double_booking's job — this
+    rule should stay silent so the report doesn't charge the same problem
+    twice under two different names."""
+    v1 = f.venue("v1")
+    t1 = f.team("t1", "dual", "v1", gender="men")
+    t2 = f.team("t2", "dual", "v1", gender="women")
+    clubs = [f.club("dual", [t1, t2])]
+    comp_m = f.competition("elite", ["t1"], gender="men")
+    comp_w = f.competition("topp", ["t2"], gender="women")
+    world = f.world(clubs, [v1], [comp_m, comp_w])
+    season = f.season(competitions=["elite", "topp"])
+
+    matches = [
+        f.match("elite", "t1", "t1", date(2026, 6, 1), "v1"),  # nonsense pairing, venue only matters
+    ]
+    result = evaluate(matches, [ClubHomeClash()], _ctx(world, season))
+    assert result.hard_violations == 0
+
+
+# -- leg_ordering -----------------------------------------------------------
+
+
+def test_leg_ordering_fires_when_a_second_leg_match_starts_too_early():
+    v1 = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp = f.competition("comp", ["t1", "t2"], rounds_per_pairing=2)
+    world = f.world(clubs, [v1], [comp])
+    season = f.season(competitions=["comp"])
+
+    bad = [
+        f.match("comp", "t1", "t2", date(2026, 6, 10), "v1", leg=1, round_index=0),
+        f.match("comp", "t2", "t1", date(2026, 6, 5), "v1", leg=2, round_index=1),
+    ]
+    result = evaluate(bad, [LegOrdering()], _ctx(world, season))
+    assert result.hard_violations == 1
+
+    good = [
+        f.match("comp", "t1", "t2", date(2026, 6, 5), "v1", leg=1, round_index=0),
+        f.match("comp", "t2", "t1", date(2026, 6, 10), "v1", leg=2, round_index=1),
+    ]
+    result = evaluate(good, [LegOrdering()], _ctx(world, season))
+    assert result.hard_violations == 0
+
+
+def test_leg_ordering_fires_on_a_same_day_tie():
+    """Date-only precision: a leg-2 match landing on the same day the last
+    leg-1 match was played is not 'first meeting precedes second meeting' —
+    it should count as a violation, not be waved through as a tie."""
+    v1 = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v1")
+    t3 = f.team("t3", "c3", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2]), f.club("c3", [t3])]
+    comp = f.competition("comp", ["t1", "t2", "t3"], rounds_per_pairing=2)
+    world = f.world(clubs, [v1], [comp])
+    season = f.season(competitions=["comp"])
+
+    same_day = [
+        f.match("comp", "t1", "t2", date(2026, 6, 10), "v1", leg=1, round_index=0),
+        f.match("comp", "t3", "t1", date(2026, 6, 10), "v1", leg=2, round_index=1),
+    ]
+    result = evaluate(same_day, [LegOrdering()], _ctx(world, season))
+    assert result.hard_violations == 1
+
+    one_day_later = [
+        f.match("comp", "t1", "t2", date(2026, 6, 10), "v1", leg=1, round_index=0),
+        f.match("comp", "t3", "t1", date(2026, 6, 11), "v1", leg=2, round_index=1),
+    ]
+    result = evaluate(one_day_later, [LegOrdering()], _ctx(world, season))
+    assert result.hard_violations == 0
+
+
+# -- fixed_requirement --------------------------------------------------
+
+
+def test_fixed_requirement_fires_when_the_named_team_is_not_home():
+    from terminliste.model.schema import FixedRequirement
+
+    v1, v2 = f.venue("v1"), f.venue("v2")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v2")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp = f.competition("comp", ["t1", "t2"])
+    world = f.world(clubs, [v1, v2], [comp])
+    requirement = FixedRequirement(
+        id="req1", date=date(2026, 5, 16), home_team="t1", competition="comp", hard=True
+    )
+    season = f.season(competitions=["comp"], fixed_requirements=[requirement])
+    constraint = FixedDateRequirement(requirements=[requirement])
+
+    satisfied = [f.match("comp", "t1", "t2", date(2026, 5, 16), "v1")]
+    assert evaluate(satisfied, [constraint], _ctx(world, season)).hard_violations == 0
+
+    wrong_team_home = [f.match("comp", "t2", "t1", date(2026, 5, 16), "v2")]
+    assert evaluate(wrong_team_home, [constraint], _ctx(world, season)).hard_violations == 1
+
+    no_match_at_all = [f.match("comp", "t1", "t2", date(2026, 5, 20), "v1")]
+    assert evaluate(no_match_at_all, [constraint], _ctx(world, season)).hard_violations == 1
+
+
+# -- one_match_per_team_per_day ------------------------------------------
+
+
+def test_one_match_per_team_per_day():
+    v1, v2 = f.venue("v1"), f.venue("v2")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v2")
+    t3 = f.team("t3", "c3", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2]), f.club("c3", [t3])]
+    comp = f.competition("comp", ["t1", "t2", "t3"])
+    world = f.world(clubs, [v1, v2], [comp])
+    season = f.season(competitions=["comp"])
+
+    matches = [
+        f.match("comp", "t1", "t2", date(2026, 6, 1), "v1", round_index=0),
+        f.match("comp", "t3", "t1", date(2026, 6, 1), "v1", round_index=1),
+    ]
+    result = evaluate(matches, [OneMatchPerTeamPerDay()], _ctx(world, season))
+    assert result.hard_violations == 1
+
+
+# -- clean schedule: every hard constraint reports zero ----------------------
+
+
+def test_all_hard_constraints_are_silent_on_a_clean_schedule():
+    v1, v2 = f.venue("v1"), f.venue("v2")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v2")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp = f.competition("comp", ["t1", "t2"], min_rest_days=3, rounds_per_pairing=2)
+    world = f.world(clubs, [v1, v2], [comp])
+    season = f.season(competitions=["comp"])
+
+    clean = [
+        f.match("comp", "t1", "t2", date(2026, 6, 1), "v1", leg=1, round_index=0),
+        f.match("comp", "t2", "t1", date(2026, 6, 8), "v2", leg=2, round_index=1),
+    ]
+    constraints = [
+        OneMatchPerTeamPerDay(),
+        MinRestDays(competitions=[comp]),
+        BlackoutDates(),
+        VenueDoubleBooking(),
+        ClubHomeClash(),
+        LegOrdering(),
+    ]
+    result = evaluate(clean, constraints, _ctx(world, season))
+    assert result.hard_violations == 0
+    for constraint_result in result.hard_results():
+        assert constraint_result.count == 0, constraint_result.constraint_id

@@ -1,0 +1,180 @@
+# Clubs and the teams they field.
+#
+# A club owns teams; a team has a gender, a level, and a home venue. Levels
+# beyond `senior` (second teams, youth) are already expressible — adding a
+# reserve side is a data edit here, not a code change.
+#
+# Six clubs field both a men's and a women's senior team (Aalesund, Bodø/Glimt,
+# Brann, Molde, Rosenborg, Vålerenga). Those pairs drive the club-level rules:
+# never both home on the same day, but back-to-back home days are a bonus.
+#
+# Lillestrøm SK and LSK Kvinner are separate clubs that share Åråsen Stadion —
+# the venue rule binds them even though the club rule does not.
+verified: false
+sources:
+  - "wikipedia:2026_Eliteserien (via web search snippets)"
+  - "wikipedia:2026_Toppserien (via web search snippets)"
+
+clubs:
+  # -- clubs with both a men's and a women's senior team ---------------------
+  - id: aalesund
+    name: Aalesunds FK
+    short_name: AaFK
+    city: Ålesund
+    teams:
+      - {id: aalesund_m, gender: men, level: senior, home_venue: color_line_stadion}
+      - {id: aalesund_w, gender: women, level: senior, home_venue: color_line_stadion}
+
+  - id: bodo_glimt
+    name: FK Bodø/Glimt
+    short_name: BGL
+    city: Bodø
+    teams:
+      - {id: bodo_glimt_m, gender: men, level: senior, home_venue: aspmyra_stadion}
+      - {id: bodo_glimt_w, gender: women, level: senior, home_venue: aspmyra_stadion}
+
+  - id: brann
+    name: SK Brann
+    short_name: BRA
+    city: Bergen
+    teams:
+      - {id: brann_m, gender: men, level: senior, home_venue: brann_stadion}
+      - {id: brann_w, gender: women, level: senior, home_venue: brann_stadion}
+
+  - id: molde
+    name: Molde FK
+    short_name: MOL
+    city: Molde
+    teams:
+      - {id: molde_m, gender: men, level: senior, home_venue: aker_stadion}
+      - {id: molde_w, gender: women, level: senior, home_venue: aker_stadion}
+
+  - id: rosenborg
+    name: Rosenborg BK
+    short_name: RBK
+    city: Trondheim
+    teams:
+      - {id: rosenborg_m, gender: men, level: senior, home_venue: lerkendal_stadion}
+      - {id: rosenborg_w, gender: women, level: senior, home_venue: lerkendal_stadion}
+
+  - id: valerenga
+    name: Vålerenga Fotball
+    short_name: VIF
+    city: Oslo
+    teams:
+      - {id: valerenga_m, gender: men, level: senior, home_venue: intility_arena}
+      - {id: valerenga_w, gender: women, level: senior, home_venue: intility_arena}
+
+  # -- Eliteserien-only clubs ------------------------------------------------
+  - id: fredrikstad
+    name: Fredrikstad FK
+    short_name: FFK
+    city: Fredrikstad
+    teams:
+      - {id: fredrikstad_m, gender: men, level: senior, home_venue: fredrikstad_stadion}
+
+  - id: hamkam
+    name: Hamarkameratene
+    short_name: HAM
+    city: Hamar
+    teams:
+      - {id: hamkam_m, gender: men, level: senior, home_venue: briskeby_arena}
+
+  - id: kfum_oslo
+    name: KFUM Oslo
+    short_name: KFU
+    city: Oslo
+    teams:
+      - {id: kfum_oslo_m, gender: men, level: senior, home_venue: kfum_arena}
+
+  - id: kristiansund
+    name: Kristiansund BK
+    short_name: KBK
+    city: Kristiansund
+    teams:
+      - {id: kristiansund_m, gender: men, level: senior, home_venue: kristiansund_stadion}
+
+  - id: lillestrom
+    name: Lillestrøm SK
+    short_name: LSK
+    city: Lillestrøm
+    teams:
+      - {id: lillestrom_m, gender: men, level: senior, home_venue: araasen_stadion}
+
+  - id: sandefjord
+    name: Sandefjord Fotball
+    short_name: SAN
+    city: Sandefjord
+    teams:
+      - {id: sandefjord_m, gender: men, level: senior, home_venue: jotun_arena}
+
+  - id: sarpsborg08
+    name: Sarpsborg 08
+    short_name: SAR
+    city: Sarpsborg
+    teams:
+      - {id: sarpsborg08_m, gender: men, level: senior, home_venue: sarpsborg_stadion}
+
+  - id: start
+    name: IK Start
+    short_name: STA
+    city: Kristiansand
+    teams:
+      - {id: start_m, gender: men, level: senior, home_venue: sor_arena}
+
+  - id: tromso
+    name: Tromsø IL
+    short_name: TIL
+    city: Tromsø
+    teams:
+      - {id: tromso_m, gender: men, level: senior, home_venue: romssa_arena}
+
+  - id: viking
+    name: Viking FK
+    short_name: VIK
+    city: Stavanger
+    teams:
+      - {id: viking_m, gender: men, level: senior, home_venue: sr_bank_arena}
+
+  # -- Toppserien-only clubs -------------------------------------------------
+  - id: haugesund
+    name: FK Haugesund
+    short_name: FKH
+    city: Haugesund
+    teams:
+      - {id: haugesund_w, gender: women, level: senior, home_venue: haugesund_stadion}
+
+  - id: honefoss
+    name: Hønefoss BK
+    short_name: HBK
+    city: Hønefoss
+    teams:
+      - {id: honefoss_w, gender: women, level: senior, home_venue: aka_arena}
+
+  - id: lyn
+    name: Lyn Fotball
+    short_name: LYN
+    city: Oslo
+    teams:
+      - {id: lyn_w, gender: women, level: senior, home_venue: kringsjaa_kunstgress}
+
+  - id: lsk_kvinner
+    name: LSK Kvinner
+    short_name: LSKK
+    city: Lillestrøm
+    teams:
+      - {id: lsk_kvinner_w, gender: women, level: senior, home_venue: araasen_stadion}
+
+  - id: roa
+    name: Røa IL
+    short_name: ROA
+    city: Oslo
+    teams:
+      - {id: roa_w, gender: women, level: senior, home_venue: roa_kunstgress}
+
+  - id: stabak
+    name: Stabæk Fotball
+    short_name: STB
+    city: Bærum
+    teams:
+      - {id: stabak_w, gender: women, level: senior, home_venue: nadderud_stadion}

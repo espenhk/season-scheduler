@@ -1,0 +1,36 @@
+# Curated surface travel times (hours, bus or train) for venue pairs where the
+# great-circle estimate in terminliste/model/travel.py is badly wrong.
+#
+# Norwegian geography defeats straight lines: fjords, mountains and the sheer
+# length of the country mean the road between two points is often two or three
+# times the distance a crow flies, and north of Trondheim it stops being a
+# realistic same-trip option at all. Anything listed here wins over the
+# computed value.
+#
+# `hours: null` means "no reasonable surface connection" — treated as infinite,
+# so the away-day pairing bonus never fires for that pair.
+verified: false
+sources:
+  - "General knowledge of Norwegian road/rail distances; replace with a routing API"
+
+overrides:
+  # Nord-Norge: not reachable by bus/train in any schedulable window.
+  - {a: romssa_arena, b: aspmyra_stadion, hours: null, note: "Tromsø–Bodø: ~11h drive, effectively fly-only"}
+  - {a: romssa_arena, b: lerkendal_stadion, hours: null, note: "Tromsø–Trondheim: ~17h"}
+  - {a: romssa_arena, b: intility_arena, hours: null, note: "Tromsø–Oslo: ~22h"}
+  - {a: aspmyra_stadion, b: lerkendal_stadion, hours: 10.5, note: "Bodø–Trondheim by train"}
+  - {a: aspmyra_stadion, b: intility_arena, hours: null, note: "Bodø–Oslo: ~17h"}
+
+  # Over the mountains: great-circle badly understates these.
+  - {a: brann_stadion, b: intility_arena, hours: 7.5, note: "Bergen–Oslo by train"}
+  - {a: brann_stadion, b: lerkendal_stadion, hours: 14.0, note: "Bergen–Trondheim, no direct route"}
+  - {a: sr_bank_arena, b: intility_arena, hours: 7.5, note: "Stavanger–Oslo"}
+  - {a: sr_bank_arena, b: brann_stadion, hours: 5.0, note: "Stavanger–Bergen, ferries"}
+
+  # Møre og Romsdal: coastal, slow.
+  - {a: color_line_stadion, b: intility_arena, hours: 9.0, note: "Ålesund–Oslo"}
+  - {a: color_line_stadion, b: aker_stadion, hours: 2.0, note: "Ålesund–Molde"}
+  - {a: aker_stadion, b: kristiansund_stadion, hours: 1.5, note: "Molde–Kristiansund"}
+  - {a: aker_stadion, b: intility_arena, hours: 8.5, note: "Molde–Oslo"}
+  - {a: aker_stadion, b: lerkendal_stadion, hours: 4.0, note: "Molde–Trondheim"}
+  - {a: kristiansund_stadion, b: lerkendal_stadion, hours: 3.5, note: "Kristiansund–Trondheim"}
