@@ -8,12 +8,13 @@ test_integration_coupled_leagues.py, where solve time actually matters.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import factories as f
 import pytest
 
 from terminliste.model.travel import HaversineTravelModel
+from terminliste.rounds.cup_schedule import schedule_cups
 from terminliste.scoring.registry import build_constraints
 from terminliste.scoring.base import EvalContext
 from terminliste.solvers.base import SolveRequest, divergence
@@ -94,6 +95,50 @@ def test_every_fixture_is_placed_exactly_once(solver_name):
         expected = competition.total_matches
         actual = len([m for m in candidate.matches if m.competition_id == competition.id])
         assert actual == expected, competition.id
+
+
+@pytest.mark.parametrize("solver_name", SOLVERS)
+def test_cup_schedule_is_respected_by_both_backends(solver_name):
+    """Regression guard: CP-SAT's fixtures each have a small, fixed candidate
+    window around a round anchor chosen without cup awareness, so unlike the
+    greedy/annealing backend it has no way to route around a cup conflict
+    discovered only after the fact — it must exclude conflicting dates from
+    the candidate set up front (see `_cup_clear` in `solvers/cpsat.py`), or a
+    real cup schedule can push the whole model to a false "infeasible"."""
+    world, season, competitions = _small_world()
+    men_team_ids = competitions[0].teams
+    cup = f.competition(
+        "cup",
+        men_team_ids,
+        format="cup",
+        min_rest_days=3,
+        match_window_days=2,
+        cup_rounds=[
+            f.cup_round("r1", forced_date=season.start + timedelta(days=14), name="Round 1"),
+            f.cup_round(
+                "r2",
+                window_start=season.start + timedelta(days=30),
+                window_end=season.start + timedelta(days=60),
+                granularity="month",
+                name="Round 2",
+            ),
+        ],
+    )
+    cup_schedules, cup_warnings = schedule_cups([cup], season)
+    assert cup_warnings == []
+
+    constraints = build_constraints(world, season, competitions, cup_schedules)
+    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, cup_schedules=cup_schedules,
+        constraints=constraints, ctx=ctx, seed=11, top_n=1, time_budget_s=15.0,
+    )
+    result = _get_scheduler(solver_name).solve(request)
+    assert result.best is not None
+    assert result.best.score.feasible, result.best.score.hard_results()
+    cup_result = result.best.score.result("cup_round_conflict")
+    assert cup_result is not None
+    assert cup_result.count == 0
 
 
 @pytest.mark.parametrize("solver_name", SOLVERS)

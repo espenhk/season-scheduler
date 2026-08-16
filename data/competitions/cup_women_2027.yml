@@ -1,0 +1,70 @@
+# The 2026-27 Norwegian Football Cup (NM kvinner), women's side. Toppserien
+# clubs enter at Round 2 — Round 1 (9 Sep 2026) is lower-division only and
+# is not modelled here, since this project does not track those clubs.
+#
+# Rounds are schedulable, not fixed — see cup_men_2027.yml's header and
+# `terminliste/rounds/cup_schedule.py` for how forced_date/window_start/
+# window_end work.
+#
+# verified: false — Round 2's date is NFF-confirmed via web search; NFF has
+# not yet published windows beyond Round 2, so Round 3 onward are estimated
+# using the same month-by-month cadence as the men's spring 2027 stretch
+# (NFF has only said "spring 2027" and "end of May" for the final) — see
+# each round's `note`.
+# sources:
+#   - "fotball.no: NM Kvinner 2027 — Slik spilles første runde (Round 1: 9 Sep 2026, Round 2: 21 Oct 2026, Toppserien enters at Round 2)"
+#   - "vg.no: NFF tar grep — flytter også kvinnens NM-finale til våren (women's final also moved to spring)"
+id: cup_women_2027
+name: NM Cupen (kvinner)
+season: 2027
+gender: women
+format: cup
+
+# Same 12 clubs as toppserien_2026.
+team_count: 12
+teams:
+  - aalesund_w
+  - bodo_glimt_w
+  - brann_w
+  - haugesund_w
+  - honefoss_w
+  - lsk_kvinner_w
+  - lyn_w
+  - molde_w
+  - roa_w
+  - rosenborg_w
+  - stabak_w
+  - valerenga_w
+
+min_rest_days: 3
+match_window_days: 3
+
+cup_rounds:
+  - id: r2
+    name: Round 2
+    forced_date: 2026-10-21
+    note: "Confirmed — NFF terminliste. Toppserien enters at Round 2; Round 1 (9 Sep 2026) is lower-division only."
+  - id: r3
+    name: Round 3
+    window_start: 2027-03-01
+    window_end: 2027-03-31
+    granularity: month
+    note: "NFF places the remaining rounds in spring 2027 with no narrower window yet; estimated at March 2027."
+  - id: qf
+    name: Quarter-final
+    window_start: 2027-04-01
+    window_end: 2027-04-30
+    granularity: month
+    note: "Estimated — spring 2027, no NFF window published yet; assumed April 2027."
+  - id: sf
+    name: Semi-final
+    window_start: 2027-05-01
+    window_end: 2027-05-20
+    granularity: month
+    note: "Estimated — spring 2027, no NFF window published yet; assumed early-to-mid May 2027, ahead of the final."
+  - id: final
+    name: Final
+    window_start: 2027-05-24
+    window_end: 2027-05-31
+    granularity: week
+    note: "NFF has said the final is planned for the end of May 2027, traditionally the same weekend as the men's final."

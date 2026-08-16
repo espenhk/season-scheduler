@@ -15,6 +15,7 @@ from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.hard import (
     BlackoutDates,
     ClubHomeClash,
+    CupRoundConflict,
     FixedDateRequirement,
     LegOrdering,
     MinRestDays,
@@ -293,6 +294,85 @@ def test_one_match_per_team_per_day():
         f.match("comp", "t3", "t1", date(2026, 6, 1), "v1", round_index=1),
     ]
     result = evaluate(matches, [OneMatchPerTeamPerDay()], _ctx(world, season))
+    assert result.hard_violations == 1
+
+
+# -- cup_round_conflict -------------------------------------------------
+
+
+def _cup_world():
+    v1 = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    world = f.world(clubs, [v1], [])
+    season = f.season(competitions=[], cup_competitions=["cup"])
+    schedule = f.cup_schedule(
+        "cup",
+        min_rest_days=3,
+        rounds=[
+            f.cup_placement("r1", {"t1": date(2026, 8, 22), "t2": date(2026, 8, 22)}, "Round 1")
+        ],
+    )
+    return world, season, schedule
+
+
+def test_cup_round_conflict_fires_at_a_two_day_gap_but_not_three():
+    world, season, schedule = _cup_world()
+    constraint = CupRoundConflict(cup_schedules=[schedule])
+
+    ok = [f.match("league", "t1", "t2", date(2026, 8, 25), "v1")]
+    assert evaluate(ok, [constraint], _ctx(world, season)).hard_violations == 0
+
+    bad = [f.match("league", "t1", "t2", date(2026, 8, 24), "v1")]
+    result = evaluate(bad, [constraint], _ctx(world, season))
+    # Both teams are entered in the cup, so both sides of the league match see
+    # the same shortfall.
+    assert result.hard_violations == 2
+
+
+def test_cup_round_conflict_is_silent_for_a_team_not_entered_in_the_cup():
+    v1 = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t3 = f.team("t3", "c3", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c3", [t3])]
+    world = f.world(clubs, [v1], [])
+    season = f.season(competitions=[], cup_competitions=["cup"])
+    schedule = f.cup_schedule(
+        "cup", min_rest_days=3, rounds=[f.cup_placement("r1", {"t1": date(2026, 8, 22)}, "Round 1")]
+    )
+
+    matches = [f.match("league", "t3", "t1", date(2026, 8, 23), "v1")]
+    result = evaluate(matches, [CupRoundConflict(cup_schedules=[schedule])], _ctx(world, season))
+    # t1 (entered in the cup) is one day from the round — a violation. t3 is
+    # not entered, so it contributes nothing of its own.
+    assert result.hard_violations == 1
+
+
+def test_cup_round_conflict_uses_each_teams_own_resolved_date():
+    """Two teams in the same round can resolve to different days (the round's
+    matches are spread across its window) — the constraint must key off each
+    team's own date, not a single shared one."""
+    v1 = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    world = f.world(clubs, [v1], [])
+    season = f.season(competitions=[], cup_competitions=["cup"])
+    schedule = f.cup_schedule(
+        "cup",
+        min_rest_days=3,
+        rounds=[
+            f.cup_placement("r1", {"t1": date(2026, 8, 22), "t2": date(2026, 8, 25)}, "Round 1")
+        ],
+    )
+    constraint = CupRoundConflict(cup_schedules=[schedule])
+
+    # t1's cup date is 22 Aug: a league match on 21 Aug is 1 day away (violation).
+    # t2's cup date is 25 Aug, 4 days clear of that same match, so only t1's
+    # side fires.
+    matches = [f.match("league", "t1", "t2", date(2026, 8, 21), "v1")]
+    result = evaluate(matches, [constraint], _ctx(world, season))
     assert result.hard_violations == 1
 
 

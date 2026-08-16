@@ -33,6 +33,7 @@ from terminliste.model.loader import DataError, load_world  # noqa: E402
 from terminliste.model.travel import HaversineTravelModel  # noqa: E402
 from terminliste.refdata import refresh_competition  # noqa: E402
 from terminliste.report.render import render_report, write_json  # noqa: E402
+from terminliste.rounds.cup_schedule import CupSchedulingError, schedule_cups  # noqa: E402
 from terminliste.scoring.base import EvalContext, Score, evaluate  # noqa: E402
 from terminliste.scoring.registry import build_constraints  # noqa: E402
 from terminliste.solvers import Candidate, SolveRequest, SolverResult, get_scheduler  # noqa: E402
@@ -62,10 +63,37 @@ def cmd_validate(args: argparse.Namespace) -> int:
     dual = world.dual_clubs()
     print(f"     {len(dual)} dual clubs: {', '.join(c.name for c in dual)}")
     for competition in world.competitions.values():
-        print(
-            f"     {competition.name}: {competition.team_count} teams, "
-            f"{competition.rounds} rounds, {competition.total_matches} matches"
-        )
+        if competition.format == "cup":
+            print(
+                f"     {competition.name}: {competition.team_count} teams entered, "
+                f"{competition.rounds} rounds tracked (forced/windowed dates, pairings TBD)"
+            )
+        else:
+            print(
+                f"     {competition.name}: {competition.team_count} teams, "
+                f"{competition.rounds} rounds, {competition.total_matches} matches"
+            )
+
+    for season in world.seasons.values():
+        if not season.cup_competitions:
+            continue
+        cup_competitions = [world.competition(c) for c in season.cup_competitions]
+        try:
+            schedules, warnings = schedule_cups(cup_competitions, season)
+        except CupSchedulingError as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+        for schedule in schedules:
+            print(f"     {schedule.competition_name} resolves cleanly:")
+            for placement in schedule.rounds:
+                span = (
+                    f"{placement.earliest_date}"
+                    if placement.spread_days == 0
+                    else f"{placement.earliest_date} – {placement.latest_date}"
+                )
+                print(f"       {placement.round_name}: {span}")
+        for warning in warnings:
+            print(f"     ⚠ {warning}")
     return 0
 
 
@@ -73,7 +101,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
     world = _load_world_or_exit()
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
-    constraints = build_constraints(world, season, competitions)
+    cup_schedules, cup_warnings = _schedule_cups_or_exit(world, season)
+    constraints = build_constraints(world, season, competitions, cup_schedules)
     travel = HaversineTravelModel(world)
     ctx = EvalContext(world=world, season=season, travel=travel)
 
@@ -82,6 +111,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         world=world,
         season=season,
         competitions=competitions,
+        cup_schedules=cup_schedules,
         constraints=constraints,
         ctx=ctx,
         seed=args.seed,
@@ -90,6 +120,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
     )
 
     print(f"Solving with {scheduler.name} (budget {args.time_budget:.0f}s, seed {args.seed})...")
+    for warning in cup_warnings:
+        print(f"  ⚠ {warning}")
     try:
         result = scheduler.solve(request)
     except RuntimeError as exc:
@@ -107,7 +139,15 @@ def cmd_generate(args: argparse.Namespace) -> int:
     html_path = out_dir / f"{season.id}.html"
     json_path = out_dir / f"{season.id}.json"
 
-    render_report(world, season, result, html_path, title=f"{season.year} season schedule")
+    render_report(
+        world,
+        season,
+        result,
+        html_path,
+        title=f"{season.year} season schedule",
+        warnings=cup_warnings,
+        cup_schedules=cup_schedules,
+    )
     write_json(result, json_path)
 
     _print_summary(result)
@@ -119,7 +159,8 @@ def cmd_score(args: argparse.Namespace) -> int:
     world = _load_world_or_exit()
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
-    constraints = build_constraints(world, season, competitions)
+    cup_schedules, cup_warnings = _schedule_cups_or_exit(world, season)
+    constraints = build_constraints(world, season, competitions, cup_schedules)
     travel = HaversineTravelModel(world)
 
     try:
@@ -132,6 +173,7 @@ def cmd_score(args: argparse.Namespace) -> int:
         print("FAIL: schedule file contained no matches.", file=sys.stderr)
         return 1
 
+    warnings = [*warnings, *cup_warnings]
     ctx = EvalContext(world=world, season=season, travel=travel, detail=True)
     score = evaluate(matches, constraints, ctx)
 
@@ -157,6 +199,7 @@ def cmd_score(args: argparse.Namespace) -> int:
         title=f"Score report — {Path(args.schedule).name}",
         full_diagnostics=True,
         warnings=warnings,
+        cup_schedules=cup_schedules,
     )
     print(f"\nWrote {out_path}")
 
@@ -273,6 +316,16 @@ def _season_or_exit(world, season_id: str):
     try:
         return world.season(season_id)
     except DataError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _schedule_cups_or_exit(world, season):
+    """Resolve the season's cups to dates, or exit with a clear reason why not."""
+    cup_competitions = [world.competition(c) for c in season.cup_competitions]
+    try:
+        return schedule_cups(cup_competitions, season)
+    except CupSchedulingError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         sys.exit(1)
 

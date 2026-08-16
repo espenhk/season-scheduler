@@ -29,6 +29,7 @@ from datetime import date, timedelta
 
 from ..model.calendar import build_calendar, calendars_by_competition
 from ..model.schema import Match
+from ..rounds.cup_schedule import cup_conflict, resolved_cup_windows
 from ..scoring.base import evaluate
 from .base import Candidate, SolveRequest, SolverResult, select_diverse
 from .greedy import align_dual_clubs, plan_competitions
@@ -133,6 +134,7 @@ def _build_model(cp_model, request, planned, calendar, forbidden):
     season = request.season
     model = cp_model.CpModel()
     by_competition = calendars_by_competition(calendar, request.competitions)
+    cup_windows = resolved_cup_windows(request.cup_schedules)
 
     # -- decision variables: one boolean per (fixture, candidate date) --------
     fixtures: list[tuple[object, object, str]] = []  # (fixture, competition, venue)
@@ -168,10 +170,16 @@ def _build_model(cp_model, request, planned, calendar, forbidden):
         for fixture in plan.fixtures:
             venue = world.team(fixture.home_team).home_venue
             anchor = plan.anchors[fixture.round_index]
-            window = competition_calendar.window(anchor, competition.match_window_days, venue)
+            window = _cup_clear(
+                competition_calendar.window(anchor, competition.match_window_days, venue),
+                fixture,
+                cup_windows,
+            )
             if not window:
-                window = competition_calendar.window(
-                    anchor, competition.match_window_days * 3, venue
+                window = _cup_clear(
+                    competition_calendar.window(anchor, competition.match_window_days * 3, venue),
+                    fixture,
+                    cup_windows,
                 )
             extra = required_dates.get(_fixture_id(fixture))
             if extra is not None:
@@ -302,6 +310,16 @@ def _build_model(cp_model, request, planned, calendar, forbidden):
             for i in by_leg[leg]:
                 for day, var in placement[i].items():
                     model.Add(day.toordinal() > split).OnlyEnforceIf([var, leg_literal])
+
+    # H6 cup round conflict is not modelled as a constraint here at all — it
+    # is enforced up front, by excluding conflicting dates from a fixture's
+    # candidate set (see `_cup_clear`). That is stricter than an
+    # `OnlyEnforceIf` constraint would be: this model's fixtures each have a
+    # small, fixed candidate window around a round anchor chosen without cup
+    # awareness, so a fixture boxed in by a conflict discovered only *after*
+    # the candidate set was built would have no legal date left to fall back
+    # on and the whole model would come out infeasible — cup conflicts
+    # literally cannot occur in a solution this model produces.
 
     # -- objective: the soft rules CP-SAT can see ---------------------------
     objective_terms: list[tuple[int, object]] = []
@@ -436,6 +454,21 @@ def _infeasibility_note(solver, status, assumptions, cp_model, pass_index: int) 
             + ", ".join(sorted(culprits))
         )
     return f"pass {pass_index}: infeasible, and the solver could not isolate which rules conflict"
+
+
+def _cup_clear(window: list[date], fixture, cup_windows: dict[str, list[tuple[date, int]]]) -> list[date]:
+    """Drop candidate dates that conflict with either side's cup commitment.
+
+    Mirrors how a blackout date is already never offered as a candidate: a
+    date a team can't legally play is excluded up front rather than modelled
+    as a constraint to satisfy after the fact.
+    """
+    return [
+        day
+        for day in window
+        if not cup_conflict(cup_windows, fixture.home_team, day)
+        and not cup_conflict(cup_windows, fixture.away_team, day)
+    ]
 
 
 def _scaled(weight: float) -> int:

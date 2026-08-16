@@ -60,8 +60,72 @@ class Club(BaseModel):
     teams: list[Team]
 
 
+RoundGranularity = Literal["week", "month", "quarter"]
+
+
+class CupRound(BaseModel):
+    """One round of a knockout cup: when it may be played, not who plays whom.
+
+    Real-world cup rounds are announced at wildly different notice: a near-term
+    round may already have a confirmed date (`forced_date`), while a distant
+    one is only known to the week, month or quarter (`window_start`/
+    `window_end`, with `granularity` recording which). Exactly one of the two
+    must be set — never both, never neither.
+
+    Pairings are drawn round by round and are not known ahead of time, so this
+    only ever describes *when* a round falls; `terminliste/rounds/cup_schedule.py`
+    resolves it to an actual per-team date, honouring `forced_date` exactly and
+    picking a date inside the window otherwise.
+    """
+
+    id: str
+    name: str
+    forced_date: date | None = None
+    window_start: date | None = None
+    window_end: date | None = None
+    granularity: RoundGranularity | None = None
+    note: str = ""
+
+    @model_validator(mode="after")
+    def _forced_xor_window(self) -> "CupRound":
+        has_forced = self.forced_date is not None
+        has_window = self.window_start is not None or self.window_end is not None
+        if has_forced and has_window:
+            raise ValueError(f"cup round {self.id!r}: set forced_date OR a window, not both")
+        if not has_forced and not has_window:
+            raise ValueError(f"cup round {self.id!r}: needs either forced_date or a window")
+        if has_window and (self.window_start is None or self.window_end is None):
+            raise ValueError(f"cup round {self.id!r}: a window needs both window_start and window_end")
+        if has_window and self.window_end < self.window_start:
+            raise ValueError(
+                f"cup round {self.id!r}: window_end ({self.window_end}) is before "
+                f"window_start ({self.window_start})"
+            )
+        return self
+
+    @property
+    def is_forced(self) -> bool:
+        return self.forced_date is not None
+
+    @property
+    def earliest(self) -> date:
+        """The earliest date this round could conceivably land on."""
+        return self.forced_date if self.forced_date is not None else self.window_start
+
+    @property
+    def latest(self) -> date:
+        """The latest date this round could conceivably land on."""
+        return self.forced_date if self.forced_date is not None else self.window_end
+
+
 class Competition(BaseModel):
-    """A league. `format` discriminates so cups can be added as a sibling."""
+    """A league or a cup. `format` discriminates the two.
+
+    A league's fixtures are generated and dated by the solver. A cup's rounds
+    are real-world fixed dates (`cup_rounds`) that the solver treats as given
+    rather than something to search over — see `cup_rounds` and
+    `CupRoundConflict` in `scoring/hard.py`.
+    """
 
     id: str
     name: str
@@ -86,6 +150,10 @@ class Competition(BaseModel):
     comfortable_rest_days: int = 6
     weights: dict[str, float] = Field(default_factory=dict)
 
+    # Cup-only: the real-world rounds this competition's teams are entered
+    # into, in the order they are played. Empty for a league.
+    cup_rounds: list[CupRound] = Field(default_factory=list)
+
     @field_validator("rounds_per_pairing")
     @classmethod
     def _at_least_one_round(cls, v: int) -> int:
@@ -101,7 +169,13 @@ class Competition(BaseModel):
 
     @property
     def rounds(self) -> int:
-        """Total rounds: (n-1) per leg for even n, n for odd n (bye rounds)."""
+        """Total rounds.
+
+        League: (n-1) per leg for even n, n for odd n (bye rounds). Cup: the
+        number of real-world rounds its teams are entered into.
+        """
+        if self.format == "cup":
+            return len(self.cup_rounds)
         n = self.team_count
         per_leg = n - 1 if n % 2 == 0 else n
         return per_leg * self.rounds_per_pairing
@@ -112,6 +186,10 @@ class Competition(BaseModel):
 
     @property
     def total_matches(self) -> int:
+        """League only — a cup's pairings are drawn round by round and are
+        not modelled as fixtures, so this is 0 for `format == "cup"`."""
+        if self.format == "cup":
+            return 0
         return self.matches_per_leg * self.rounds_per_pairing
 
 
@@ -175,6 +253,13 @@ class Season(BaseModel):
     start: date
     end: date
     competitions: list[str]
+    # Cup competitions tied to this season, kept separate from `competitions`
+    # because they are not fed to the round-robin/solver pipeline: their
+    # rounds are fixed real-world dates, not something to be scheduled. A cup
+    # round can fall outside `start`..`end` (the 2027 Norwegian Cup starts in
+    # August 2026 and runs into the following spring) — that is expected, not
+    # a data error.
+    cup_competitions: list[str] = Field(default_factory=list)
     global_blackouts: list[DatedNote] = Field(default_factory=list)
     discouraged_dates: list[DatedNote] = Field(default_factory=list)
     venue_blackouts: list[VenueBlackout] = Field(default_factory=list)

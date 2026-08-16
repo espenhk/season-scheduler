@@ -10,10 +10,12 @@ from __future__ import annotations
 
 from ..model.loader import World
 from ..model.schema import Competition, Season
+from ..rounds.cup_schedule import CupSchedule
 from .base import Constraint
 from .hard import (
     BlackoutDates,
     ClubHomeClash,
+    CupRoundConflict,
     FixedDateRequirement,
     LegOrdering,
     MinRestDays,
@@ -32,9 +34,18 @@ from .soft import (
 
 
 def build_constraints(
-    world: World, season: Season, competitions: list[Competition]
+    world: World,
+    season: Season,
+    competitions: list[Competition],
+    cup_schedules: list[CupSchedule] | None = None,
 ) -> list[Constraint]:
-    """Every rule in force for this season, hard first."""
+    """Every rule in force for this season, hard first.
+
+    `competitions` are the league(s) actually being scheduled. `cup_schedules`
+    are real-world-dated cups (already resolved to a date per team — see
+    `rounds/cup_schedule.py`) that share teams with them — not scheduled
+    themselves, but kept clear of via `CupRoundConflict`.
+    """
     hard_requirements = [r for r in season.fixed_requirements if r.hard]
 
     constraints: list[Constraint] = [
@@ -47,6 +58,8 @@ def build_constraints(
     ]
     if hard_requirements:
         constraints.append(FixedDateRequirement(requirements=hard_requirements))
+    if cup_schedules:
+        constraints.append(CupRoundConflict(cup_schedules=cup_schedules))
 
     constraints.extend(
         [
@@ -83,6 +96,7 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
     "club_home_clash": "A club's teams are never both at home on the same day.",
     "leg_ordering": "Every first meeting is played before any second meeting.",
     "fixed_requirement": "A named team must be at home on a named date.",
+    "cup_round_conflict": "A team's league matches stay clear of its cup round dates.",
     "fixed_requirement_preferred": "A named team should be at home on a named date.",
     "preferred_weekday": "Matches on the league's preferred weekday.",
     "consecutive_home_days": "A club's two teams at home on back-to-back days.",

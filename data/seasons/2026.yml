@@ -16,6 +16,15 @@ competitions:
   - eliteserien_2026
   - toppserien_2026
 
+# Cups sharing teams with the leagues above, kept separate because their
+# rounds are real-world fixed dates rather than something the solver
+# schedules — see cup_men_2027.yml / cup_women_2027.yml. The 2027 cup starts
+# in August 2026 and runs into spring 2027, so its later rounds fall after
+# this season's own end date; that is expected, not a data error.
+cup_competitions:
+  - cup_men_2027
+  - cup_women_2027
+
 # Dates on which nobody plays, in any competition.
 global_blackouts:
   - {date: 2026-04-03, reason: "Langfredag (Good Friday)"}

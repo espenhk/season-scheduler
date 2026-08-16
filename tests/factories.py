@@ -13,7 +13,17 @@ from datetime import date
 from pathlib import Path
 
 from terminliste.model.loader import World
-from terminliste.model.schema import Club, Competition, FixedRequirement, Match, Season, Team, Venue
+from terminliste.model.schema import (
+    Club,
+    Competition,
+    CupRound,
+    FixedRequirement,
+    Match,
+    Season,
+    Team,
+    Venue,
+)
+from terminliste.rounds.cup_schedule import CupRoundPlacement, CupSchedule
 
 
 def venue(id: str, lat: float = 60.0, lon: float = 10.0, capacity: int = 1000) -> Venue:
@@ -40,6 +50,8 @@ def competition(
     comfortable_rest_days: int = 6,
     weights: dict | None = None,
     rounds_per_pairing: int = 2,
+    format: str = "league",
+    cup_rounds: list[CupRound] | None = None,
     start: date | None = None,
     end: date | None = None,
 ) -> Competition:
@@ -48,6 +60,7 @@ def competition(
         name=id,
         season=2026,
         gender=gender,
+        format=format,
         team_count=len(teams),
         teams=teams,
         preferred_weekday=preferred_weekday,
@@ -56,14 +69,56 @@ def competition(
         comfortable_rest_days=comfortable_rest_days,
         weights=weights or {},
         rounds_per_pairing=rounds_per_pairing,
+        cup_rounds=cup_rounds or [],
         start=start,
         end=end,
+    )
+
+
+def cup_round(
+    id: str,
+    forced_date: date | None = None,
+    window_start: date | None = None,
+    window_end: date | None = None,
+    granularity: str | None = None,
+    name: str | None = None,
+    note: str = "",
+) -> CupRound:
+    return CupRound(
+        id=id,
+        name=name or id,
+        forced_date=forced_date,
+        window_start=window_start,
+        window_end=window_end,
+        granularity=granularity,
+        note=note,
+    )
+
+
+def cup_placement(
+    round_id: str, dates: dict[str, date], round_name: str | None = None, note: str = ""
+) -> CupRoundPlacement:
+    return CupRoundPlacement(round_id=round_id, round_name=round_name or round_id, dates=dates, note=note)
+
+
+def cup_schedule(
+    competition_id: str,
+    rounds: list[CupRoundPlacement],
+    min_rest_days: int = 3,
+    competition_name: str | None = None,
+) -> CupSchedule:
+    return CupSchedule(
+        competition_id=competition_id,
+        competition_name=competition_name or competition_id,
+        min_rest_days=min_rest_days,
+        rounds=rounds,
     )
 
 
 def season(
     id: str = "test",
     competitions: list[str] | None = None,
+    cup_competitions: list[str] | None = None,
     global_blackouts=None,
     venue_blackouts=None,
     fixed_requirements: list[FixedRequirement] | None = None,
@@ -77,6 +132,7 @@ def season(
         start=start,
         end=end,
         competitions=competitions or [],
+        cup_competitions=cup_competitions or [],
         global_blackouts=global_blackouts or [],
         venue_blackouts=venue_blackouts or [],
         fixed_requirements=fixed_requirements or [],

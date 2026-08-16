@@ -19,6 +19,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..model.loader import World
 from ..model.schema import Match, Season
+from ..rounds.cup_schedule import CupSchedule
 from ..scoring.base import ConstraintResult, Score
 from ..scoring.registry import describe
 from ..solvers.base import Candidate, SolverResult
@@ -46,6 +47,7 @@ def render_report(
     title: str | None = None,
     full_diagnostics: bool = False,
     warnings: list[str] | None = None,
+    cup_schedules: list[CupSchedule] | None = None,
 ) -> Path:
     """Render a solver result (or a single scored schedule) as one HTML page.
 
@@ -54,6 +56,9 @@ def render_report(
     rule is shown, not just the top few, and a dedicated section calls out
     broken hard rules by name. `warnings` surfaces non-fatal issues found while
     loading that schedule (e.g. a pair that never played) above the score.
+    `cup_schedules` are the season's cups already resolved to a date per team
+    (see `rounds/cup_schedule.py`) — the caller resolves them once and passes
+    the result in, rather than this function resolving them again per render.
     """
     env = Environment(
         loader=FileSystemLoader(TEMPLATE_DIR),
@@ -67,9 +72,10 @@ def render_report(
         club.id: DUAL_CLUB_COLORS[i % len(DUAL_CLUB_COLORS)]
         for i, club in enumerate(sorted(world.dual_clubs(), key=lambda c: c.id))
     }
+    cup_schedules = cup_schedules or []
 
     options = [
-        _build_option(world, season, candidate, club_colors, full_diagnostics)
+        _build_option(world, season, candidate, club_colors, cup_schedules, full_diagnostics)
         for candidate in result.candidates
     ]
 
@@ -88,7 +94,12 @@ def render_report(
 
 
 def _build_option(
-    world: World, season: Season, candidate: Candidate, club_colors, full_diagnostics: bool = False
+    world: World,
+    season: Season,
+    candidate: Candidate,
+    club_colors,
+    cup_schedules: list[CupSchedule],
+    full_diagnostics: bool = False,
 ) -> dict:
     score = candidate.score
     limit = 200 if full_diagnostics else 4
@@ -109,7 +120,7 @@ def _build_option(
         "problems": [_result_row(r, full=full_diagnostics) for r in score.biggest_problems(limit=limit)],
         "upsides": [_result_row(r, full=full_diagnostics) for r in score.biggest_upsides(limit=limit)],
         "breakdown": [_result_row(r, full=True) for r in _ordered_results(score)],
-        "competitions": _competition_views(world, candidate, club_colors),
+        "competitions": _competition_views(world, candidate, club_colors) + _cup_views(cup_schedules),
     }
 
 
@@ -214,6 +225,45 @@ def _competition_views(world: World, candidate: Candidate, club_colors) -> list[
                         "matches": entries,
                     }
                     for round_index, entries in sorted(rounds.items())
+                ],
+            }
+        )
+    return views
+
+
+def _cup_views(cup_schedules: list[CupSchedule]) -> list[dict]:
+    """Cup rounds, in the same shape `_competition_views` uses for leagues.
+
+    Pairings are drawn round by round and unknown ahead of time, so there is
+    no fixture list here — just each round's resolved date span (a single day
+    when every team landed on the same one) and how many of the tracked teams
+    are still assumed to be in it.
+    """
+    views: list[dict] = []
+    for schedule in sorted(cup_schedules, key=lambda s: s.competition_id):
+        team_count = len(schedule.rounds[0].dates) if schedule.rounds else 0
+        views.append(
+            {
+                "id": schedule.competition_id,
+                "name": schedule.competition_name,
+                "is_cup": True,
+                "match_count": team_count,
+                "rounds": [
+                    {
+                        "index": i + 1,
+                        "name": placement.round_name,
+                        "dates": (
+                            placement.earliest_date.strftime("%d %b %Y")
+                            if placement.spread_days == 0
+                            else (
+                                f"{placement.earliest_date.strftime('%d %b')} – "
+                                f"{placement.latest_date.strftime('%d %b %Y')}"
+                            )
+                        ),
+                        "team_count": len(placement.dates),
+                        "note": placement.note,
+                    }
+                    for i, placement in enumerate(schedule.rounds)
                 ],
             }
         )

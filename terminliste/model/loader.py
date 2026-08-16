@@ -255,15 +255,21 @@ def validate_world(world: World) -> list[str]:
             )
         if competition.min_rest_days < 1:
             errors.append(f"competition {competition.id!r} has min_rest_days < 1")
+        errors.extend(_validate_cup_rounds(competition))
 
     for season in world.seasons.values():
         if season.end <= season.start:
             errors.append(f"season {season.id!r} ends on or before it starts")
         for competition_id in season.competitions:
-            if competition_id not in world.competitions:
+            competition = world.competitions.get(competition_id)
+            if competition is None:
                 errors.append(f"season {season.id!r} lists unknown competition {competition_id!r}")
                 continue
-            competition = world.competitions[competition_id]
+            if competition.format != "league":
+                errors.append(
+                    f"season {season.id!r} lists {competition_id!r} under competitions, but it is "
+                    f"a {competition.format} — cups belong under cup_competitions"
+                )
             if competition.start is not None and competition.start < season.start:
                 errors.append(
                     f"competition {competition_id!r} starts {competition.start}, before "
@@ -273,6 +279,17 @@ def validate_world(world: World) -> list[str]:
                 errors.append(
                     f"competition {competition_id!r} ends {competition.end}, after "
                     f"season {season.id!r} ends {season.end}"
+                )
+        for competition_id in season.cup_competitions:
+            competition = world.competitions.get(competition_id)
+            if competition is None:
+                errors.append(
+                    f"season {season.id!r} lists unknown cup competition {competition_id!r}"
+                )
+            elif competition.format != "cup":
+                errors.append(
+                    f"season {season.id!r} lists {competition_id!r} under cup_competitions, but "
+                    f"it is a {competition.format} — leagues belong under competitions"
                 )
         for blackout in season.venue_blackouts:
             if blackout.venue not in world.venues:
@@ -287,6 +304,42 @@ def validate_world(world: World) -> list[str]:
             if venue_id not in world.venues:
                 errors.append(f"travel override references unknown venue {venue_id!r}")
 
+    return errors
+
+
+def _validate_cup_rounds(competition: Competition) -> list[str]:
+    """A cup must declare at least one round, with unique ids in a sane order.
+
+    This is the cheap, structural check: ids are unique, and no round's whole
+    possible range (`earliest`..`latest` — a forced date collapses both to the
+    same day) falls entirely before the previous round's. It cannot rule out
+    every infeasible case — a round's window can still be too narrow once the
+    previous round's *actual* placement and the required gap between rounds
+    are known — that deeper check happens when `schedule_cup` resolves the
+    rounds to real dates.
+    """
+    errors: list[str] = []
+    if competition.format != "cup":
+        return errors
+    if not competition.cup_rounds:
+        errors.append(f"cup competition {competition.id!r} declares no cup_rounds")
+        return errors
+
+    seen_ids: set[str] = set()
+    previous_round = None
+    for round_ in competition.cup_rounds:
+        if round_.id in seen_ids:
+            errors.append(
+                f"competition {competition.id!r} has duplicate cup round id {round_.id!r}"
+            )
+        seen_ids.add(round_.id)
+        if previous_round is not None and round_.latest < previous_round.earliest:
+            errors.append(
+                f"competition {competition.id!r} cup round {round_.id!r} "
+                f"({round_.earliest}..{round_.latest}) falls entirely before the previous "
+                f"round {previous_round.id!r} ({previous_round.earliest}..{previous_round.latest})"
+            )
+        previous_round = round_
     return errors
 
 

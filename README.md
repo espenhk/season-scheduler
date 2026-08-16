@@ -53,9 +53,10 @@ reads: it prints a diff against `data/*.yml`, it never rewrites it. See
 - **`terminliste/model/`** — Pydantic schema + loader (`World`), the season
   calendar (blackout resolution, anchor-date selection), and the travel-time
   model.
-- **`terminliste/rounds/`** — the circle-method round-robin generator. Pure
+- **`terminliste/rounds/`** — the circle-method round-robin generator (pure
   combinatorics, no dates: who plays whom, home or away, is decided here and
-  is correct by construction.
+  is correct by construction) and `cup_schedule.py`, the cup's own one-shot
+  resolve from declared forced dates/windows to actual per-team dates.
 - **`terminliste/scoring/`** — the constraint framework. Every rule (hard or
   soft) is an object with an `evaluate()` method; `registry.py` assembles the
   list for a season. Add a rule by writing a class and registering it — both
@@ -87,9 +88,13 @@ Team      id, gender, level (senior|second|youth), home_venue, club_id
 Club      id, name, teams[]                    # 1+ teams; "dual clubs" have 2+ senior teams
 Competition  id, season, gender, format (league|cup), teams[], start/end (optional),
              preferred_weekday, weights{}
-Season    id, year, window, global_blackouts[], venue_blackouts[], fixed_requirements[]
-Fixture   an unscheduled pairing (home, away, leg, round)
-Match     a Fixture placed on a date at a venue
+             cup_rounds[]                       # cup only: id, name, note, and either a
+                                                 # forced_date or a window_start/window_end
+Season    id, year, window, competitions[], cup_competitions[], global_blackouts[],
+          venue_blackouts[], fixed_requirements[]
+Fixture   an unscheduled pairing (home, away, leg, round)         # league only
+Match     a Fixture placed on a date at a venue                    # league only
+CupSchedule  a cup's rounds resolved to dates (see below)
 ```
 
 A `Competition`'s `start`/`end` are optional and default to the season's own
@@ -102,16 +107,46 @@ month it doesn't. `Season.start`/`.end` become the outer envelope across
 every competition sharing that calendar — global blackouts, discouraged
 dates and venue blackouts still apply season-wide.
 
-`Team.level` and `Competition.format` are wider than today's use needs on
-purpose — a reserve side is a data edit (`level: second`), and a cup is a new
-`Competition` subtype, not a rewrite. See "Suggested next steps" below.
+`Team.level` is wider than today's use needs on purpose — a reserve side is a
+data edit (`level: second`), not a rewrite.
+
+A **league** (`format: league`) is generated and dated by the solver — the
+round-robin generator decides who plays whom, the solver decides when. A
+**cup** (`format: cup`) is schedulable too, just at a much coarser grain: each
+`CupRound` is either a `forced_date` (already announced, cannot move) or a
+`window_start`/`window_end` it may fall inside — a week, month or quarter,
+per `granularity` — since the real Norwegian Cup often isn't more precise
+than that for rounds more than a few weeks out. `terminliste/rounds/
+cup_schedule.py` resolves a cup's rounds to a `CupSchedule` (an actual date
+per entered team) in one pass, honouring round order as a hard rule — round
+N is fully placed before round N+1 can start — and keeping each round's
+placements inside one calendar week as far as the data allows, degrading to
+a warning rather than a failure when it can't. See
+`data/competitions/cup_men_2027.yml` and `cup_women_2027.yml` for the
+2026-27 Norwegian Cup.
+
+Cup pairings are still drawn round by round and never modelled as fixtures
+— nobody knows who plays whom yet — so a `CupSchedule` records only *when*
+each entered team's round falls, on the base assumption that every team is
+still alive through the final. A season lists which competitions of each
+kind it holds under `competitions` (leagues) and `cup_competitions` (cups)
+respectively; the two are kept separate because only the former is fed to
+the round-robin/solver pipeline — a cup is resolved once, up front, and the
+league solver treats the result as fixed input. `CupRoundConflict` then keeps league fixtures a `min_rest_days`-wide window
+clear of each team's own resolved cup dates; CP-SAT additionally excludes a
+conflicting date from a fixture's candidate set outright, rather than
+modelling it as a constraint to satisfy after the fact, since its fixtures
+each have a small, fixed candidate window around a round anchor chosen
+without cup awareness and would otherwise have no way to route around a
+conflict discovered too late.
 
 ## Constraints implemented
 
 **Hard** (`terminliste/scoring/hard.py`) — a schedule with any of these
 present is not feasible, full stop:
 `min_rest_days`, `blackout_dates`, `venue_double_booking`, `club_home_clash`,
-`leg_ordering`, `fixed_requirement`, `one_match_per_team_per_day`.
+`leg_ordering`, `fixed_requirement`, `one_match_per_team_per_day`,
+`cup_round_conflict`.
 
 **Soft** (`terminliste/scoring/soft.py`) — scored, signed (reward positive,
 penalty negative), and shown ranked in the report:
@@ -169,6 +204,9 @@ python -m pytest tests/ -v
 - `test_calendar.py`, `test_travel.py`, `test_loader.py` — the supporting
   model layer, including curated overrides, referential-integrity errors,
   and a competition's own (optionally narrower) start/end window.
+- `test_cup_schedule.py` — resolving a cup's forced dates/windows to real
+  per-team dates: round ordering enforced and rejected when infeasible,
+  teams spread within a round's window, and the blackout-fallback warning.
 - `test_refdata.py` — the reference-data client, cache and diff logic behind
   `cli.py refresh-reference-data`, entirely mocked at the HTTP layer.
 - `test_external_schedule.py` — CSV/JSON parsing, leg inference, coverage
@@ -186,10 +224,15 @@ python -m pytest tests/ -v
 ## Suggested next steps
 
 See the write-up delivered alongside this project for the full discussion.
-In short: add a Norwegian Cup (single elimination, mid-week slots, all four
-top-flight tiers feeding in) before European qualifiers, since it exercises
-new competition machinery (byes, replays, cross-competition rest) without
-requiring calendar data terminliste has no way to source reliably yet.
+The Norwegian Cup is now in (`cup_men_2027.yml` / `cup_women_2027.yml`,
+`terminliste/rounds/cup_schedule.py`, `CupRoundConflict`) — only the
+top-flight clubs' rounds are tracked, and only Round 1 (men), Round 2
+(women), and the "final in spring 2027, end of May" framing are
+NFF-confirmed; every other round is an estimated window, flagged per round
+via `note`, pending NFF publishing the real ones (see each file's header).
+Natural next steps from here: European qualifiers for the tournaments this
+project doesn't control the scheduling of (issue #31), and cascading
+Champions/Europa/Conference League qualifier progression (issue #29).
 
 Also worth doing, now that `refresh-reference-data` exists but has never run
 against the real API:

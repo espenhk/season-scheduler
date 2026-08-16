@@ -110,7 +110,12 @@ class LocalSearchScheduler:
             seed = request.seed + restart * 7919
             try:
                 initial, pinned = build_initial_schedule(
-                    request.world, request.season, request.competitions, seed, calendar
+                    request.world,
+                    request.season,
+                    request.competitions,
+                    seed,
+                    calendar,
+                    cup_schedules=request.cup_schedules,
                 )
             except ValueError as exc:
                 notes.append(f"restart {restart}: {exc}")

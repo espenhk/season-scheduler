@@ -1,0 +1,101 @@
+# The 2026-27 Norwegian Football Cup (NM menn), men's side — NFF names this
+# edition "2027" even though it starts in August 2026, the same way UEFA names
+# a season by its later half. From the 2027 format onward, Eliteserien clubs
+# re-enter at Round 1 rather than a later round.
+#
+# Rounds are schedulable, not fixed: each one is either a `forced_date`
+# (already announced, cannot move) or a `window_start`/`window_end` the
+# scheduler may place it inside, honouring round order and the "same week"
+# preference — see `terminliste/rounds/cup_schedule.py`.
+#
+# verified: false — Round 1 and the "ordinary rounds start in August, final in
+# spring 2027" framing come from NFF's own pages via web search; NFF has not
+# yet published windows beyond Round 1, so Round 2 onward use the month NFF
+# has said each round falls in (Round 2/3: "midweek in September/October
+# 2026") or, for the spring 2027 stretch where NFF has given no more than
+# "spring" and "end of May" for the final, an estimated month-by-month
+# cadence spaced the way earlier NM editions ran — see each round's `note`.
+# sources:
+#   - "fotball.no: NM menn 2027 — Slik spilles 1. runde (Round 1: 22 Aug 2026)"
+#   - "fotball.no: NM menn 2027 — kvalifisering 2026 (format change, Eliteserien from Round 1)"
+#   - "en.wikipedia.org: 2026-27 Norwegian Football Cup (tournament starts 21-22 Aug 2026, final end of May 2027)"
+id: cup_men_2027
+name: NM Cupen (menn)
+season: 2027
+gender: men
+format: cup
+
+# Same 16 clubs as eliteserien_2026 — the cup edition this data models only
+# tracks the top flight, not the ~150 lower-division sides also in the draw.
+team_count: 16
+teams:
+  - aalesund_m
+  - bodo_glimt_m
+  - brann_m
+  - fredrikstad_m
+  - hamkam_m
+  - kfum_oslo_m
+  - kristiansund_m
+  - lillestrom_m
+  - molde_m
+  - rosenborg_m
+  - sandefjord_m
+  - sarpsborg08_m
+  - start_m
+  - tromso_m
+  - valerenga_m
+  - viking_m
+
+# The floor on the gap between one round's last placement and the next
+# round's first — a safety minimum, not a target; the windows below do the
+# real spacing. Also how close a league match may land to a team's cup date.
+min_rest_days: 3
+
+# How many days forward from a windowed round's earliest legal date its teams'
+# placements may spread across (3 gives a 4-day span, well inside a calendar
+# week — matching the "all games of round X in the same week" preference). A
+# forced round ignores this entirely: every team lands on the exact confirmed
+# date, not spread near it.
+match_window_days: 3
+
+cup_rounds:
+  - id: r1
+    name: Round 1
+    forced_date: 2026-08-22
+    note: "Confirmed — NFF terminliste. Eliteserien enters from Round 1 under the 2027 format."
+  - id: r2
+    name: Round 2
+    window_start: 2026-09-01
+    window_end: 2026-09-30
+    granularity: month
+    note: "NFF has confirmed only that Round 2 is played midweek in September 2026; exact date not yet published."
+  - id: r3
+    name: Round 3
+    window_start: 2026-10-01
+    window_end: 2026-10-31
+    granularity: month
+    note: "NFF has confirmed only that Round 3 is played midweek in October 2026; exact date not yet published."
+  - id: r4
+    name: Round 4
+    window_start: 2027-03-01
+    window_end: 2027-03-31
+    granularity: month
+    note: "NFF places Round 4 onward in spring 2027 with no narrower window yet; estimated at March 2027."
+  - id: qf
+    name: Quarter-final
+    window_start: 2027-04-01
+    window_end: 2027-04-30
+    granularity: month
+    note: "Estimated — spring 2027, no NFF window published yet; assumed April 2027."
+  - id: sf
+    name: Semi-final
+    window_start: 2027-05-01
+    window_end: 2027-05-20
+    granularity: month
+    note: "Estimated — spring 2027, no NFF window published yet; assumed early-to-mid May 2027, ahead of the final."
+  - id: final
+    name: Final
+    window_start: 2027-05-24
+    window_end: 2027-05-31
+    granularity: week
+    note: "NFF has said the final is planned for the end of May 2027; exact date not yet published."

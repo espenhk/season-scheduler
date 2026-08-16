@@ -337,6 +337,25 @@
   {% for competition in option.competitions %}
     <div class="comp">
       <h3>{{ competition.name }}</h3>
+      {% if competition.is_cup %}
+      <div class="meta">
+        {{ competition.match_count }} teams entered · real-world round dates, pairings drawn closer
+        to each round
+      </div>
+      {% for round in competition.rounds %}
+      <div class="round">
+        <div class="rlabel">
+          <b>{{ round.name }}</b>
+          {{ round.dates }}
+        </div>
+        <div class="fixtures">
+          <span class="fx" {% if round.note %}title="{{ round.note }}"{% endif %}>
+            All {{ round.team_count }} entered teams assumed still in it
+          </span>
+        </div>
+      </div>
+      {% endfor %}
+      {% else %}
       <div class="meta">
         {{ competition.match_count }} matches over {{ competition.rounds|length }} rounds ·
         prefers {{ competition.preferred_weekday }}
@@ -361,6 +380,7 @@
         </div>
       </div>
       {% endfor %}
+      {% endif %}
     </div>
   {% endfor %}
   </div>
