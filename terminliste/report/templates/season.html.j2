@@ -296,9 +296,12 @@
 </span>
 {% endmacro %}
 
-{% macro cup_fx_card(fixture) %}
+{% macro cup_fx_card(fixture, show_competition=False) %}
 <span class="fx" data-clubs="{{ fixture.club_id }}" title="{{ fixture.venue_label }}">
   <span class="d">{{ fixture.weekday }} {{ fixture.date.strftime('%d/%m') }}</span>
+  {% if show_competition %}
+  <span class="comp-tag" style="background:{{ fixture.comp_bg }};color:{{ fixture.comp_fg }}">{{ fixture.competition_name }}</span>
+  {% endif %}
   {% if fixture.venue_type == 'home' %}
   <span class="swatch" style="background:{{ fixture.color }}" aria-hidden="true"></span>
   {% elif fixture.venue_type == 'away' %}
@@ -557,9 +560,10 @@
 
   <div class="cal-wrap view-pane" data-view="combined-calendar" hidden>
     <div class="desc" style="margin-top:8px">
-      Every league's matches interleaved by date. Cup rounds aren't fixture-level
-      data (pairings are drawn closer to each round), so they stay under
-      "By competition" only.
+      Every league's matches and every cup's per-team round dates, interleaved
+      by date. A cup round has no fixture-level pairing yet (the opponent is
+      drawn closer to each round), so those cards show "v TBD" — see
+      "By competition" for the venue rule behind each round.
     </div>
     {% for week in option.combined_calendar %}
     <div class="round">
@@ -568,7 +572,9 @@
         {{ week.dates }}
       </div>
       <div class="fixtures">
-        {% for match in week.matches %}{{ fx_card(match, show_competition=True) }}{% endfor %}
+        {% for match in week.matches %}
+          {% if match.is_cup %}{{ cup_fx_card(match, show_competition=True) }}{% else %}{{ fx_card(match, show_competition=True) }}{% endif %}
+        {% endfor %}
       </div>
     </div>
     {% endfor %}
@@ -581,6 +587,25 @@
       </thead>
       <tbody>
       {% for match in option.combined_list %}
+      {% if match.is_cup %}
+      <tr class="fx-row" data-clubs="{{ match.club_id }}" data-competition="{{ match.competition_id }}">
+        <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}</td>
+        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}">{{ match.competition_name }}</span></td>
+        <td>
+          {% if match.venue_type == 'home' %}
+          <span class="swatch" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
+          {% elif match.venue_type == 'away' %}
+          <span class="swatch-diamond" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
+          {% else %}
+          <span class="swatch-neutral" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
+          {% endif %}
+          <span title="{{ match.team_full }}">{{ match.team }}</span>
+        </td>
+        <td style="color:var(--muted)">v</td>
+        <td style="color:var(--muted)">TBD ({{ match.round_name }})</td>
+        <td>{{ match.venue_label }}</td>
+      </tr>
+      {% else %}
       <tr class="fx-row" data-clubs="{{ match.home_club }} {{ match.away_club }}" data-competition="{{ match.competition_id }}">
         <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}{% if match.kickoff_time %} {{ match.kickoff_time }}{% endif %}</td>
         <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}">{{ match.competition_name }}</span></td>
@@ -595,6 +620,7 @@
         </td>
         <td>{{ match.venue }}</td>
       </tr>
+      {% endif %}
       {% endfor %}
       </tbody>
     </table>

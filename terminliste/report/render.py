@@ -139,6 +139,8 @@ def _build_option(
     score = candidate.score
     limit = 200 if full_diagnostics else 4
     entries = _match_entries(world, candidate, club_colors, dual_club_ids, competition_colors)
+    cup_entries = _cup_entries(world, cup_schedules, club_colors, competition_colors)
+    combined_entries = entries + cup_entries
     headlines = _headlines(world, candidate)
     club_headlines = _club_headlines(world, candidate, dual_club_ids)
     return {
@@ -166,8 +168,8 @@ def _build_option(
         "breakdown": [_result_row(r, world, full=True) for r in _ordered_results(score)],
         "fairness": _fairness_rows(world, candidate),
         "by_competition": _competition_views(world, entries) + _cup_views(world, cup_schedules, club_colors),
-        "combined_calendar": _combined_calendar_view(entries),
-        "combined_list": entries,
+        "combined_calendar": _combined_calendar_view(combined_entries),
+        "combined_list": _combined_list_view(combined_entries),
     }
 
 
@@ -436,11 +438,16 @@ def _competition_views(world: World, entries: list[dict]) -> list[dict]:
 
 
 def _combined_calendar_view(entries: list[dict]) -> list[dict]:
-    """Every league's matches merged into one calendar, grouped by ISO week.
+    """Every league's matches, plus every cup's per-team round dates, merged
+    into one calendar, grouped by ISO week.
 
     Round numbers don't line up across competitions (Eliteserien and
     Toppserien run different round counts), so week-of-year is the grouping
-    that actually interleaves them the way issue #24 asks for.
+    that actually interleaves them the way issue #24 asks for. `entries` mixes
+    league match entries (`_match_entries`) and cup entries (`_cup_entries`);
+    the sort key falls back to a cup entry's own team name where a league
+    entry would have `home`, so both shapes interleave by date without a
+    KeyError.
     """
     weeks: dict[tuple[int, int], list[dict]] = defaultdict(list)
     for entry in entries:
@@ -450,7 +457,8 @@ def _combined_calendar_view(entries: list[dict]) -> list[dict]:
     views: list[dict] = []
     for (iso_year, iso_week), week_entries in sorted(weeks.items()):
         week_entries = sorted(
-            week_entries, key=lambda e: (e["date"], e["competition_name"], e["home"])
+            week_entries,
+            key=lambda e: (e["date"], e["competition_name"], e.get("home", e.get("team", ""))),
         )
         views.append(
             {
@@ -460,6 +468,15 @@ def _combined_calendar_view(entries: list[dict]) -> list[dict]:
             }
         )
     return views
+
+
+def _combined_list_view(entries: list[dict]) -> list[dict]:
+    """The same merged league + cup entries as `_combined_calendar_view`, as
+    one flat chronological list rather than grouped by week."""
+    return sorted(
+        entries,
+        key=lambda e: (e["date"], e["competition_id"], e.get("home", e.get("team", ""))),
+    )
 
 
 def _cup_views(
@@ -525,6 +542,45 @@ def _cup_fixtures(world: World, placement: CupRoundPlacement, club_colors: dict[
             }
         )
     return sorted(fixtures, key=lambda fx: (fx["date"], fx["team"]))
+
+
+def _cup_entries(
+    world: World,
+    cup_schedules: list[CupSchedule],
+    club_colors: dict[str, str],
+    competition_colors: dict[str, dict],
+) -> list[dict]:
+    """Cup rounds flattened to one row per entered team per round — the same
+    granularity `_cup_fixtures` produces for the by-competition view — so the
+    combined calendar/list can merge them with league entries instead of
+    omitting cups entirely. Tagged `is_cup` so the template picks the TBD-
+    opponent card/row instead of a fixture's home-vs-away one.
+    """
+    entries: list[dict] = []
+    for schedule in cup_schedules:
+        comp_color = competition_colors.get(schedule.competition_id, _DEFAULT_COMP_COLOR)
+        for placement in schedule.rounds:
+            for team_id, team_date in placement.dates.items():
+                club_id = world.team(team_id).club_id
+                entries.append(
+                    {
+                        "is_cup": True,
+                        "date": team_date,
+                        "weekday": team_date.strftime("%a"),
+                        "competition_id": schedule.competition_id,
+                        "competition_name": schedule.competition_name,
+                        "comp_fg": comp_color["fg"],
+                        "comp_bg": comp_color["bg"],
+                        "round_name": placement.round_name,
+                        "team": world.team_short_label(team_id),
+                        "team_full": world.team_label(team_id),
+                        "club_id": club_id,
+                        "color": club_colors.get(club_id, ""),
+                        "venue_type": placement.venue_type,
+                        "venue_label": _cup_venue_label(world, team_id, placement.venue_type),
+                    }
+                )
+    return entries
 
 
 def _cup_venue_label(world: World, team_id: str, venue_type: str) -> str:

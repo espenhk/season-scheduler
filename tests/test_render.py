@@ -11,6 +11,7 @@ import json
 import factories as f
 from terminliste.report.render import (
     _club_headlines,
+    _cup_entries,
     _entity_counts,
     _fairness_rows,
     _json_attr,
@@ -324,3 +325,66 @@ def test_combined_calendar_interleaves_both_competitions_in_the_same_week():
     # Both competitions' short names show up, and both matches share one
     # combined week group (there is exactly one "Week" heading between them).
     assert html.count("Week ") >= 1
+
+
+def test_cup_entries_flatten_one_row_per_entered_team_per_round():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    club_colors = {c.id: c.color for c in world.clubs.values()}
+    competition_colors = {"cup1": {"fg": "#111111", "bg": "#eeeeee"}}
+    schedule = f.cup_schedule(
+        "cup1",
+        [
+            f.cup_placement(
+                "r1",
+                {"a_m": date(2026, 3, 1), "b_m": date(2026, 3, 2)},
+                round_name="Round 1",
+                venue_type="away",
+            )
+        ],
+        competition_name="NM Cup",
+    )
+
+    entries = _cup_entries(world, [schedule], club_colors, competition_colors)
+
+    assert len(entries) == 2
+    entry = next(e for e in entries if e["team_full"] == world.team_label("a_m"))
+    assert entry["is_cup"] is True
+    assert entry["competition_id"] == "cup1"
+    assert entry["competition_name"] == "NM Cup"
+    assert entry["round_name"] == "Round 1"
+    assert entry["club_id"] == "club_a"
+    assert entry["venue_type"] == "away"
+    assert entry["date"] == date(2026, 3, 1)
+    assert entry["comp_fg"] == "#111111"
+
+
+def test_combined_views_include_cup_rounds_alongside_league_matches():
+    """A cup round used to only appear under "By competition" — issue: it must
+    also show up in the combined calendar and combined list views, the same
+    place a reader checks for "what's happening this week" across everything."""
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    candidate = _candidate(world, season, matches, [])
+    schedule = f.cup_schedule(
+        "cup1",
+        [f.cup_placement("r1", {"a_m": date(2026, 6, 6)}, round_name="Round 1", venue_type="away")],
+        competition_name="NM Cup",
+    )
+    result = SolverResult(candidates=[candidate], solver="test")
+
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = render_report(world, season, result, Path(tmp) / "out.html", cup_schedules=[schedule])
+        html = out.read_text(encoding="utf-8")
+
+    calendar_section = html.split('class="cal-wrap view-pane" data-view="combined-calendar"')[1].split(
+        'class="cal-wrap view-pane" data-view="combined-list"'
+    )[0]
+    list_section = html.split('class="cal-wrap view-pane" data-view="combined-list"')[1]
+
+    assert "NM Cup" in calendar_section
+    assert "v TBD" in calendar_section
+    assert "NM Cup" in list_section
+    assert "TBD (Round 1)" in list_section
