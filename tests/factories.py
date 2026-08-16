@@ -36,8 +36,15 @@ def team(id: str, club_id: str, home_venue: str, gender: str = "men", level: str
     return t
 
 
-def club(id: str, teams: list[Team]) -> Club:
-    return Club(id=id, name=id.replace("_", " ").title(), short_name=id[:3].upper(), city=id, teams=teams)
+def club(id: str, teams: list[Team], color: str = "#336699") -> Club:
+    return Club(
+        id=id,
+        name=id.replace("_", " ").title(),
+        short_name=id[:3].upper(),
+        city=id,
+        color=color,
+        teams=teams,
+    )
 
 
 def competition(

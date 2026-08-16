@@ -69,6 +69,12 @@ class Event:
     delta: float
     detail: str
     match_keys: tuple[str, ...] = ()
+    # The team(s) this event's delta is attributed to, when the rule is
+    # naturally team-scoped — used to build the per-team/per-club fairness
+    # view in the report (see `report/render.py::_fairness_rows`). Empty for
+    # rules with no natural single-team attribution (e.g. `preferred_weekday`,
+    # which is scored per competition).
+    team_ids: tuple[str, ...] = ()
 
 
 @dataclass

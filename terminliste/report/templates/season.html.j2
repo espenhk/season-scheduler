@@ -13,6 +13,7 @@
     --line: #e0e0da;
     --good: #1e8449;
     --bad: #c0392b;
+    --warn: #b9770e;
     --accent: #2471a3;
   }
   * { box-sizing: border-box; }
@@ -31,7 +32,7 @@
     background: #fdf0ee; font-size: 14px;
   }
   .warnings {
-    margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid #b9770e;
+    margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid var(--warn);
     background: #fdf6ea; font-size: 14px;
   }
   .warnings div { margin: 2px 0; }
@@ -132,8 +133,37 @@
   .kind.hard { background: #eef4fa; color: var(--accent); }
   tr.violated td { background: #fdf4f3; }
 
+  /* -- fairness across teams -- */
+  .fairness-row { margin: 14px 0 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; }
+  .fairness-row.flagged { border-color: #f0cf98; background: #fdf8ef; }
+  .fairness-row .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .fairness-row .fname { font-weight: 600; font-size: 13.5px; }
+  .fairness-row .flag { font-size: 11.5px; color: var(--warn); font-weight: 700; }
+  .fairness-bars { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; }
+  .fairness-bar { display: grid; grid-template-columns: 150px 1fr 28px; align-items: center; gap: 8px; font-size: 12.5px; }
+  .fairness-bar .flabel { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fairness-bar .ftrack { display: block; background: #eeeee9; border-radius: 4px; height: 8px; overflow: hidden; }
+  .fairness-bar .ffill { display: block; background: var(--accent); height: 100%; border-radius: 4px; }
+  .fairness-bar .fcount { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+  /* -- calendar controls: view toggle + club filter -- */
+  .controls { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin-top: 26px; }
+  .view-toggle { display: flex; gap: 6px; flex-wrap: wrap; }
+  .view-btn {
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 12.5px; font-weight: 600;
+  }
+  .view-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .club-filter { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .club-filter select {
+    font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink);
+  }
+  .club-hidden { display: none !important; }
+
   /* -- calendar -- */
   .cal-wrap { overflow-x: auto; }
+  .view-pane[hidden] { display: none; }
   .comp { margin-top: 30px; }
   .comp h3 { font-size: 16px; margin: 0 0 2px; }
   .comp .meta { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
@@ -142,20 +172,45 @@
   .round .rlabel b { display: block; color: var(--ink); font-size: 14px; }
   .fixtures { display: flex; flex-wrap: wrap; gap: 6px; }
   .fx {
+    display: inline-flex; align-items: center;
     border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px;
     font-size: 12.5px; background: #fcfcfb; white-space: nowrap;
   }
   .fx .d { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
   .fx .h { font-weight: 600; }
   .fx.paired { border-color: var(--good); background: #f1f9f4; }
-  .fx .star { color: var(--good); font-weight: 700; margin-left: 5px; }
-  .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  .comp-tag {
+    font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-right: 6px;
+    background: #eeeee9; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  /* Home = square, away = diamond, both filled with the club's own colour
+     (data/clubs.yml). Fixed pixel sizes rather than a text glyph — a
+     unicode glyph here previously rendered visibly larger than the
+     surrounding text depending on the reader's font, which is what made
+     some fixtures look like they had "bigger text" than others. */
+  .swatch, .swatch-diamond {
+    display: inline-block; width: 8px; height: 8px; margin-right: 5px;
+    vertical-align: middle; flex: none;
+  }
+  .swatch { border-radius: 2px; }
+  .swatch-diamond { border-radius: 1px; transform: rotate(45deg); }
+  .pair-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 13px; height: 13px; margin-left: 6px; border-radius: 50%;
+    background: var(--good); flex: none;
+  }
+  .fx-demo {
+    display: inline-block; width: 22px; height: 14px; margin-right: 5px;
+    border: 1px solid var(--good); background: #f1f9f4; border-radius: 4px;
+    vertical-align: middle;
+  }
   .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin: 14px 0 0; align-items: center; }
   footer { margin-top: 40px; color: var(--muted); font-size: 12.5px; }
 
   @media (max-width: 480px) {
     .round { grid-template-columns: 1fr; gap: 4px; }
     .fx { white-space: normal; }
+    .fairness-bar { grid-template-columns: 110px 1fr 24px; }
   }
 </style>
 </head>
@@ -194,6 +249,24 @@
   </button>
   {% endfor %}
 </div>
+
+{% macro fx_card(match, show_competition=False) %}
+<span class="fx {% if match.paired %}paired{% endif %}"
+      data-clubs="{{ match.home_club }} {{ match.away_club }}"
+      data-competition="{{ match.competition_id }}"
+      title="{{ match.venue }}">
+  <span class="d">{{ match.weekday }} {{ match.date.strftime('%d/%m') }}</span>
+  {% if show_competition %}<span class="comp-tag">{{ match.competition_name }}</span>{% endif %}
+  <span class="swatch" style="background:{{ match.color }}" aria-hidden="true"></span>
+  <span class="h" title="{{ match.home }}">{{ match.home_short }}</span>
+  <span style="color:var(--muted)"> v </span>
+  <span class="swatch-diamond" style="background:{{ match.away_color }}" aria-hidden="true"></span>
+  <span title="{{ match.away }}">{{ match.away_short }}</span>
+  {% if match.paired %}
+  <span class="pair-badge" role="img" aria-label="back-to-back home day with the club's other team"></span>
+  {% endif %}
+</span>
+{% endmacro %}
 
 {% for option in options %}
 <section class="panel" id="panel-{{ loop.index }}" role="tabpanel" {% if not loop.first %}hidden{% endif %}>
@@ -333,8 +406,61 @@
     </div>
   </details>
 
-  <div class="cal-wrap">
-  {% for competition in option.competitions %}
+  {% if option.fairness %}
+  <details>
+    <summary>Fairness across teams — is any one team favoured or penalised?</summary>
+    <div class="desc" style="margin-top:8px">
+      Per-rule counts for every team (or, for the two club-coupling rules,
+      every dual club). A rule flagged ⚠ has a wider gap between its
+      best- and worst-treated team than the rule's own average — worth a
+      look before this schedule is accepted.
+    </div>
+    {% for row in option.fairness %}
+    <div class="fairness-row {{ 'flagged' if row.flagged }}">
+      <div class="head">
+        <span class="fname">{{ row.id.replace('_', ' ') }}</span>
+        {% if row.flagged %}<span class="flag">⚠ uneven — {{ row.min }}–{{ row.max }} across entries</span>{% endif %}
+      </div>
+      <div class="desc">{{ row.description }}</div>
+      <div class="fairness-bars">
+        {% for entry in row.entries %}
+        <div class="fairness-bar">
+          <span class="flabel" title="{{ entry.label }}">{{ entry.label }}</span>
+          <span class="ftrack"><span class="ffill" style="width:{{ (100 * entry.count / row.max) if row.max else 0 }}%"></span></span>
+          <span class="fcount">{{ entry.count }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </details>
+  {% endif %}
+
+  <div class="controls">
+    <div class="view-toggle">
+      <button type="button" class="view-btn" data-view="by-competition">By competition</button>
+      <button type="button" class="view-btn" data-view="combined-calendar">Combined · calendar</button>
+      <button type="button" class="view-btn" data-view="combined-list">Combined · list</button>
+    </div>
+    <label class="club-filter">
+      Club
+      <select class="club-select">
+        <option value="">All clubs</option>
+        {% for club in all_clubs %}
+        <option value="{{ club.id }}">{{ club.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <div class="legend">
+    <span><span class="fx-demo" aria-hidden="true"></span>green = back-to-back home day for a dual club</span>
+    <span><span class="swatch" style="background:var(--ink)" aria-hidden="true"></span>square = home club colour</span>
+    <span><span class="swatch-diamond" style="background:var(--ink)" aria-hidden="true"></span>diamond = away club colour</span>
+  </div>
+
+  <div class="cal-wrap view-pane" data-view="by-competition">
+  {% for competition in option.by_competition %}
     <div class="comp">
       <h3>{{ competition.name }}</h3>
       {% if competition.is_cup %}
@@ -367,16 +493,7 @@
           {{ round.dates }} · leg {{ round.leg }}
         </div>
         <div class="fixtures">
-          {% for match in round.matches %}
-          <span class="fx {% if match.paired %}paired{% endif %}"
-                title="{{ match.venue }}">
-            <span class="d">{{ match.weekday }} {{ match.date.strftime('%d/%m') }}</span>
-            {% if match.color %}<span class="swatch" style="background:{{ match.color }}"></span>{% endif %}
-            <span class="h">{{ match.home }}</span>
-            <span style="color:var(--muted)"> v </span>{{ match.away }}
-            {% if match.paired %}<span class="star" title="back-to-back home day with the club's other team">◆</span>{% endif %}
-          </span>
-          {% endfor %}
+          {% for match in round.matches %}{{ fx_card(match) }}{% endfor %}
         </div>
       </div>
       {% endfor %}
@@ -385,11 +502,49 @@
   {% endfor %}
   </div>
 
-  <div class="legend">
-    <span><span class="swatch" style="background:var(--good)"></span>green <span class="star">◆</span> = back-to-back home day for a dual club</span>
-    {% for club in dual_clubs %}
-    <span><span class="swatch" style="background:{{ club_colors[club.id] }}"></span>{{ club.name }}</span>
+  <div class="cal-wrap view-pane" data-view="combined-calendar" hidden>
+    <div class="desc" style="margin-top:8px">
+      Every league's matches interleaved by date. Cup rounds aren't fixture-level
+      data (pairings are drawn closer to each round), so they stay under
+      "By competition" only.
+    </div>
+    {% for week in option.combined_calendar %}
+    <div class="round">
+      <div class="rlabel">
+        <b>{{ week.label }}</b>
+        {{ week.dates }}
+      </div>
+      <div class="fixtures">
+        {% for match in week.matches %}{{ fx_card(match, show_competition=True) }}{% endfor %}
+      </div>
+    </div>
     {% endfor %}
+  </div>
+
+  <div class="cal-wrap view-pane" data-view="combined-list" hidden>
+    <table>
+      <thead>
+        <tr><th>Date</th><th>Competition</th><th>Home</th><th></th><th>Away</th><th>Venue</th></tr>
+      </thead>
+      <tbody>
+      {% for match in option.combined_list %}
+      <tr class="fx-row" data-clubs="{{ match.home_club }} {{ match.away_club }}" data-competition="{{ match.competition_id }}">
+        <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}</td>
+        <td>{{ match.competition_name }}</td>
+        <td>
+          <span class="swatch" style="background:{{ match.color }}" aria-hidden="true"></span>
+          <span title="{{ match.home }}">{{ match.home_short }}</span>
+        </td>
+        <td style="color:var(--muted)">v</td>
+        <td>
+          <span class="swatch-diamond" style="background:{{ match.away_color }}" aria-hidden="true"></span>
+          <span title="{{ match.away }}">{{ match.away_short }}</span>
+        </td>
+        <td>{{ match.venue }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
   </div>
 
 </section>
@@ -412,6 +567,62 @@
         panel.hidden = panel.id !== tab.dataset.panel;
       });
     });
+  });
+
+  // Per-panel view toggle (by competition / combined calendar / combined
+  // list) and club filter. Scoped to `panel` throughout — with more than one
+  // schedule option on the page, each panel needs its own independent view
+  // and filter state, or switching the outer option tabs would leak one
+  // panel's selection into another.
+  document.querySelectorAll('.panel').forEach(function (panel) {
+    var viewButtons = panel.querySelectorAll('.view-btn');
+    var clubSelect = panel.querySelector('.club-select');
+    if (!viewButtons.length) return;
+
+    function applyClubFilter() {
+      var value = clubSelect ? clubSelect.value : '';
+      panel.querySelectorAll('[data-clubs]').forEach(function (el) {
+        var clubs = el.dataset.clubs ? el.dataset.clubs.split(' ') : [];
+        var visible = !value || clubs.indexOf(value) !== -1;
+        el.classList.toggle('club-hidden', !visible);
+      });
+      // Hide now-empty round/week groups and competitions rather than
+      // leaving blank labels behind. Cup rounds have no `data-clubs`
+      // fixtures at all, so they are never touched here and stay visible.
+      panel.querySelectorAll('.round').forEach(function (round) {
+        var fixtures = round.querySelectorAll('.fx[data-clubs]');
+        if (!fixtures.length) return;
+        var anyVisible = round.querySelector('.fx[data-clubs]:not(.club-hidden)');
+        round.classList.toggle('club-hidden', !anyVisible);
+      });
+      panel.querySelectorAll('.comp').forEach(function (comp) {
+        var rounds = comp.querySelectorAll('.round');
+        if (!rounds.length) return;
+        var anyVisible = comp.querySelector('.round:not(.club-hidden)');
+        comp.classList.toggle('club-hidden', !anyVisible);
+      });
+    }
+
+    function setView(name) {
+      viewButtons.forEach(function (btn) {
+        var active = btn.dataset.view === name;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
+      });
+      panel.querySelectorAll('.view-pane').forEach(function (pane) {
+        pane.hidden = pane.dataset.view !== name;
+      });
+    }
+
+    viewButtons.forEach(function (btn) {
+      btn.addEventListener('click', function () { setView(btn.dataset.view); });
+    });
+    if (clubSelect) {
+      clubSelect.addEventListener('change', applyClubFilter);
+    }
+
+    setView(viewButtons[0].dataset.view);
+    applyClubFilter();
   });
 
   // Rule-description tooltips: hover/focus works via CSS alone; this adds

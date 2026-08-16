@@ -12,6 +12,7 @@ without disturbing the league path.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Literal
 
@@ -57,7 +58,20 @@ class Club(BaseModel):
     name: str
     short_name: str
     city: str
+    # Primary club colour, used to fill/stroke that club's team markers in the
+    # report (square for a home fixture, diamond for an away one) so a reader
+    # can recognise a club by colour the way they would on a real matchday
+    # graphic. One colour per club, not per team, so a dual club's men's and
+    # women's markers always match.
+    color: str
     teams: list[Team]
+
+    @field_validator("color")
+    @classmethod
+    def _color_is_hex(cls, v: str) -> str:
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", v):
+            raise ValueError(f"club color {v!r} must be a 6-digit hex code, e.g. '#c0392b'")
+        return v.lower()
 
 
 RoundGranularity = Literal["week", "month", "quarter"]

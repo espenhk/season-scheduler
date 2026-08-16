@@ -128,6 +128,7 @@ class ConsecutiveHomeDays:
                                         f"{first_day}, {ctx.world.team_label(later)} home "
                                         f"{first_day + _ONE_DAY}"
                                     ),
+                                    team_ids=(earlier, later),
                                 )
                             )
 
@@ -204,6 +205,7 @@ class ConsecutiveAwayDays:
                                         f"{ctx.world.venue(venue_b).name} "
                                         f"{first_day + _ONE_DAY} ({hours:.1f}h apart)"
                                     ),
+                                    team_ids=(earlier, later),
                                 )
                             )
 
@@ -286,6 +288,7 @@ class HomeAwayBreaks:
                         f"{ctx.world.team_label(team_id)} plays {run_length} consecutive "
                         f"{where} matches from {run_start}"
                     ),
+                    team_ids=(team_id,),
                 )
             )
         return total, count
@@ -344,6 +347,7 @@ class HomeAwayBalance:
                                 f"{ctx.world.team_label(team_id)} plays {home} home and "
                                 f"{len(half) - home} away in the {label} half"
                             ),
+                            team_ids=(team_id,),
                         )
                     )
 
@@ -401,6 +405,7 @@ class RestComfort:
                                 f"{later.date} (comfortable is {comfortable})"
                             ),
                             match_keys=(earlier.key, later.key),
+                            team_ids=(team_id,),
                         )
                     )
 
@@ -448,6 +453,7 @@ class SoftVenuePreference:
                             f"{ctx.world.team_label(match.away_team)} on {match.date} — {reason}"
                         ),
                         match_keys=(match.key,),
+                        team_ids=(match.home_team, match.away_team),
                     )
                 )
 

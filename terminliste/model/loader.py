@@ -95,6 +95,17 @@ class World:
                 return f"{club.name} Kvinner"
         return club.name
 
+    def team_short_label(self, team_id: str) -> str:
+        """Compact display name for dense views: short name, same qualifiers
+        as `team_label` but abbreviated, so it fits a calendar cell."""
+        team = self.team(team_id)
+        club = self.club(team.club_id)
+        if team.level != "senior":
+            return f"{club.short_name} ({team.level[0].upper()})"
+        if team.gender == "women" and any(t.gender == "men" for t in club.teams):
+            return f"{club.short_name} K"
+        return club.short_name
+
     def teams_sharing_venue(self, venue_id: str) -> list[Team]:
         return [t for t in self.teams.values() if t.home_venue == venue_id]
 

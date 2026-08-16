@@ -21,6 +21,11 @@ sources:
     `verified` stays false — see venues.yml for why a blanket correction
     pass wasn't attempted this round, and cli.py refresh-reference-data for
     a live-API path to close this out for real."
+  - "2026-08-16 addition: each club's `color` is a best-effort primary kit
+    colour from general knowledge, adjusted where two clubs share a real
+    hue (several are 'yellow and black') so their report markers stay
+    distinguishable. Not checked against an official club style guide —
+    same `verified: false` caveat as the rest of this file."
 
 clubs:
   # -- clubs with both a men's and a women's senior team ---------------------
@@ -28,6 +33,7 @@ clubs:
     name: Aalesunds FK
     short_name: AaFK
     city: Ålesund
+    color: "#d9a404"
     teams:
       - {id: aalesund_m, gender: men, level: senior, home_venue: color_line_stadion}
       - {id: aalesund_w, gender: women, level: senior, home_venue: color_line_stadion}
@@ -36,6 +42,7 @@ clubs:
     name: FK Bodø/Glimt
     short_name: BGL
     city: Bodø
+    color: "#f5c518"
     teams:
       - {id: bodo_glimt_m, gender: men, level: senior, home_venue: aspmyra_stadion}
       - {id: bodo_glimt_w, gender: women, level: senior, home_venue: aspmyra_stadion}
@@ -44,6 +51,7 @@ clubs:
     name: SK Brann
     short_name: BRA
     city: Bergen
+    color: "#cc1122"
     teams:
       - {id: brann_m, gender: men, level: senior, home_venue: brann_stadion}
       - {id: brann_w, gender: women, level: senior, home_venue: brann_stadion}
@@ -52,6 +60,7 @@ clubs:
     name: Molde FK
     short_name: MOL
     city: Molde
+    color: "#1f5fa8"
     teams:
       - {id: molde_m, gender: men, level: senior, home_venue: aker_stadion}
       - {id: molde_w, gender: women, level: senior, home_venue: aker_stadion}
@@ -60,6 +69,7 @@ clubs:
     name: Rosenborg BK
     short_name: RBK
     city: Trondheim
+    color: "#000000"
     teams:
       - {id: rosenborg_m, gender: men, level: senior, home_venue: lerkendal_stadion}
       - {id: rosenborg_w, gender: women, level: senior, home_venue: lerkendal_stadion}
@@ -68,6 +78,7 @@ clubs:
     name: Vålerenga Fotball
     short_name: VIF
     city: Oslo
+    color: "#14315d"
     teams:
       - {id: valerenga_m, gender: men, level: senior, home_venue: intility_arena}
       - {id: valerenga_w, gender: women, level: senior, home_venue: intility_arena}
@@ -77,6 +88,7 @@ clubs:
     name: Fredrikstad FK
     short_name: FFK
     city: Fredrikstad
+    color: "#e4572e"
     teams:
       - {id: fredrikstad_m, gender: men, level: senior, home_venue: fredrikstad_stadion}
 
@@ -84,6 +96,7 @@ clubs:
     name: Hamarkameratene
     short_name: HAM
     city: Hamar
+    color: "#0077b6"
     teams:
       - {id: hamkam_m, gender: men, level: senior, home_venue: briskeby_arena}
 
@@ -91,6 +104,7 @@ clubs:
     name: KFUM Oslo
     short_name: KFU
     city: Oslo
+    color: "#b22222"
     teams:
       - {id: kfum_oslo_m, gender: men, level: senior, home_venue: kfum_arena}
 
@@ -98,6 +112,7 @@ clubs:
     name: Kristiansund BK
     short_name: KBK
     city: Kristiansund
+    color: "#4a90d9"
     teams:
       - {id: kristiansund_m, gender: men, level: senior, home_venue: kristiansund_stadion}
 
@@ -105,6 +120,7 @@ clubs:
     name: Lillestrøm SK
     short_name: LSK
     city: Lillestrøm
+    color: "#ffe135"
     teams:
       - {id: lillestrom_m, gender: men, level: senior, home_venue: araasen_stadion}
 
@@ -112,6 +128,7 @@ clubs:
     name: Sandefjord Fotball
     short_name: SAN
     city: Sandefjord
+    color: "#2e6f95"
     teams:
       - {id: sandefjord_m, gender: men, level: senior, home_venue: jotun_arena}
 
@@ -119,6 +136,7 @@ clubs:
     name: Sarpsborg 08
     short_name: SAR
     city: Sarpsborg
+    color: "#e67e22"
     teams:
       - {id: sarpsborg08_m, gender: men, level: senior, home_venue: sarpsborg_stadion}
 
@@ -126,6 +144,7 @@ clubs:
     name: IK Start
     short_name: STA
     city: Kristiansand
+    color: "#a32638"
     teams:
       - {id: start_m, gender: men, level: senior, home_venue: sor_arena}
 
@@ -133,6 +152,7 @@ clubs:
     name: Tromsø IL
     short_name: TIL
     city: Tromsø
+    color: "#8b0000"
     teams:
       - {id: tromso_m, gender: men, level: senior, home_venue: romssa_arena}
 
@@ -140,6 +160,7 @@ clubs:
     name: Viking FK
     short_name: VIK
     city: Stavanger
+    color: "#003366"
     teams:
       - {id: viking_m, gender: men, level: senior, home_venue: sr_bank_arena}
 
@@ -148,6 +169,7 @@ clubs:
     name: FK Haugesund
     short_name: FKH
     city: Haugesund
+    color: "#c68e17"
     teams:
       - {id: haugesund_w, gender: women, level: senior, home_venue: haugesund_stadion}
 
@@ -155,6 +177,7 @@ clubs:
     name: Hønefoss BK
     short_name: HBK
     city: Hønefoss
+    color: "#c0435c"
     teams:
       - {id: honefoss_w, gender: women, level: senior, home_venue: aka_arena}
 
@@ -162,6 +185,7 @@ clubs:
     name: Lyn Fotball
     short_name: LYN
     city: Oslo
+    color: "#d63447"
     teams:
       - {id: lyn_w, gender: women, level: senior, home_venue: kringsjaa_kunstgress}
 
@@ -169,6 +193,7 @@ clubs:
     name: LSK Kvinner
     short_name: LSKK
     city: Lillestrøm
+    color: "#003da5"
     teams:
       - {id: lsk_kvinner_w, gender: women, level: senior, home_venue: araasen_stadion}
 
@@ -176,6 +201,7 @@ clubs:
     name: Røa IL
     short_name: ROA
     city: Oslo
+    color: "#5cb85c"
     teams:
       - {id: roa_w, gender: women, level: senior, home_venue: roa_kunstgress}
 
@@ -183,5 +209,6 @@ clubs:
     name: Stabæk Fotball
     short_name: STB
     city: Bærum
+    color: "#0072ce"
     teams:
       - {id: stabak_w, gender: women, level: senior, home_venue: nadderud_stadion}

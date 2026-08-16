@@ -32,6 +32,34 @@ def test_dual_clubs_have_matching_gender_pairs(world):
         assert genders == {"men", "women"}, club.id
 
 
+def test_every_club_has_a_valid_hex_color(world):
+    for club in world.clubs.values():
+        assert club.color.startswith("#") and len(club.color) == 7, club.id
+
+
+def test_club_color_rejects_non_hex_values():
+    from terminliste.model.schema import Club
+
+    with pytest.raises(ValueError, match="hex code"):
+        Club(id="c", name="C", short_name="C", city="C", color="blue", teams=[])
+
+
+def test_club_color_is_lowercased():
+    from terminliste.model.schema import Club
+
+    club = Club(id="c", name="C", short_name="C", city="C", color="#ABCDEF", teams=[])
+    assert club.color == "#abcdef"
+
+
+def test_team_short_label_uses_the_club_short_name(world):
+    # Aalesund fields both a men's and a women's senior team, so the women's
+    # side gets a qualifier the same way `team_label` adds "Kvinner".
+    assert world.team_short_label("aalesund_m") == "AaFK"
+    assert world.team_short_label("aalesund_w") == "AaFK K"
+    # Fredrikstad fields only a men's team, so no qualifier is needed.
+    assert world.team_short_label("fredrikstad_m") == "FFK"
+
+
 def test_unknown_team_in_competition_is_caught():
     import factories as f
 
