@@ -312,12 +312,13 @@ class FixedDateRequirement:
             count += 1
             penalty -= self.weight
             if ctx.detail:
+                kickoff = f" at {requirement.kickoff_time}" if requirement.kickoff_time else ""
                 events.append(
                     Event(
                         delta=-self.weight,
                         detail=(
                             f"{ctx.world.team_label(requirement.home_team)} is not at home on "
-                            f"{requirement.date} — {requirement.reason or requirement.id}"
+                            f"{requirement.date}{kickoff} — {requirement.reason or requirement.id}"
                         ),
                         match_keys=(),
                     )

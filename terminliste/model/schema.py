@@ -143,6 +143,24 @@ class FixedRequirement(BaseModel):
     reason: str = ""
     weight: float = 50.0
 
+    # Informational only — nothing else in this model has kickoff-time
+    # granularity (Match is date-only), so this isn't enforced by the solver.
+    # It exists for requirements like Tromsø's Midnight Sun Match, where the
+    # late kickoff is the whole point and needs to survive into the report.
+    kickoff_time: str | None = None
+
+    @field_validator("kickoff_time")
+    @classmethod
+    def _kickoff_time_is_hh_mm(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        hour, sep, minute = v.partition(":")
+        if sep != ":" or not (hour.isdigit() and minute.isdigit()):
+            raise ValueError(f"kickoff_time {v!r} must be 24h HH:MM")
+        if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
+            raise ValueError(f"kickoff_time {v!r} must be 24h HH:MM")
+        return v
+
 
 class Season(BaseModel):
     # Coerced to str so `id: 2026` in YAML — the natural way to write it —

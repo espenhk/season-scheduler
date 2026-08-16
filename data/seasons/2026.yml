@@ -58,3 +58,25 @@ fixed_requirements:
     competition: toppserien_2026
     hard: true
     reason: "May 16 — Rosenborg women at home at Lerkendal"
+
+  - id: moldejazz_molde
+    date: 2026-07-19
+    home_team: molde_m
+    competition: eliteserien_2026
+    hard: true
+    reason: >-
+      Moldejazz runs 13-18 July 2026 (verified 2026-08-16 via web search); Molde
+      at home the Sunday it closes keeps the festival crowd in town for the
+      match
+
+  - id: midnight_sun_tromso
+    date: 2026-07-11
+    home_team: tromso_m
+    competition: eliteserien_2026
+    hard: true
+    kickoff_time: "22:00"
+    reason: >-
+      Midnattsolkampen (the Midnight Sun Match) — Tromsø's annual home fixture
+      played under the midnight sun with a 22:00 kickoff. Recent editions were
+      13 July 2024 and 15 July 2025 (verified 2026-08-16 via web search); no
+      fixed weekday, so mid-July is used as the representative date
