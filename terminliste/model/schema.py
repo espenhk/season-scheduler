@@ -32,6 +32,18 @@ NORWAY_LAT_RANGE = (57.0, 72.0)
 NORWAY_LON_RANGE = (4.0, 32.0)
 
 
+def _validate_hh_mm(v: str | None) -> str | None:
+    """Shared 24h `HH:MM` check for every kickoff-time field."""
+    if v is None:
+        return v
+    hour, sep, minute = v.partition(":")
+    if sep != ":" or not (hour.isdigit() and minute.isdigit()):
+        raise ValueError(f"kickoff_time {v!r} must be 24h HH:MM")
+    if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
+        raise ValueError(f"kickoff_time {v!r} must be 24h HH:MM")
+    return v
+
+
 class Venue(BaseModel):
     id: str
     name: str
@@ -161,8 +173,37 @@ class Competition(BaseModel):
     preferred_weekday: Weekday = "sunday"
     min_rest_days: int = 3
     match_window_days: int = 3
-    comfortable_rest_days: int = 6
+    comfortable_rest_days: int = 5
     weights: dict[str, float] = Field(default_factory=dict)
+
+    # The whole final round — every match of the last round of the last leg —
+    # is forced onto one date, at this one kickoff time, by `resolve_round_pins`
+    # (see `rounds/greedy.py`) and checked by `FinalRoundSameSlot`
+    # (`scoring/hard.py`). Real leagues play the last round simultaneously so
+    # no team has a competitive edge from kicking off after its rivals.
+    final_round_kickoff_time: str = "18:00"
+
+    # The candidate kickoff times a non-final-round match may be assigned
+    # (`rounds/kickoff.py::assign_kickoff_times`), earliest first. Only
+    # meaningful together with `late_kickoff_long_travel` in `scoring/soft.py`.
+    kickoff_slots: list[str] = Field(
+        default_factory=lambda: ["14:00", "18:00", "20:00"]
+    )
+
+    @field_validator("final_round_kickoff_time")
+    @classmethod
+    def _final_round_kickoff_time_is_hh_mm(cls, v: str) -> str:
+        _validate_hh_mm(v)
+        return v
+
+    @field_validator("kickoff_slots")
+    @classmethod
+    def _kickoff_slots_are_hh_mm(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("kickoff_slots must not be empty")
+        for slot in v:
+            _validate_hh_mm(slot)
+        return v
 
     # Cup-only: the real-world rounds this competition's teams are entered
     # into, in the order they are played. Empty for a league.
@@ -220,6 +261,42 @@ class VenueBlackout(BaseModel):
     reason: str = ""
 
 
+class FullRoundRequirement(BaseModel):
+    """Every team in a competition must have a match on this date.
+
+    May 16 in Eliteserien: the eve of the national day is a full round, not
+    just the handful of marquee fixtures a plain `FixedRequirement` can pin.
+    `hard=True` makes it a constraint the solver must satisfy (see
+    `FullRoundOnDate` in `scoring/hard.py`); the round nearest this date is
+    forced onto it entirely by `resolve_round_pins` in `rounds/greedy.py`.
+    """
+
+    id: str
+    date: date
+    competition: str
+    hard: bool = True
+    reason: str = ""
+
+
+class RivalryFixture(BaseModel):
+    """A specific pairing that should land on a fixed date, home side
+    alternating by year parity.
+
+    Bodø/Glimt vs Tromsø IL on May 16: the closest thing Norwegian football
+    has to a natural derby at that latitude. Scored as a preference by
+    `RivalryFixtureOnDate` in `scoring/soft.py` — nothing pins the pairing to
+    the date the way a hard requirement would.
+    """
+
+    id: str
+    date: date
+    competition: str
+    team_even_year_home: str
+    team_odd_year_home: str
+    weight: float = 20.0
+    reason: str = ""
+
+
 class FixedRequirement(BaseModel):
     """A date that must carry a match, with a named team at home.
 
@@ -235,23 +312,16 @@ class FixedRequirement(BaseModel):
     reason: str = ""
     weight: float = 50.0
 
-    # Informational only — nothing else in this model has kickoff-time
-    # granularity (Match is date-only), so this isn't enforced by the solver.
-    # It exists for requirements like Tromsø's Midnight Sun Match, where the
-    # late kickoff is the whole point and needs to survive into the report.
+    # Informational at the requirement level: `rounds/kickoff.py::assign_kickoff_times`
+    # copies this onto the winning `Match` once dates are fixed, for
+    # requirements like Tromsø's Midnight Sun Match, where the late kickoff is
+    # the whole point and needs to survive into the report.
     kickoff_time: str | None = None
 
     @field_validator("kickoff_time")
     @classmethod
     def _kickoff_time_is_hh_mm(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        hour, sep, minute = v.partition(":")
-        if sep != ":" or not (hour.isdigit() and minute.isdigit()):
-            raise ValueError(f"kickoff_time {v!r} must be 24h HH:MM")
-        if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
-            raise ValueError(f"kickoff_time {v!r} must be 24h HH:MM")
-        return v
+        return _validate_hh_mm(v)
 
 
 class Season(BaseModel):
@@ -278,6 +348,8 @@ class Season(BaseModel):
     discouraged_dates: list[DatedNote] = Field(default_factory=list)
     venue_blackouts: list[VenueBlackout] = Field(default_factory=list)
     fixed_requirements: list[FixedRequirement] = Field(default_factory=list)
+    full_round_requirements: list[FullRoundRequirement] = Field(default_factory=list)
+    rivalry_fixtures: list[RivalryFixture] = Field(default_factory=list)
 
 
 class TravelOverride(BaseModel):
@@ -315,6 +387,17 @@ class Match(BaseModel):
     round_index: int
     date: date
     venue: str
+
+    # Not a search variable the way `date` and `venue` are — the solvers only
+    # decide dates. Filled in by `rounds/kickoff.py::assign_kickoff_times`
+    # once a schedule's dates are fixed, so it is always `None` on a
+    # freshly-built `Match` and only meaningful on a solver's final output.
+    kickoff_time: str | None = None
+
+    @field_validator("kickoff_time")
+    @classmethod
+    def _kickoff_time_is_hh_mm(cls, v: str | None) -> str | None:
+        return _validate_hh_mm(v)
 
     @property
     def key(self) -> str:

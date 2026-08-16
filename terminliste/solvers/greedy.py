@@ -229,6 +229,106 @@ def _alignment_score(targets: dict[str, set[int]], home_rounds: dict[str, set[in
     return sum(len(home_rounds.get(team, set()) & wanted) for team, wanted in targets.items())
 
 
+def resolve_round_pins(
+    season: Season, planned: list[PlannedCompetition]
+) -> dict[tuple[str, int], date]:
+    """Rounds that must land on one single date, keyed by (competition_id, round_index).
+
+    Two sources, both forced entirely onto one date rather than searched for:
+    every league's own final round (`FinalRoundSameSlot` in `scoring/hard.py`),
+    and any hard `FullRoundRequirement` — the round whose anchor already sits
+    closest to the required date is the one forced onto it exactly
+    (`FullRoundOnDate` in `scoring/hard.py`).
+    """
+    pins: dict[tuple[str, int], date] = {}
+    for plan in planned:
+        if plan.competition.format != "league":
+            continue
+        final_round = plan.competition.rounds - 1
+        anchor = plan.anchors.get(final_round)
+        if anchor is not None:
+            pins[(plan.competition.id, final_round)] = anchor
+
+    for requirement in season.full_round_requirements:
+        if not requirement.hard:
+            continue
+        plan = next((p for p in planned if p.competition.id == requirement.competition), None)
+        if plan is None or not plan.anchors:
+            continue
+        round_index = min(
+            plan.anchors, key=lambda r: abs((plan.anchors[r] - requirement.date).days)
+        )
+        pins[(plan.competition.id, round_index)] = requirement.date
+
+    return pins
+
+
+def align_home_teams_to_round_pins(
+    season: Season,
+    planned: list[PlannedCompetition],
+    round_pins: dict[tuple[str, int], date],
+) -> None:
+    """Flip fixtures so a hard `FixedRequirement`'s team is home in its pinned round.
+
+    A round pinned onto a specific date (see `resolve_round_pins`) is placed
+    with whatever home/away orientation the round-robin generator happened to
+    give it — which has no reason to already put e.g. Brann at home on May 16.
+    This finds each hard requirement whose date coincides with a pinned
+    round and, if its team is away there, flips that fixture (and its
+    season's mirror, to keep every pairing meeting home once and away once).
+    """
+    by_id = {p.competition.id: p for p in planned}
+    round_by_competition_date = {
+        (competition_id, day): round_index
+        for (competition_id, round_index), day in round_pins.items()
+    }
+    for requirement in season.fixed_requirements:
+        if not requirement.hard:
+            continue
+        round_index = round_by_competition_date.get((requirement.competition, requirement.date))
+        if round_index is None:
+            continue
+        plan = by_id.get(requirement.competition)
+        if plan is None:
+            continue
+        _ensure_home_in_round(plan, requirement.home_team, round_index)
+
+
+def _ensure_home_in_round(plan: PlannedCompetition, team_id: str, round_index: int) -> None:
+    """Make `team_id` the home side of its `round_index` fixture, if it isn't already.
+
+    Flips the fixture in place, and its season mirror (the same pairing's
+    other leg) alongside it — flipping only one leg would leave the pair
+    meeting twice at the same ground, exactly as `_flip_orientation` in
+    `solvers/local_search.py` guards against during search.
+    """
+    fixture = next(
+        (
+            f
+            for f in plan.fixtures
+            if f.round_index == round_index and team_id in (f.home_team, f.away_team)
+        ),
+        None,
+    )
+    if fixture is None or fixture.home_team == team_id:
+        return
+
+    pair = {fixture.home_team, fixture.away_team}
+    mirror = next(
+        (
+            f
+            for f in plan.fixtures
+            if f.round_index != round_index and {f.home_team, f.away_team} == pair
+        ),
+        None,
+    )
+    for target in (f for f in (fixture, mirror) if f is not None):
+        index = plan.fixtures.index(target)
+        plan.fixtures[index] = target.model_copy(
+            update={"home_team": target.away_team, "away_team": target.home_team}
+        )
+
+
 def _relabel(plan: PlannedCompetition, team_a: str, team_b: str) -> None:
     for i, fixture in enumerate(plan.fixtures):
         home = _swap_label(fixture.home_team, team_a, team_b)
@@ -277,6 +377,8 @@ def build_initial_schedule(
     planned = plan_competitions(world, season, competitions, calendar, rng)
     if align:
         align_dual_clubs(world, planned)
+    round_pins = resolve_round_pins(season, planned)
+    align_home_teams_to_round_pins(season, planned, round_pins)
     cup_windows = resolved_cup_windows(cup_schedules or [])
 
     state = PlacementState()
@@ -311,6 +413,31 @@ def build_initial_schedule(
         state.place(world, match)
         pinned.add(match.key)
         remaining[plan.competition.id].remove(fixture)
+
+    # Rounds pinned to a single date next — a league's final round, or a
+    # FullRoundRequirement's round (see `resolve_round_pins`). Placed directly
+    # and pinned, the same way a single-team fixed requirement is: local
+    # search must not be free to drift one match off its round's shared date
+    # while leaving the rest behind.
+    for plan in planned:
+        for fixture in list(remaining[plan.competition.id]):
+            pin_date = round_pins.get((plan.competition.id, fixture.round_index))
+            if pin_date is None:
+                continue
+            venue = world.team(fixture.home_team).home_venue
+            match = Match(
+                competition_id=fixture.competition_id,
+                home_team=fixture.home_team,
+                away_team=fixture.away_team,
+                leg=fixture.leg,
+                round_index=fixture.round_index,
+                date=pin_date,
+                venue=venue,
+            )
+            matches.append(match)
+            state.place(world, match)
+            pinned.add(match.key)
+            remaining[plan.competition.id].remove(fixture)
 
     # Then everything else, in chronological round order across both leagues so
     # the two competitions compete for dates fairly instead of the first one

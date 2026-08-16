@@ -31,6 +31,7 @@ from datetime import date, timedelta
 from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
 from ..model.loader import World
 from ..model.schema import Competition, Match
+from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import HARD_PENALTY, Constraint, EvalContext, ScheduleIndex, evaluate
 from .base import Candidate, SolveRequest, SolverResult, select_diverse
 from .greedy import build_initial_schedule
@@ -52,6 +53,11 @@ class WorkingMatch:
     round_index: int
     date: date
     venue: str
+    # Never mutated by a move — kickoff is assigned once dates are final (see
+    # `rounds/kickoff.py::assign_kickoff_times`), not searched. Present here
+    # only so this duck-types `Match` for constraints that read it, such as
+    # `FinalRoundSameSlot`.
+    kickoff_time: str | None = None
 
     @property
     def key(self) -> str:
@@ -148,6 +154,9 @@ class LocalSearchScheduler:
 
             matches = [m.to_match() for m in best]
             matches.sort(key=lambda m: (m.date, m.competition_id, m.home_team))
+            matches = assign_kickoff_times(
+                matches, request.competitions, request.season.fixed_requirements
+            )
             detail_ctx = _with_detail(request.ctx)
             score = evaluate(matches, request.constraints, detail_ctx)
             candidates.append(

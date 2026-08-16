@@ -16,7 +16,9 @@ from terminliste.scoring.hard import (
     BlackoutDates,
     ClubHomeClash,
     CupRoundConflict,
+    FinalRoundSameSlot,
     FixedDateRequirement,
+    FullRoundOnDate,
     LegOrdering,
     MinRestDays,
     OneMatchPerTeamPerDay,
@@ -377,6 +379,88 @@ def test_cup_round_conflict_uses_each_teams_own_resolved_date():
 
 
 # -- clean schedule: every hard constraint reports zero ----------------------
+
+
+# -- final_round_same_slot -----------------------------------------------
+
+
+def _final_round_world():
+    v1, v2, v3 = f.venue("v1"), f.venue("v2"), f.venue("v3")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v2")
+    t3 = f.team("t3", "c3", "v3")
+    t4 = f.team("t4", "c4", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2]), f.club("c3", [t3]), f.club("c4", [t4])]
+    comp = f.competition("comp", ["t1", "t2", "t3", "t4"], rounds_per_pairing=2)
+    world = f.world(clubs, [v1, v2, v3], [comp])
+    season = f.season(competitions=["comp"])
+    return world, season, comp
+
+
+def test_final_round_same_slot_is_silent_when_the_round_shares_date_and_kickoff():
+    world, season, comp = _final_round_world()
+    constraint = FinalRoundSameSlot(competitions=[comp])
+    final_round = comp.rounds - 1
+    matches = [
+        f.match("comp", "t1", "t2", date(2026, 12, 6), "v1", leg=2, round_index=final_round, kickoff_time="18:00"),
+        f.match("comp", "t3", "t4", date(2026, 12, 6), "v3", leg=2, round_index=final_round, kickoff_time="18:00"),
+    ]
+    assert evaluate(matches, [constraint], _ctx(world, season)).hard_violations == 0
+
+
+def test_final_round_same_slot_fires_on_a_split_date():
+    world, season, comp = _final_round_world()
+    constraint = FinalRoundSameSlot(competitions=[comp])
+
+    final_round = comp.rounds - 1
+    split = [
+        f.match("comp", "t1", "t2", date(2026, 12, 6), "v1", leg=2, round_index=final_round, kickoff_time="18:00"),
+        f.match("comp", "t3", "t4", date(2026, 12, 7), "v3", leg=2, round_index=final_round, kickoff_time="18:00"),
+    ]
+    assert evaluate(split, [constraint], _ctx(world, season)).hard_violations == 1
+
+
+def test_final_round_same_slot_fires_on_a_split_kickoff_time():
+    world, season, comp = _final_round_world()
+    constraint = FinalRoundSameSlot(competitions=[comp])
+
+    final_round = comp.rounds - 1
+    split_kickoff = [
+        f.match("comp", "t1", "t2", date(2026, 12, 6), "v1", leg=2, round_index=final_round, kickoff_time="18:00"),
+        f.match("comp", "t3", "t4", date(2026, 12, 6), "v3", leg=2, round_index=final_round, kickoff_time="20:00"),
+    ]
+    assert evaluate(split_kickoff, [constraint], _ctx(world, season)).hard_violations == 1
+
+
+# -- full_round_on_date ---------------------------------------------------
+
+
+def test_full_round_on_date_fires_when_a_team_has_no_match():
+    from terminliste.model.schema import FullRoundRequirement
+
+    v1, v2, v3, v4 = f.venue("v1"), f.venue("v2"), f.venue("v3"), f.venue("v4")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v2")
+    t3 = f.team("t3", "c3", "v3")
+    t4 = f.team("t4", "c4", "v4")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2]), f.club("c3", [t3]), f.club("c4", [t4])]
+    comp = f.competition("comp", ["t1", "t2", "t3", "t4"])
+    world = f.world(clubs, [v1, v2, v3, v4], [comp])
+    requirement = FullRoundRequirement(id="req1", date=date(2026, 5, 16), competition="comp")
+    season = f.season(competitions=["comp"], full_round_requirements=[requirement])
+    constraint = FullRoundOnDate(requirements=[requirement])
+
+    # t3 and t4 don't play at all on the required date.
+    only_half_play = [f.match("comp", "t1", "t2", date(2026, 5, 16), "v1")]
+    result = evaluate(only_half_play, [constraint], _ctx(world, season))
+    assert result.hard_violations == 2
+
+    everyone_plays = [
+        f.match("comp", "t1", "t2", date(2026, 5, 16), "v1", round_index=0),
+        f.match("comp", "t3", "t4", date(2026, 5, 16), "v3", round_index=0),
+    ]
+    result = evaluate(everyone_plays, [constraint], _ctx(world, season))
+    assert result.hard_violations == 0
 
 
 def test_all_hard_constraints_are_silent_on_a_clean_schedule():

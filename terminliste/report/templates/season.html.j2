@@ -281,7 +281,7 @@
       data-clubs="{{ match.home_club }} {{ match.away_club }}"
       data-competition="{{ match.competition_id }}"
       title="{{ match.venue }}">
-  <span class="d">{{ match.weekday }} {{ match.date.strftime('%d/%m') }}</span>
+  <span class="d">{{ match.weekday }} {{ match.date.strftime('%d/%m') }}{% if match.kickoff_time %} {{ match.kickoff_time }}{% endif %}</span>
   {% if show_competition %}
   <span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}">{{ match.competition_name }}</span>
   {% endif %}
@@ -582,7 +582,7 @@
       <tbody>
       {% for match in option.combined_list %}
       <tr class="fx-row" data-clubs="{{ match.home_club }} {{ match.away_club }}" data-competition="{{ match.competition_id }}">
-        <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}</td>
+        <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}{% if match.kickoff_time %} {{ match.kickoff_time }}{% endif %}</td>
         <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}">{{ match.competition_name }}</span></td>
         <td>
           <span class="swatch" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>

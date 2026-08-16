@@ -9,10 +9,13 @@ from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.soft import (
     ConsecutiveAwayDays,
     ConsecutiveHomeDays,
+    GrassAwayRoundOne,
     HomeAwayBalance,
     HomeAwayBreaks,
+    LateKickoffLongTravel,
     PreferredWeekday,
     RestComfort,
+    RivalryFixtureOnDate,
     SoftVenuePreference,
 )
 
@@ -251,3 +254,126 @@ def test_soft_venue_preference_penalises_discouraged_dates_only():
     elsewhere = [f.match("comp", "t1", "t2", discouraged_day.replace(day=5), "v1")]
     result = evaluate(elsewhere, [constraint], _ctx(world, season))
     assert result.result("soft_venue_preference").total == 0.0
+
+
+# -- grass_away_round_one --------------------------------------------------
+
+
+def test_grass_away_round_one_rewards_a_grass_club_playing_away_in_round_one():
+    v_grass, v_artificial = f.venue("v_grass", surface="grass"), f.venue("v_artificial", surface="artificial")
+    t_grass = f.team("t_grass", "c1", "v_grass")
+    t_artificial = f.team("t_artificial", "c2", "v_artificial")
+    clubs = [f.club("c1", [t_grass]), f.club("c2", [t_artificial])]
+    comp = f.competition("comp", ["t_grass", "t_artificial"], weights={"grass_away_round_one": 4.0})
+    world = f.world(clubs, [v_grass, v_artificial], [comp])
+    season = f.season(competitions=["comp"])
+    constraint = GrassAwayRoundOne(competitions=[comp])
+
+    grass_away = [f.match("comp", "t_artificial", "t_grass", date(2026, 3, 15), "v_artificial", round_index=0)]
+    result = evaluate(grass_away, [constraint], _ctx(world, season))
+    assert result.result("grass_away_round_one").total == 4.0
+
+    grass_home = [f.match("comp", "t_grass", "t_artificial", date(2026, 3, 15), "v_grass", round_index=0)]
+    result = evaluate(grass_home, [constraint], _ctx(world, season))
+    assert result.result("grass_away_round_one").total == 0.0
+
+
+def test_grass_away_round_one_is_silent_outside_round_one():
+    v_grass, v_artificial = f.venue("v_grass", surface="grass"), f.venue("v_artificial", surface="artificial")
+    t_grass = f.team("t_grass", "c1", "v_grass")
+    t_artificial = f.team("t_artificial", "c2", "v_artificial")
+    clubs = [f.club("c1", [t_grass]), f.club("c2", [t_artificial])]
+    comp = f.competition("comp", ["t_grass", "t_artificial"], weights={"grass_away_round_one": 4.0})
+    world = f.world(clubs, [v_grass, v_artificial], [comp])
+    season = f.season(competitions=["comp"])
+    constraint = GrassAwayRoundOne(competitions=[comp])
+
+    later_round = [f.match("comp", "t_artificial", "t_grass", date(2026, 3, 22), "v_artificial", round_index=1)]
+    result = evaluate(later_round, [constraint], _ctx(world, season))
+    assert result.result("grass_away_round_one").total == 0.0
+
+
+# -- late_kickoff_long_travel -----------------------------------------------
+
+
+def _late_kickoff_world():
+    v_home, v_away = f.venue("v_home"), f.venue("v_away")
+    home = f.team("home", "c1", "v_home")
+    away = f.team("away", "c2", "v_away")
+    clubs = [f.club("c1", [home]), f.club("c2", [away])]
+    comp = f.competition("comp", ["home", "away"], weights={"late_kickoff_long_travel": 6.0})
+    world = f.world(clubs, [v_home, v_away], [comp])
+    season = f.season(competitions=["comp"])
+    return world, season, comp
+
+
+def test_late_kickoff_long_travel_fires_only_when_both_late_and_far():
+    world, season, comp = _late_kickoff_world()
+    constraint = LateKickoffLongTravel(competitions=[comp])
+    sunday = date(2026, 6, 7)
+
+    late_and_far = [f.match("comp", "home", "away", sunday, "v_home", kickoff_time="20:00")]
+    result = evaluate(late_and_far, [constraint], _ctx(world, season, travel=_FixedTravel(8.0)))
+    assert result.result("late_kickoff_long_travel").total == -6.0
+
+    early_and_far = [f.match("comp", "home", "away", sunday, "v_home", kickoff_time="14:00")]
+    result = evaluate(early_and_far, [constraint], _ctx(world, season, travel=_FixedTravel(8.0)))
+    assert result.result("late_kickoff_long_travel").total == 0.0
+
+    late_and_close = [f.match("comp", "home", "away", sunday, "v_home", kickoff_time="20:00")]
+    result = evaluate(late_and_close, [constraint], _ctx(world, season, travel=_FixedTravel(1.0)))
+    assert result.result("late_kickoff_long_travel").total == 0.0
+
+
+def test_late_kickoff_long_travel_is_silent_off_sunday_or_without_a_kickoff():
+    world, season, comp = _late_kickoff_world()
+    constraint = LateKickoffLongTravel(competitions=[comp])
+
+    saturday = date(2026, 6, 6)
+    on_saturday = [f.match("comp", "home", "away", saturday, "v_home", kickoff_time="20:00")]
+    result = evaluate(on_saturday, [constraint], _ctx(world, season, travel=_FixedTravel(8.0)))
+    assert result.result("late_kickoff_long_travel").total == 0.0
+
+    sunday = date(2026, 6, 7)
+    no_kickoff = [f.match("comp", "home", "away", sunday, "v_home")]
+    result = evaluate(no_kickoff, [constraint], _ctx(world, season, travel=_FixedTravel(8.0)))
+    assert result.result("late_kickoff_long_travel").total == 0.0
+
+
+# -- rivalry_fixture_on_date -------------------------------------------------
+
+
+def test_rivalry_fixture_on_date_rewards_the_right_pairing_and_home_side():
+    from terminliste.model.schema import RivalryFixture
+
+    v1, v2 = f.venue("v1"), f.venue("v2")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v2")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp = f.competition("comp", ["t1", "t2"])
+    world = f.world(clubs, [v1, v2], [comp])
+    rivalry = RivalryFixture(
+        id="derby",
+        date=date(2026, 5, 16),
+        competition="comp",
+        team_even_year_home="t1",
+        team_odd_year_home="t2",
+        weight=20.0,
+    )
+    even_season = f.season(competitions=["comp"], rivalry_fixtures=[rivalry], year=2026)
+    odd_season = f.season(competitions=["comp"], rivalry_fixtures=[rivalry], year=2027)
+    constraint = RivalryFixtureOnDate(fixtures=[rivalry], season_year=2026)
+
+    t1_home = [f.match("comp", "t1", "t2", date(2026, 5, 16), "v1")]
+    assert evaluate(t1_home, [constraint], _ctx(world, even_season)).result("rivalry_fixture_on_date").total == 20.0
+
+    # Same pairing, wrong home side for an even year: no reward.
+    t2_home = [f.match("comp", "t2", "t1", date(2026, 5, 16), "v2")]
+    assert evaluate(t2_home, [constraint], _ctx(world, even_season)).result("rivalry_fixture_on_date").total == 0.0
+
+    # An odd-year constraint wants t2 at home instead.
+    odd_constraint = RivalryFixtureOnDate(fixtures=[rivalry], season_year=2027)
+    assert evaluate(t2_home, [odd_constraint], _ctx(world, odd_season)).result("rivalry_fixture_on_date").total == 20.0
+
+    # No match at all on the date: no reward.
+    assert evaluate([], [constraint], _ctx(world, even_season)).result("rivalry_fixture_on_date").total == 0.0

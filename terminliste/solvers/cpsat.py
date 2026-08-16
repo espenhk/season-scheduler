@@ -30,9 +30,10 @@ from datetime import date, timedelta
 from ..model.calendar import build_calendar, calendars_by_competition
 from ..model.schema import Match
 from ..rounds.cup_schedule import cup_conflict, resolved_cup_windows
+from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import evaluate
 from .base import Candidate, SolveRequest, SolverResult, select_diverse
-from .greedy import align_dual_clubs, plan_competitions
+from .greedy import align_dual_clubs, align_home_teams_to_round_pins, plan_competitions, resolve_round_pins
 
 _ONE_DAY = timedelta(days=1)
 
@@ -55,6 +56,8 @@ class CpSatScheduler:
             request.world, request.season, request.competitions, calendar
         )
         align_dual_clubs(request.world, planned)
+        round_pins = resolve_round_pins(request.season, planned)
+        align_home_teams_to_round_pins(request.season, planned, round_pins)
 
         candidates: list[Candidate] = []
         notes: list[str] = []
@@ -66,7 +69,7 @@ class CpSatScheduler:
 
         for pass_index in range(request.top_n):
             built = _build_model(
-                cp_model, request, planned, calendar, forbidden
+                cp_model, request, planned, calendar, forbidden, round_pins
             )
             if built is None:
                 notes.append(f"pass {pass_index}: no candidate dates could be built")
@@ -87,6 +90,9 @@ class CpSatScheduler:
 
             matches = _extract(solver, placement, fixtures, request)
             matches.sort(key=lambda m: (m.date, m.competition_id, m.home_team))
+            matches = assign_kickoff_times(
+                matches, request.competitions, request.season.fixed_requirements
+            )
             detail_ctx = _with_detail(request.ctx)
             score = evaluate(matches, request.constraints, detail_ctx)
             candidates.append(
@@ -128,7 +134,7 @@ def _with_detail(ctx):
     )
 
 
-def _build_model(cp_model, request, planned, calendar, forbidden):
+def _build_model(cp_model, request, planned, calendar, forbidden, round_pins):
     """Assemble the CP-SAT model. Returns None if no fixture can be placed."""
     world = request.world
     season = request.season
@@ -170,20 +176,31 @@ def _build_model(cp_model, request, planned, calendar, forbidden):
         for fixture in plan.fixtures:
             venue = world.team(fixture.home_team).home_venue
             anchor = plan.anchors[fixture.round_index]
-            window = _cup_clear(
-                competition_calendar.window(anchor, competition.match_window_days, venue),
-                fixture,
-                cup_windows,
-            )
-            if not window:
+            pin_date = round_pins.get((competition.id, fixture.round_index))
+            if pin_date is not None:
+                # A round pinned to one date (the final round, or a
+                # FullRoundRequirement's round — see `resolve_round_pins`)
+                # gets exactly one candidate date, which forces it without
+                # needing a separate assumption literal: there is nothing
+                # else for `AddExactlyOne` below to choose.
+                window = [pin_date]
+            else:
                 window = _cup_clear(
-                    competition_calendar.window(anchor, competition.match_window_days * 3, venue),
+                    competition_calendar.window(anchor, competition.match_window_days, venue),
                     fixture,
                     cup_windows,
                 )
-            extra = required_dates.get(_fixture_id(fixture))
-            if extra is not None:
-                window = sorted(set(window) | {extra})
+                if not window:
+                    window = _cup_clear(
+                        competition_calendar.window(
+                            anchor, competition.match_window_days * 3, venue
+                        ),
+                        fixture,
+                        cup_windows,
+                    )
+                extra = required_dates.get(_fixture_id(fixture))
+                if extra is not None:
+                    window = sorted(set(window) | {extra})
             if not window:
                 return None
             index = len(fixtures)

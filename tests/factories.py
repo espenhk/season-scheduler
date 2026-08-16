@@ -18,7 +18,9 @@ from terminliste.model.schema import (
     Competition,
     CupRound,
     FixedRequirement,
+    FullRoundRequirement,
     Match,
+    RivalryFixture,
     Season,
     Team,
     Venue,
@@ -26,8 +28,22 @@ from terminliste.model.schema import (
 from terminliste.rounds.cup_schedule import CupRoundPlacement, CupSchedule
 
 
-def venue(id: str, lat: float = 60.0, lon: float = 10.0, capacity: int = 1000) -> Venue:
-    return Venue(id=id, name=id.replace("_", " ").title(), city=id, lat=lat, lon=lon, capacity=capacity)
+def venue(
+    id: str,
+    lat: float = 60.0,
+    lon: float = 10.0,
+    capacity: int = 1000,
+    surface: str = "grass",
+) -> Venue:
+    return Venue(
+        id=id,
+        name=id.replace("_", " ").title(),
+        city=id,
+        lat=lat,
+        lon=lon,
+        capacity=capacity,
+        surface=surface,
+    )
 
 
 def team(id: str, club_id: str, home_venue: str, gender: str = "men", level: str = "senior") -> Team:
@@ -54,13 +70,15 @@ def competition(
     preferred_weekday: str = "sunday",
     min_rest_days: int = 3,
     match_window_days: int = 3,
-    comfortable_rest_days: int = 6,
+    comfortable_rest_days: int = 5,
     weights: dict | None = None,
     rounds_per_pairing: int = 2,
     format: str = "league",
     cup_rounds: list[CupRound] | None = None,
     start: date | None = None,
     end: date | None = None,
+    final_round_kickoff_time: str = "18:00",
+    kickoff_slots: list[str] | None = None,
 ) -> Competition:
     return Competition(
         id=id,
@@ -79,6 +97,8 @@ def competition(
         cup_rounds=cup_rounds or [],
         start=start,
         end=end,
+        final_round_kickoff_time=final_round_kickoff_time,
+        kickoff_slots=kickoff_slots or ["14:00", "18:00", "20:00"],
     )
 
 
@@ -139,13 +159,16 @@ def season(
     global_blackouts=None,
     venue_blackouts=None,
     fixed_requirements: list[FixedRequirement] | None = None,
+    full_round_requirements: list[FullRoundRequirement] | None = None,
+    rivalry_fixtures: list[RivalryFixture] | None = None,
     discouraged_dates=None,
     start: date = date(2026, 1, 1),
     end: date = date(2026, 12, 31),
+    year: int = 2026,
 ) -> Season:
     return Season(
         id=id,
-        year=2026,
+        year=year,
         start=start,
         end=end,
         competitions=competitions or [],
@@ -153,6 +176,8 @@ def season(
         global_blackouts=global_blackouts or [],
         venue_blackouts=venue_blackouts or [],
         fixed_requirements=fixed_requirements or [],
+        full_round_requirements=full_round_requirements or [],
+        rivalry_fixtures=rivalry_fixtures or [],
         discouraged_dates=discouraged_dates or [],
     )
 
@@ -176,6 +201,7 @@ def match(
     venue_id: str,
     leg: int = 1,
     round_index: int = 0,
+    kickoff_time: str | None = None,
 ) -> Match:
     return Match(
         competition_id=competition_id,
@@ -185,4 +211,5 @@ def match(
         round_index=round_index,
         date=day,
         venue=venue_id,
+        kickoff_time=kickoff_time,
     )

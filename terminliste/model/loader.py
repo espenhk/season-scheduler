@@ -308,6 +308,8 @@ def validate_world(world: World) -> list[str]:
                     f"season {season.id!r} blacks out unknown venue {blackout.venue!r}"
                 )
         errors.extend(_validate_fixed_requirements(world, season))
+        errors.extend(_validate_full_round_requirements(world, season))
+        errors.extend(_validate_rivalry_fixtures(world, season))
         errors.extend(_validate_calendar_capacity(world, season))
 
     for override in world.travel_overrides:
@@ -389,6 +391,75 @@ def _validate_fixed_requirements(world: World, season: Season) -> list[str]:
             errors.append(
                 f"requirement {requirement.id!r} demands a match on {requirement.date}, which is "
                 f"also a global blackout — these cannot both hold"
+            )
+    return errors
+
+
+def _validate_full_round_requirements(world: World, season: Season) -> list[str]:
+    errors: list[str] = []
+    seen: set[str] = set()
+    for requirement in season.full_round_requirements:
+        if requirement.id in seen:
+            errors.append(
+                f"season {season.id!r} has duplicate full-round requirement id {requirement.id!r}"
+            )
+        seen.add(requirement.id)
+        competition = world.competitions.get(requirement.competition)
+        if competition is None:
+            errors.append(
+                f"full-round requirement {requirement.id!r} names unknown competition "
+                f"{requirement.competition!r}"
+            )
+            continue
+        if competition.format != "league":
+            errors.append(
+                f"full-round requirement {requirement.id!r} names {requirement.competition!r}, "
+                f"which is a {competition.format}, not a league"
+            )
+        window_start = competition.start or season.start
+        window_end = competition.end or season.end
+        if not window_start <= requirement.date <= window_end:
+            errors.append(
+                f"full-round requirement {requirement.id!r} falls on {requirement.date}, outside "
+                f"the {requirement.competition!r} window {window_start}..{window_end}"
+            )
+        if any(b.date == requirement.date for b in season.global_blackouts):
+            errors.append(
+                f"full-round requirement {requirement.id!r} demands a round on "
+                f"{requirement.date}, which is also a global blackout — these cannot both hold"
+            )
+    return errors
+
+
+def _validate_rivalry_fixtures(world: World, season: Season) -> list[str]:
+    errors: list[str] = []
+    seen: set[str] = set()
+    for fixture in season.rivalry_fixtures:
+        if fixture.id in seen:
+            errors.append(
+                f"season {season.id!r} has duplicate rivalry fixture id {fixture.id!r}"
+            )
+        seen.add(fixture.id)
+        competition = world.competitions.get(fixture.competition)
+        if competition is None:
+            errors.append(
+                f"rivalry fixture {fixture.id!r} names unknown competition {fixture.competition!r}"
+            )
+            continue
+        for team_id in (fixture.team_even_year_home, fixture.team_odd_year_home):
+            if team_id not in world.teams:
+                errors.append(f"rivalry fixture {fixture.id!r} names unknown team {team_id!r}")
+            elif team_id not in competition.teams:
+                errors.append(
+                    f"rivalry fixture {fixture.id!r} names {team_id!r}, which does not play in "
+                    f"{fixture.competition!r}"
+                )
+        window_start = competition.start or season.start
+        window_end = competition.end or season.end
+        if not window_start <= fixture.date <= window_end:
+            errors.append(
+                f"rivalry fixture {fixture.id!r} falls on {fixture.date}, outside the "
+                f"{fixture.competition!r} window {window_start}..{window_end}"
             )
     return errors
 

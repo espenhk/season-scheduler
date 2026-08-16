@@ -381,6 +381,7 @@ def _match_entries(
             {
                 "date": match.date,
                 "weekday": match.date.strftime("%a"),
+                "kickoff_time": match.kickoff_time,
                 "home": world.team_label(match.home_team),
                 "home_short": world.team_short_label(match.home_team),
                 "away": world.team_label(match.away_team),
@@ -680,6 +681,7 @@ def write_json(result: SolverResult, output_path: Path) -> Path:
                         "home": m.home_team,
                         "away": m.away_team,
                         "venue": m.venue,
+                        "kickoff_time": m.kickoff_time,
                     }
                     for m in candidate.matches
                 ],

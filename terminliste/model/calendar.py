@@ -109,9 +109,12 @@ def _outward_offsets(days: int) -> list[int]:
 def build_calendar(world: World, season: Season) -> SeasonCalendar:
     all_dates = _date_range(season.start, season.end)
     blackouts = {b.date for b in season.global_blackouts}
-    # A date demanded by a hard fixed requirement can never be a blackout; the
-    # loader already rejects that combination, so this is just belt and braces.
-    required = {r.date for r in season.fixed_requirements if r.hard}
+    # A date demanded by a hard fixed requirement (or a hard full-round
+    # requirement) can never be a blackout; the loader already rejects that
+    # combination, so this is just belt and braces.
+    required = {r.date for r in season.fixed_requirements if r.hard} | {
+        r.date for r in season.full_round_requirements if r.hard
+    }
 
     global_allowed = frozenset(d for d in all_dates if d not in blackouts or d in required)
 

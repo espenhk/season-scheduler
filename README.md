@@ -151,13 +151,34 @@ conflict discovered too late.
 present is not feasible, full stop:
 `min_rest_days`, `blackout_dates`, `venue_double_booking`, `club_home_clash`,
 `leg_ordering`, `fixed_requirement`, `one_match_per_team_per_day`,
-`cup_round_conflict`.
+`cup_round_conflict`, `final_round_same_slot` (every league's final round
+shares one date and kickoff time — `Competition.final_round_kickoff_time`,
+enforced by pinning the round's fixtures to one candidate date up front in
+both solver backends, see `solvers/greedy.py::resolve_round_pins`),
+`full_round_on_date` (every team in a competition has a match on a named
+date — `Season.full_round_requirements`; May 16 in Eliteserien).
 
 **Soft** (`terminliste/scoring/soft.py`) — scored, signed (reward positive,
 penalty negative), and shown ranked in the report:
 `preferred_weekday`, `consecutive_home_days`, `consecutive_away_days` (scaled
 by travel time, capped at an 8h default), `home_away_breaks`,
-`home_away_balance`, `rest_comfort`, `soft_venue_preference`.
+`home_away_balance`, `rest_comfort`, `soft_venue_preference`,
+`grass_away_round_one` (grass-pitch clubs reward playing away in round 1),
+`late_kickoff_long_travel` (penalises a late Sunday kickoff for an away team
+with a long trip home — tunable `late_from`/`long_travel_hours`), and
+`rivalry_fixture_on_date` (a fixed annual pairing, home side alternating by
+year — `Season.rivalry_fixtures`; Bodø/Glimt vs Tromsø IL on May 16).
+
+Kickoff time itself isn't a search variable the way date and venue are —
+`rounds/kickoff.py::assign_kickoff_times` fills in `Match.kickoff_time` once
+a schedule's dates are fixed: the final round gets its competition's forced
+slot, a match an explicit `FixedRequirement.kickoff_time` names (Tromsø's
+Midnight Sun Match) gets that, and everything else gets one of
+`Competition.kickoff_slots` chosen deterministically per fixture. Nothing in
+either solver backend currently searches over kickoff choice to *improve*
+`late_kickoff_long_travel`'s score — same kind of known gap as CP-SAT's
+`home_away_breaks` handling below, not something to be surprised by in a
+generated schedule.
 
 Run `python cli.py score <file> --season 2026` on any schedule to see every
 rule's contribution, with named examples for anything that fired.

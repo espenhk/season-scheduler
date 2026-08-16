@@ -14,7 +14,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from ..model.schema import WEEKDAYS, Competition
+from ..model.schema import WEEKDAYS, Competition, RivalryFixture
 from .base import ConstraintResult, EvalContext, Event, ScheduleIndex
 
 
@@ -460,6 +460,171 @@ class SoftVenuePreference:
         return ConstraintResult(self.id, "soft", total, count, events)
 
 
+@dataclass
+class GrassAwayRoundOne:
+    """Reward a grass-pitch club playing away in round 1.
+
+    Natural turf needs longer to establish than an artificial or hybrid
+    surface, so a grass-venue side is often not match-ready the very first
+    weekend of the season — an away trip is kinder than hosting on a pitch
+    that isn't ready for it yet.
+    """
+
+    competitions: list[Competition]
+    id: str = "grass_away_round_one"
+    kind: str = "soft"
+    weight: float = 4.0
+    _weight_by_team: dict[str, float] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        self._weight_by_team = _weights_by_team(self.competitions, "grass_away_round_one", self.weight)
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        total = 0.0
+        count = 0
+        events: list[Event] = []
+
+        for match in index.matches:
+            if match.round_index != 0:
+                continue
+            weight = self._weight_by_team.get(match.away_team)
+            if weight is None:
+                continue
+            if ctx.world.home_venue_of(match.away_team).surface != "grass":
+                continue
+            total += weight
+            count += 1
+            if ctx.detail:
+                events.append(
+                    Event(
+                        delta=weight,
+                        detail=(
+                            f"{ctx.world.team_label(match.away_team)} (grass pitch) starts the "
+                            f"season away, at {ctx.world.venue(match.venue).name}"
+                        ),
+                        match_keys=(match.key,),
+                        team_ids=(match.away_team,),
+                    )
+                )
+
+        return ConstraintResult(self.id, "soft", total, count, events)
+
+
+@dataclass
+class LateKickoffLongTravel:
+    """Penalise a late Sunday kickoff for an away team with a long trip home.
+
+    A late kickoff already means a late finish; a long drive or flight home
+    on top of that makes for a genuinely bad night for the travelling side.
+    An earlier kickoff, or a short trip, is never penalised regardless of the
+    other factor — this only fires when both line up. `late_from` and
+    `long_travel_hours` are the tunable thresholds; `late_kickoff_long_travel`
+    in a competition's `weights` overrides `weight` the same way every other
+    soft rule's weight can be tuned per competition.
+    """
+
+    competitions: list[Competition]
+    id: str = "late_kickoff_long_travel"
+    kind: str = "soft"
+    weight: float = 6.0
+    late_from: str = "19:00"
+    long_travel_hours: float = 5.0
+    _weight_by_competition: dict[str, float] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        for competition in self.competitions:
+            self._weight_by_competition[competition.id] = competition.weights.get(
+                "late_kickoff_long_travel", self.weight
+            )
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        total = 0.0
+        count = 0
+        events: list[Event] = []
+
+        for match in index.matches:
+            if match.competition_id not in self._weight_by_competition:
+                continue
+            if match.date.weekday() != WEEKDAYS.index("sunday"):
+                continue
+            if match.kickoff_time is None or match.kickoff_time < self.late_from:
+                continue
+            away_venue = ctx.world.team(match.away_team).home_venue
+            if away_venue == match.venue:
+                continue
+            hours = ctx.travel.hours(away_venue, match.venue)  # type: ignore[attr-defined]
+            if not math.isfinite(hours) or hours < self.long_travel_hours:
+                continue
+            weight = self._weight_by_competition[match.competition_id]
+            total -= weight
+            count += 1
+            if ctx.detail:
+                events.append(
+                    Event(
+                        delta=-weight,
+                        detail=(
+                            f"{ctx.world.team_label(match.away_team)} kick off at "
+                            f"{match.kickoff_time} at {ctx.world.venue(match.venue).name} on "
+                            f"{match.date}, {hours:.1f}h from home"
+                        ),
+                        match_keys=(match.key,),
+                        team_ids=(match.away_team,),
+                    )
+                )
+
+        return ConstraintResult(self.id, "soft", total, count, events)
+
+
+@dataclass
+class RivalryFixtureOnDate:
+    """Reward a fixed annual pairing landing on its date with the right home side.
+
+    Bodø/Glimt vs Tromsø IL on May 16, home advantage alternating by year —
+    the closest thing Norwegian football has to a natural derby at that
+    latitude. Nothing pins the pairing to the date the way a hard requirement
+    would; this only scores it when the schedule happens to land there.
+    """
+
+    fixtures: list[RivalryFixture]
+    season_year: int
+    id: str = "rivalry_fixture_on_date"
+    kind: str = "soft"
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        total = 0.0
+        count = 0
+        events: list[Event] = []
+
+        for fixture in self.fixtures:
+            even_year = self.season_year % 2 == 0
+            home_team = fixture.team_even_year_home if even_year else fixture.team_odd_year_home
+            away_team = fixture.team_odd_year_home if even_year else fixture.team_even_year_home
+            satisfied = any(
+                m.competition_id == fixture.competition
+                and m.home_team == home_team
+                and m.away_team == away_team
+                for m in index.by_date.get(fixture.date, ())
+            )
+            if not satisfied:
+                continue
+            total += fixture.weight
+            count += 1
+            if ctx.detail:
+                events.append(
+                    Event(
+                        delta=fixture.weight,
+                        detail=(
+                            f"{ctx.world.team_label(home_team)} host "
+                            f"{ctx.world.team_label(away_team)} on {fixture.date}"
+                        ),
+                        match_keys=(),
+                        team_ids=(home_team, away_team),
+                    )
+                )
+
+        return ConstraintResult(self.id, "soft", total, count, events)
+
+
 _ONE_DAY = timedelta(days=1)
 
 
@@ -483,9 +648,12 @@ def _weights_by_team(
 __all__ = [
     "ConsecutiveAwayDays",
     "ConsecutiveHomeDays",
+    "GrassAwayRoundOne",
     "HomeAwayBalance",
     "HomeAwayBreaks",
+    "LateKickoffLongTravel",
     "PreferredWeekday",
     "RestComfort",
+    "RivalryFixtureOnDate",
     "SoftVenuePreference",
 ]

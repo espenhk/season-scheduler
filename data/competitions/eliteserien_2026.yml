@@ -62,4 +62,4 @@ weights:
   soft_venue_preference: 5.0
 
 # Rest beyond the hard minimum that we would like every team to get.
-comfortable_rest_days: 6
+comfortable_rest_days: 5

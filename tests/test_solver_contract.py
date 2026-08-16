@@ -171,6 +171,41 @@ def test_local_search_is_deterministic_for_a_fixed_seed():
     assert run() == run()
 
 
+@pytest.mark.parametrize("solver_name", SOLVERS)
+def test_final_round_and_full_round_pins_are_honoured(solver_name):
+    """Regression guard for issues #40 and #38a: a league's final round must
+    land on one date and kickoff time, and a `FullRoundRequirement` must put
+    every team on the calendar that day — both need the solver's window
+    restriction in `resolve_round_pins` to actually work, not just the
+    scoring rule that checks the outcome."""
+    from terminliste.model.schema import FullRoundRequirement
+
+    world, season, competitions = _small_world()
+    men = competitions[0]
+    requirement = FullRoundRequirement(id="full1", date=date(2026, 6, 14), competition=men.id)
+    season = f.season(
+        competitions=season.competitions,
+        start=season.start,
+        end=season.end,
+        full_round_requirements=[requirement],
+    )
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=4, top_n=1, time_budget_s=15.0,
+    )
+    result = _get_scheduler(solver_name).solve(request)
+    assert result.best is not None
+    assert result.best.score.feasible, result.best.score.hard_results()
+
+    final_round_result = result.best.score.result("final_round_same_slot")
+    assert final_round_result is not None and final_round_result.count == 0
+
+    full_round_result = result.best.score.result("full_round_on_date")
+    assert full_round_result is not None and full_round_result.count == 0
+
+
 def test_unsolvable_calendar_reports_which_hard_rule_is_broken():
     """Almost every date blacked out: the solver should still terminate and
     say *what* is broken, not hang or quietly emit an infeasible schedule."""

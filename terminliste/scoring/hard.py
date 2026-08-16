@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from ..model.schema import Competition, FixedRequirement
+from ..model.schema import Competition, FixedRequirement, FullRoundRequirement
 from ..rounds.cup_schedule import CupSchedule, resolved_cup_windows
 from .base import Constraint, ConstraintResult, EvalContext, Event, ScheduleIndex
 
@@ -428,6 +428,109 @@ class CupRoundConflict:
         return ConstraintResult(self.id, "hard", penalty, count, events)
 
 
+@dataclass
+class FinalRoundSameSlot:
+    """Every league's final round lands on one date, at one kickoff time.
+
+    Real leagues play the last round simultaneously so no team has a
+    competitive edge from kicking off after its rivals have already
+    finished. This only checks the outcome — it is the window restriction in
+    `solvers/greedy.py::resolve_round_pins` (and the pinning that keeps local
+    search from nudging a final-round match off it) that makes the outcome
+    achievable in the first place, and `rounds/kickoff.py` that gives the
+    round a shared kickoff time at all.
+    """
+
+    competitions: list[Competition]
+    id: str = "final_round_same_slot"
+    kind: str = "hard"
+    weight: float = 1.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        count = 0
+        penalty = 0.0
+        events: list[Event] = []
+
+        for competition in self.competitions:
+            if competition.format != "league":
+                continue
+            final_round = competition.rounds - 1
+            matches = [
+                m
+                for m in index.by_competition.get(competition.id, ())
+                if m.round_index == final_round
+            ]
+            if len(matches) < 2:
+                continue
+            dates = {m.date for m in matches}
+            kickoffs = {m.kickoff_time for m in matches}
+            if len(dates) <= 1 and len(kickoffs) <= 1:
+                continue
+            offenders = max(len(dates) - 1, 0) + max(len(kickoffs) - 1, 0)
+            count += offenders
+            penalty -= self.weight * offenders
+            if ctx.detail:
+                events.append(
+                    Event(
+                        delta=-self.weight * offenders,
+                        detail=(
+                            f"{competition.name}: final round spread across {len(dates)} "
+                            f"date(s) and {len(kickoffs)} kickoff time(s)"
+                        ),
+                        match_keys=tuple(m.key for m in matches),
+                    )
+                )
+
+        return ConstraintResult(self.id, "hard", penalty, count, events)
+
+
+@dataclass
+class FullRoundOnDate:
+    """Every team in a competition has a match on a named date.
+
+    May 16 in Eliteserien: the eve of the national day is a full round, not
+    just the handful of marquee fixtures a plain `FixedDateRequirement` pins.
+    """
+
+    requirements: list[FullRoundRequirement]
+    id: str = "full_round_on_date"
+    kind: str = "hard"
+    weight: float = 1.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        count = 0
+        penalty = 0.0
+        events: list[Event] = []
+
+        for requirement in self.requirements:
+            competition = ctx.world.competition(requirement.competition)
+            playing: set[str] = set()
+            for match in index.by_date.get(requirement.date, ()):
+                if match.competition_id != requirement.competition:
+                    continue
+                playing.add(match.home_team)
+                playing.add(match.away_team)
+            missing = [t for t in competition.teams if t not in playing]
+            if not missing:
+                continue
+            count += len(missing)
+            penalty -= self.weight * len(missing)
+            if ctx.detail:
+                names = ", ".join(ctx.world.team_label(t) for t in missing)
+                events.append(
+                    Event(
+                        delta=-self.weight * len(missing),
+                        detail=(
+                            f"{competition.name}: {len(missing)} team(s) without a match on "
+                            f"{requirement.date} — {names}"
+                        ),
+                        match_keys=(),
+                    )
+                )
+
+        return ConstraintResult(self.id, "hard", penalty, count, events)
+
+
 def _day_after(day: date) -> date:
     return day + timedelta(days=1)
 
@@ -437,7 +540,9 @@ __all__: list[str] = [
     "ClubHomeClash",
     "Constraint",
     "CupRoundConflict",
+    "FinalRoundSameSlot",
     "FixedDateRequirement",
+    "FullRoundOnDate",
     "LegOrdering",
     "MinRestDays",
     "OneMatchPerTeamPerDay",

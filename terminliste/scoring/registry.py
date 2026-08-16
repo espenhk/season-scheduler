@@ -16,7 +16,9 @@ from .hard import (
     BlackoutDates,
     ClubHomeClash,
     CupRoundConflict,
+    FinalRoundSameSlot,
     FixedDateRequirement,
+    FullRoundOnDate,
     LegOrdering,
     MinRestDays,
     OneMatchPerTeamPerDay,
@@ -25,10 +27,13 @@ from .hard import (
 from .soft import (
     ConsecutiveAwayDays,
     ConsecutiveHomeDays,
+    GrassAwayRoundOne,
     HomeAwayBalance,
     HomeAwayBreaks,
+    LateKickoffLongTravel,
     PreferredWeekday,
     RestComfort,
+    RivalryFixtureOnDate,
     SoftVenuePreference,
 )
 
@@ -55,9 +60,13 @@ def build_constraints(
         VenueDoubleBooking(),
         ClubHomeClash(),
         LegOrdering(),
+        FinalRoundSameSlot(competitions=competitions),
     ]
     if hard_requirements:
         constraints.append(FixedDateRequirement(requirements=hard_requirements))
+    hard_full_rounds = [r for r in season.full_round_requirements if r.hard]
+    if hard_full_rounds:
+        constraints.append(FullRoundOnDate(requirements=hard_full_rounds))
     if cup_schedules:
         constraints.append(CupRoundConflict(cup_schedules=cup_schedules))
 
@@ -70,6 +79,8 @@ def build_constraints(
             HomeAwayBalance(competitions=competitions),
             RestComfort(competitions=competitions),
             SoftVenuePreference(competitions=competitions),
+            GrassAwayRoundOne(competitions=competitions),
+            LateKickoffLongTravel(competitions=competitions),
         ]
     )
 
@@ -82,6 +93,11 @@ def build_constraints(
         soft.kind = "soft"
         soft.weight = max(r.weight for r in soft_requirements)
         constraints.append(soft)
+
+    if season.rivalry_fixtures:
+        constraints.append(
+            RivalryFixtureOnDate(fixtures=season.rivalry_fixtures, season_year=season.year)
+        )
 
     return constraints
 
@@ -105,6 +121,11 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
     "home_away_balance": "Home and away spread evenly within each half of the season.",
     "rest_comfort": "Rest gaps at or above the comfortable target, not just the legal minimum.",
     "soft_venue_preference": "Matches avoid dates that are legal but discouraged.",
+    "final_round_same_slot": "Every league's final round shares one date and kickoff time.",
+    "full_round_on_date": "Every team in a competition has a match on a named date.",
+    "grass_away_round_one": "Grass-pitch clubs play away in round 1.",
+    "late_kickoff_long_travel": "Away teams with a long trip avoid late Sunday kickoffs.",
+    "rivalry_fixture_on_date": "A fixed annual pairing lands on its date, home side alternating by year.",
 }
 
 

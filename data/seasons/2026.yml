@@ -61,12 +61,33 @@ fixed_requirements:
     hard: true
     reason: "May 16 — Vålerenga at home in Oslo on the eve of the national day"
 
-  - id: may16_rosenborg_w
+  - id: may16_brann
     date: 2026-05-16
-    home_team: rosenborg_w
-    competition: toppserien_2026
+    home_team: brann_m
+    competition: eliteserien_2026
     hard: true
-    reason: "May 16 — Rosenborg women at home at Lerkendal"
+    reason: "May 16 — Brann at home in Bergen on the eve of the national day"
+
+  - id: may16_rosenborg_m
+    date: 2026-05-16
+    home_team: rosenborg_m
+    competition: eliteserien_2026
+    hard: true
+    reason: "May 16 — Rosenborg at home at Lerkendal on the eve of the national day"
+
+  - id: may16_viking
+    date: 2026-05-16
+    home_team: viking_m
+    competition: eliteserien_2026
+    hard: true
+    reason: "May 16 — Viking at home in Stavanger on the eve of the national day"
+
+  # Rosenborg women were previously also pinned home at Lerkendal on May 16,
+  # but the men's team now has the same requirement (`may16_rosenborg_m`
+  # above, added for issue #38) and the two share the one stadium — both
+  # cannot be true. The men's fixture wins: it is what the full Eliteserien
+  # round on May 16 (`full_round_requirements` below) actually needs, and
+  # Toppserien has no equivalent full-round rule forcing this particular date.
 
   - id: moldejazz_molde
     date: 2026-07-19
@@ -89,3 +110,27 @@ fixed_requirements:
       played under the midnight sun with a 22:00 kickoff. Recent editions were
       13 July 2024 and 15 July 2025 (verified 2026-08-16 via web search); no
       fixed weekday, so mid-July is used as the representative date
+
+# A date every team in a competition must have a match on — not just the
+# named teams above, the whole round. May 16 in Eliteserien: the eve of the
+# national day, played out as a full round rather than a handful of marquee
+# fixtures.
+full_round_requirements:
+  - id: may16_full_round
+    date: 2026-05-16
+    competition: eliteserien_2026
+    hard: true
+    reason: "May 16 is a full Eliteserien round — every club plays on the eve of the national day"
+
+# A fixed pairing on a fixed date, home advantage alternating by year parity.
+rivalry_fixtures:
+  - id: may16_bodo_glimt_tromso
+    date: 2026-05-16
+    competition: eliteserien_2026
+    team_even_year_home: bodo_glimt_m
+    team_odd_year_home: tromso_m
+    weight: 20.0
+    reason: >-
+      Bodø/Glimt host Tromsø IL on May 16 in even years (2026 included),
+      alternating home advantage every year — the northern Norway derby,
+      worth landing on the national-day round.
