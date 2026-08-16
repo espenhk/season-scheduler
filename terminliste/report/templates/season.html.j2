@@ -73,22 +73,40 @@
   .headlines { display: flex; gap: 28px; margin: 20px 0 4px; flex-wrap: wrap; }
   .headline .v { font-size: 24px; font-weight: 700; }
   .headline .l { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .headline-scope { font-size: 12.5px; color: var(--muted); font-style: italic; margin: 0 0 4px; }
+  .headline-scope:empty { display: none; }
 
-  /* -- upsides / problems -- */
+  /* -- upsides / problems --
+     Each entry is a <details> so the per-team occurrence list stays out of
+     the way until asked for — collapsed by default, one line of name+delta
+     to scan per rule. */
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 26px; }
   @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
   .col h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 10px; color: var(--muted); }
-  .item { border-left: 3px solid var(--line); padding: 8px 0 8px 12px; margin-bottom: 10px; }
+  .item { border-left: 3px solid var(--line); margin-bottom: 10px; }
+  /* The hard-violation box below still renders `.item` as a plain <div> (it
+     isn't collapsible), so it needs its own padding — the <details> version
+     gets padding from summary.top/.item-body instead, further down. */
+  .item:not(details) { padding: 8px 0 8px 12px; }
   .item.up { border-left-color: var(--good); }
   .item.down { border-left-color: var(--bad); }
   .item .top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  details.item > summary.top { cursor: pointer; padding: 8px 8px 8px 4px; list-style: none; }
+  details.item > summary.top::-webkit-details-marker { display: none; }
+  details.item > summary.top::before {
+    content: '▸'; display: inline-block; width: 12px; color: var(--muted);
+    font-size: 10px; transition: transform 0.12s ease;
+  }
+  details.item[open] > summary.top::before { transform: rotate(90deg); }
+  .item-body { padding: 0 8px 10px 16px; }
   .item .name { font-weight: 600; font-size: 14px; }
   .item .delta { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; white-space: nowrap; }
   .up .delta { color: var(--good); }
   .down .delta { color: var(--bad); }
   .desc { color: var(--muted); font-size: 13px; margin-top: 2px; }
-  .examples { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: #45453f; }
-  .examples li { margin: 2px 0; }
+  .examples, .occurrences { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: #45453f; }
+  .examples li, .occurrences li { margin: 2px 0; }
+  .occurrences .occ-count { color: var(--muted); font-variant-numeric: tabular-nums; }
   .more { color: var(--muted); font-size: 12px; font-style: italic; }
 
   /* -- rule description tooltip (icon shows description on hover/click) --
@@ -170,17 +188,22 @@
   .round { border-top: 1px solid var(--line); padding: 10px 0; display: grid; grid-template-columns: 130px 1fr; gap: 14px; }
   .round .rlabel { font-size: 12px; color: var(--muted); }
   .round .rlabel b { display: block; color: var(--ink); font-size: 14px; }
-  .fixtures { display: flex; flex-wrap: wrap; gap: 6px; }
+  .fixtures { display: flex; flex-wrap: wrap; gap: 8px; }
+  /* `gap` alone spaces every child of the card (date, tag, swatches, names,
+     the "v" separator, the pair dot) evenly — issue #61 asked for more
+     breathing room here, so this replaced a set of per-element margins that
+     made the card read as one cramped run of text. */
   .fx {
-    display: inline-flex; align-items: center;
-    border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px;
-    font-size: 12.5px; background: #fcfcfb; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 5px;
+    border: 1px solid var(--line); border-radius: 7px; padding: 7px 12px;
+    font-size: 13px; background: #fcfcfb; white-space: nowrap;
   }
-  .fx .d { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+  .fx .d { color: var(--muted); font-variant-numeric: tabular-nums; }
   .fx .h { font-weight: 600; }
+  .fx .vs { color: var(--muted); }
   .fx.paired { border-color: var(--good); background: #f1f9f4; }
   .comp-tag {
-    font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-right: 6px;
+    font-size: 10px; padding: 1px 6px; border-radius: 10px;
     background: #eeeee9; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em;
   }
   /* Home = square, away = diamond, both filled with the club's own colour
@@ -189,7 +212,7 @@
      surrounding text depending on the reader's font, which is what made
      some fixtures look like they had "bigger text" than others. */
   .swatch, .swatch-diamond, .swatch-neutral {
-    display: inline-block; width: 8px; height: 8px; margin-right: 5px;
+    display: inline-block; width: 8px; height: 8px;
     vertical-align: middle; flex: none;
   }
   .swatch { border-radius: 2px; }
@@ -199,7 +222,7 @@
   .swatch-neutral { border-radius: 50%; }
   .pair-badge {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 13px; height: 13px; margin-left: 6px; border-radius: 50%;
+    width: 13px; height: 13px; border-radius: 50%; vertical-align: middle;
     background: var(--good); flex: none;
   }
   .fx-demo {
@@ -259,10 +282,12 @@
       data-competition="{{ match.competition_id }}"
       title="{{ match.venue }}">
   <span class="d">{{ match.weekday }} {{ match.date.strftime('%d/%m') }}</span>
-  {% if show_competition %}<span class="comp-tag">{{ match.competition_name }}</span>{% endif %}
+  {% if show_competition %}
+  <span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}">{{ match.competition_name }}</span>
+  {% endif %}
   <span class="swatch" style="background:{{ match.color }}" aria-hidden="true"></span>
   <span class="h" title="{{ match.home }}">{{ match.home_short }}</span>
-  <span style="color:var(--muted)"> v </span>
+  <span class="vs">v</span>
   <span class="swatch-diamond" style="background:{{ match.away_color }}" aria-hidden="true"></span>
   <span title="{{ match.away }}">{{ match.away_short }}</span>
   {% if match.paired %}
@@ -282,7 +307,7 @@
   <span class="swatch-neutral" style="background:{{ fixture.color }}" aria-hidden="true"></span>
   {% endif %}
   <span class="h" title="{{ fixture.team_full }}">{{ fixture.team }}</span>
-  <span style="color:var(--muted)"> v TBD</span>
+  <span class="vs">v TBD</span>
 </span>
 {% endmacro %}
 
@@ -298,7 +323,8 @@
     {% endif %}
   </div>
 
-  <div class="headlines">
+  <div class="headline-scope"></div>
+  <div class="headlines" data-global="{{ option.headlines_json }}" data-club="{{ option.club_headlines_json }}">
     {% for headline in option.headlines %}
     <div class="headline">
       <div class="v">{{ headline.value }}</div>
@@ -336,8 +362,8 @@
     <div class="col">
       <h3>{{ 'Every upside' if option.full else 'Biggest upsides' }}</h3>
       {% for row in option.upsides %}
-      <div class="item up">
-        <div class="top">
+      <details class="item up">
+        <summary class="top">
           <span class="name-row">
             <span class="name">{{ row.id.replace('_', ' ') }}</span>
             {% set ns.tooltip_id = ns.tooltip_id + 1 %}
@@ -347,13 +373,17 @@
             </span>
           </span>
           <span class="delta">+{{ '%.0f'|format(row.total) }}</span>
+        </summary>
+        <div class="item-body">
+          {% if row.occurrences %}
+          <ul class="occurrences">
+            {% for occ in row.occurrences %}<li>{{ occ.label }} <span class="occ-count">×{{ occ.count }}</span></li>{% endfor %}
+          </ul>
+          {% else %}
+          <div class="desc">×{{ row.count }}</div>
+          {% endif %}
         </div>
-        <div class="desc">×{{ row.count }}</div>
-        {% if row.examples %}
-        <ul class="examples">{% for example in row.examples %}<li>{{ example }}</li>{% endfor %}</ul>
-        {% if row.more %}<div class="more">…and {{ row.more }} more</div>{% endif %}
-        {% endif %}
-      </div>
+      </details>
       {% else %}
       <div class="desc">Nothing scored positively.</div>
       {% endfor %}
@@ -362,8 +392,8 @@
     <div class="col">
       <h3>{{ 'Every problem (including the hard rules above)' if option.full else 'Biggest problems' }}</h3>
       {% for row in option.problems %}
-      <div class="item down">
-        <div class="top">
+      <details class="item down">
+        <summary class="top">
           <span class="name-row">
             <span class="name">{{ row.id.replace('_', ' ') }}</span>
             {% set ns.tooltip_id = ns.tooltip_id + 1 %}
@@ -373,13 +403,17 @@
             </span>
           </span>
           <span class="delta">{{ '%.0f'|format(row.total) }}</span>
+        </summary>
+        <div class="item-body">
+          {% if row.occurrences %}
+          <ul class="occurrences">
+            {% for occ in row.occurrences %}<li>{{ occ.label }} <span class="occ-count">×{{ occ.count }}</span></li>{% endfor %}
+          </ul>
+          {% else %}
+          <div class="desc">×{{ row.count }}</div>
+          {% endif %}
         </div>
-        <div class="desc">×{{ row.count }}</div>
-        {% if row.examples %}
-        <ul class="examples">{% for example in row.examples %}<li>{{ example }}</li>{% endfor %}</ul>
-        {% if row.more %}<div class="more">…and {{ row.more }} more</div>{% endif %}
-        {% endif %}
-      </div>
+      </details>
       {% else %}
       <div class="desc">Nothing scored negatively.</div>
       {% endfor %}
@@ -473,9 +507,10 @@
 
   <div class="legend">
     <span><span class="fx-demo" aria-hidden="true"></span>green = back-to-back home day for a dual club</span>
-    <span><span class="swatch" style="background:var(--ink)" aria-hidden="true"></span>square = home club colour</span>
-    <span><span class="swatch-diamond" style="background:var(--ink)" aria-hidden="true"></span>diamond = away club colour</span>
-    <span><span class="swatch-neutral" style="background:var(--ink)" aria-hidden="true"></span>circle = cup final, neutral ground</span>
+    <span><span class="pair-badge" style="margin-right:5px" aria-hidden="true"></span>dot = this fixture is one of that back-to-back pair</span>
+    <span><span class="swatch" style="background:var(--ink);margin-right:5px" aria-hidden="true"></span>square = home club colour</span>
+    <span><span class="swatch-diamond" style="background:var(--ink);margin-right:5px" aria-hidden="true"></span>diamond = away club colour</span>
+    <span><span class="swatch-neutral" style="background:var(--ink);margin-right:5px" aria-hidden="true"></span>circle = cup final, neutral ground</span>
   </div>
 
   <div class="cal-wrap view-pane" data-view="by-competition">
@@ -548,14 +583,14 @@
       {% for match in option.combined_list %}
       <tr class="fx-row" data-clubs="{{ match.home_club }} {{ match.away_club }}" data-competition="{{ match.competition_id }}">
         <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}</td>
-        <td>{{ match.competition_name }}</td>
+        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}">{{ match.competition_name }}</span></td>
         <td>
-          <span class="swatch" style="background:{{ match.color }}" aria-hidden="true"></span>
+          <span class="swatch" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
           <span title="{{ match.home }}">{{ match.home_short }}</span>
         </td>
         <td style="color:var(--muted)">v</td>
         <td>
-          <span class="swatch-diamond" style="background:{{ match.away_color }}" aria-hidden="true"></span>
+          <span class="swatch-diamond" style="background:{{ match.away_color }};margin-right:5px" aria-hidden="true"></span>
           <span title="{{ match.away }}">{{ match.away_short }}</span>
         </td>
         <td>{{ match.venue }}</td>
@@ -597,6 +632,34 @@
     var clubSelect = panel.querySelector('.club-select');
     if (!viewButtons.length) return;
 
+    // Headline numbers (matches on preferred weekday, back-to-back home
+    // days, ...) restated for the selected club, in place of the season-wide
+    // totals — the JSON payloads are rendered server-side once per option
+    // (see `club_headlines_json` in report/render.py) and swapped in here so
+    // filtering never needs a page reload.
+    var headlinesEl = panel.querySelector('.headlines');
+    var headlineScope = panel.querySelector('.headline-scope');
+    var globalHeadlines = headlinesEl ? JSON.parse(headlinesEl.dataset.global || '[]') : [];
+    var clubHeadlines = headlinesEl ? JSON.parse(headlinesEl.dataset.club || '{}') : {};
+
+    function renderHeadlines(rows) {
+      if (!headlinesEl) return;
+      headlinesEl.innerHTML = '';
+      rows.forEach(function (row) {
+        var tile = document.createElement('div');
+        tile.className = 'headline';
+        var v = document.createElement('div');
+        v.className = 'v';
+        v.textContent = row.value;
+        var l = document.createElement('div');
+        l.className = 'l';
+        l.textContent = row.label;
+        tile.appendChild(v);
+        tile.appendChild(l);
+        headlinesEl.appendChild(tile);
+      });
+    }
+
     function applyClubFilter() {
       var value = clubSelect ? clubSelect.value : '';
       panel.querySelectorAll('[data-clubs]').forEach(function (el) {
@@ -620,6 +683,16 @@
         var anyVisible = comp.querySelector('.round:not(.club-hidden)');
         comp.classList.toggle('club-hidden', !anyVisible);
       });
+      if (value && clubHeadlines[value]) {
+        renderHeadlines(clubHeadlines[value]);
+        if (headlineScope) {
+          var label = clubSelect.options[clubSelect.selectedIndex].text;
+          headlineScope.textContent = label + '’s matches only:';
+        }
+      } else {
+        renderHeadlines(globalHeadlines);
+        if (headlineScope) headlineScope.textContent = '';
+      }
     }
 
     function setView(name) {
@@ -675,6 +748,12 @@
   document.querySelectorAll('.info-icon').forEach(function (icon) {
     icon.addEventListener('click', function (e) {
       e.stopPropagation();
+      // Some icons now sit inside a <summary> (the collapsible "Biggest
+      // upsides"/"Biggest problems" entries) — without this, a click here
+      // would also trigger the browser's default toggle of the enclosing
+      // <details>, expanding/collapsing it every time someone reads a rule's
+      // description.
+      e.preventDefault();
       var wrap = icon.closest('.info-wrap');
       var wasOpen = wrap.classList.contains('open');
       document.querySelectorAll('.info-wrap.open').forEach(function (w) {
