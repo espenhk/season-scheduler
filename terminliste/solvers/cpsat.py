@@ -27,7 +27,7 @@ import time
 from collections import defaultdict
 from datetime import date, timedelta
 
-from ..model.calendar import build_calendar
+from ..model.calendar import build_calendar, calendars_by_competition
 from ..model.schema import Match
 from ..scoring.base import evaluate
 from .base import Candidate, SolveRequest, SolverResult, select_diverse
@@ -132,6 +132,7 @@ def _build_model(cp_model, request, planned, calendar, forbidden):
     world = request.world
     season = request.season
     model = cp_model.CpModel()
+    by_competition = calendars_by_competition(calendar, request.competitions)
 
     # -- decision variables: one boolean per (fixture, candidate date) --------
     fixtures: list[tuple[object, object, str]] = []  # (fixture, competition, venue)
@@ -163,12 +164,15 @@ def _build_model(cp_model, request, planned, calendar, forbidden):
 
     for plan in planned:
         competition = plan.competition
+        competition_calendar = by_competition[competition.id]
         for fixture in plan.fixtures:
             venue = world.team(fixture.home_team).home_venue
             anchor = plan.anchors[fixture.round_index]
-            window = calendar.window(anchor, competition.match_window_days, venue)
+            window = competition_calendar.window(anchor, competition.match_window_days, venue)
             if not window:
-                window = calendar.window(anchor, competition.match_window_days * 3, venue)
+                window = competition_calendar.window(
+                    anchor, competition.match_window_days * 3, venue
+                )
             extra = required_dates.get(_fixture_id(fixture))
             if extra is not None:
                 window = sorted(set(window) | {extra})

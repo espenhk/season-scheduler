@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 Gender = Literal["men", "women"]
 TeamLevel = Literal["senior", "second", "youth"]
@@ -73,6 +73,13 @@ class Competition(BaseModel):
     team_count: int
     teams: list[str]
 
+    # A competition's own fixture window, when it runs narrower than the
+    # season's outer envelope (e.g. Toppserien finishing well before
+    # Eliteserien). None means "use the season's start/end" — the common case
+    # when every competition in a season shares one calendar.
+    start: date | None = None
+    end: date | None = None
+
     preferred_weekday: Weekday = "sunday"
     min_rest_days: int = 3
     match_window_days: int = 3
@@ -85,6 +92,12 @@ class Competition(BaseModel):
         if v < 1:
             raise ValueError("rounds_per_pairing must be at least 1")
         return v
+
+    @model_validator(mode="after")
+    def _window_is_ordered(self) -> "Competition":
+        if self.start is not None and self.end is not None and self.end < self.start:
+            raise ValueError(f"{self.id}: end ({self.end}) is before start ({self.start})")
+        return self
 
     @property
     def rounds(self) -> int:

@@ -14,6 +14,13 @@ verified: false
 sources:
   - "wikipedia:2026_Eliteserien (via web search snippets)"
   - "wikipedia:2026_Toppserien (via web search snippets)"
+  - "2026-08-16 re-check: the 22-club, 28-team roster below (16 Eliteserien +
+    12 Toppserien, 6 overlapping as dual clubs) was cross-checked against
+    fresh web-search results and matches. Club names, short names and cities
+    were not re-verified letter-by-letter against an official source, so
+    `verified` stays false — see venues.yml for why a blanket correction
+    pass wasn't attempted this round, and cli.py refresh-reference-data for
+    a live-API path to close this out for real."
 
 clubs:
   # -- clubs with both a men's and a women's senior team ---------------------

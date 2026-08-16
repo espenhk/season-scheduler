@@ -4,9 +4,16 @@ season: 2026
 gender: women
 format: league
 
-rounds_per_pairing: 2
+# Triple round-robin: every pairing meets three times (2 home/1 away or
+# 1 home/2 away, alternating fairly across the roster) rather than the
+# standard home-and-away double. `generate_fixtures` handles any
+# `rounds_per_pairing`; for an even team count the mirrored-leg construction
+# (legs 1 and 3 share an orientation, leg 2 is reversed) keeps every team's
+# season-total home/away split within 1 of even — see
+# `terminliste/rounds/round_robin.py` for the by-construction argument.
+rounds_per_pairing: 3
 
-# 12 teams -> 11 rounds per leg -> 22 rounds, 132 matches.
+# 12 teams -> 11 rounds per leg -> 33 rounds, 198 matches.
 team_count: 12
 teams:
   - aalesund_w
@@ -21,6 +28,15 @@ teams:
   - rosenborg_w
   - stabak_w
   - valerenga_w
+
+# The real 2026 Toppserien window (verified 2026-08-16 via web search —
+# multiple sources agree on 20 March kickoff and 7 November final round,
+# excluding playoffs). Ends almost a month before Eliteserien/the season's
+# outer envelope, and 33 rounds need every bit of the room this leaves: see
+# `terminliste/model/loader.py::_validate_calendar_capacity` for the check
+# that would catch this window being too tight.
+start: 2026-03-20
+end: 2026-11-07
 
 # Saturday, deliberately the day before Eliteserien's Sunday: it makes the
 # back-to-back home weekend the natural outcome for the six dual clubs rather

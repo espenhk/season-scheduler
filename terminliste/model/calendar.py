@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from .loader import World
-from .schema import WEEKDAYS, Season
+from .schema import WEEKDAYS, Competition, Season
 
 
 @dataclass(frozen=True)
@@ -55,6 +55,47 @@ class SeasonCalendar:
             if self.is_allowed(day, venue_id) and self.season.start <= day <= self.season.end:
                 candidates.append(day)
         return candidates
+
+    def narrowed(self, start: date, end: date) -> "SeasonCalendar":
+        """A calendar restricted to a tighter [start, end] window inside the season.
+
+        Every date-selection method here (`window`, `dates_on_weekday`, the
+        gap-filling in `anchor_dates`) works off `all_dates`/`global_allowed`/
+        `discouraged` rather than re-deriving bounds from `season`, so
+        narrowing those three is enough to make the whole calendar honour the
+        tighter range — used when a competition's real fixture window is
+        shorter than the season's outer envelope.
+        """
+        return SeasonCalendar(
+            season=self.season,
+            all_dates=tuple(d for d in self.all_dates if start <= d <= end),
+            global_allowed=frozenset(d for d in self.global_allowed if start <= d <= end),
+            discouraged=frozenset(d for d in self.discouraged if start <= d <= end),
+            _venue_blocked=self._venue_blocked,
+        )
+
+
+def competition_window(season: Season, competition: Competition) -> tuple[date, date]:
+    """A competition's effective start/end: its own if set, else the season's."""
+    return (competition.start or season.start, competition.end or season.end)
+
+
+def calendars_by_competition(
+    calendar: SeasonCalendar, competitions: list[Competition]
+) -> dict[str, SeasonCalendar]:
+    """Per-competition calendar, narrowed to each one's own window if it has one.
+
+    Competitions that don't set `start`/`end` share the season calendar object
+    outright — no copy, no behaviour change from before this existed.
+    """
+    result: dict[str, SeasonCalendar] = {}
+    for competition in competitions:
+        start, end = competition_window(calendar.season, competition)
+        if start == calendar.season.start and end == calendar.season.end:
+            result[competition.id] = calendar
+        else:
+            result[competition.id] = calendar.narrowed(start, end)
+    return result
 
 
 def _outward_offsets(days: int) -> list[int]:

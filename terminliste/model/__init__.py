@@ -1,4 +1,10 @@
-from .calendar import SeasonCalendar, anchor_dates, build_calendar
+from .calendar import (
+    SeasonCalendar,
+    anchor_dates,
+    build_calendar,
+    calendars_by_competition,
+    competition_window,
+)
 from .loader import DataError, World, load_world, validate_world
 from .schema import (
     Club,
@@ -28,6 +34,8 @@ __all__ = [
     "World",
     "anchor_dates",
     "build_calendar",
+    "calendars_by_competition",
+    "competition_window",
     "load_world",
     "validate_world",
 ]

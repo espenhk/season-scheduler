@@ -40,6 +40,8 @@ def competition(
     comfortable_rest_days: int = 6,
     weights: dict | None = None,
     rounds_per_pairing: int = 2,
+    start: date | None = None,
+    end: date | None = None,
 ) -> Competition:
     return Competition(
         id=id,
@@ -54,6 +56,8 @@ def competition(
         comfortable_rest_days=comfortable_rest_days,
         weights=weights or {},
         rounds_per_pairing=rounds_per_pairing,
+        start=start,
+        end=end,
     )
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from terminliste.model.calendar import anchor_dates, build_calendar
+from terminliste.model.calendar import anchor_dates, build_calendar, calendars_by_competition
 
 
 def test_global_blackout_is_not_allowed(world, season):
@@ -54,6 +54,49 @@ def test_anchor_dates_are_strictly_increasing(world, season):
     anchors = anchor_dates(calendar, "saturday", count=22, min_gap_days=3)
     assert anchors == sorted(anchors)
     assert len(set(anchors)) == len(anchors)
+
+
+def test_narrowed_calendar_rejects_dates_outside_its_own_window(world, season):
+    calendar = build_calendar(world, season)
+    narrow = calendar.narrowed(date(2026, 3, 20), date(2026, 11, 7))
+
+    assert narrow.is_allowed(date(2026, 6, 1))
+    assert not narrow.is_allowed(date(2026, 3, 19))  # before the narrow start
+    assert not narrow.is_allowed(date(2026, 11, 8))  # after the narrow end
+    assert not narrow.is_allowed(date(2026, 12, 1))  # well inside the wide season
+
+    window = narrow.window(date(2026, 11, 7), days=5)
+    assert all(d <= date(2026, 11, 7) for d in window)
+
+
+def test_narrowed_calendar_still_honours_venue_blackouts(world, season):
+    calendar = build_calendar(world, season)
+    blackout = season.venue_blackouts[0]
+    narrow = calendar.narrowed(season.start, season.end)
+    assert not narrow.is_allowed(blackout.date, blackout.venue)
+
+
+def test_calendars_by_competition_shares_the_object_when_no_override(world, season, competitions):
+    calendar = build_calendar(world, season)
+    by_competition = calendars_by_competition(calendar, competitions)
+    for competition in competitions:
+        if competition.start is None and competition.end is None:
+            assert by_competition[competition.id] is calendar
+
+
+def test_calendars_by_competition_narrows_to_a_competitions_own_window(world, season):
+    import factories as f
+
+    calendar = build_calendar(world, season)
+    comp = f.competition(
+        "narrow_comp", ["aalesund_m"], start=date(2026, 3, 20), end=date(2026, 11, 7)
+    )
+    by_competition = calendars_by_competition(calendar, [comp])
+    narrowed = by_competition["narrow_comp"]
+    assert narrowed is not calendar
+    assert not narrowed.is_allowed(date(2026, 12, 1))
+    assert narrowed.all_dates[0] == date(2026, 3, 20)
+    assert narrowed.all_dates[-1] == date(2026, 11, 7)
 
 
 def test_anchor_dates_falls_back_to_midweek_when_short_on_preferred_days():

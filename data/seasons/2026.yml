@@ -1,10 +1,15 @@
 id: 2026
 year: 2026
 
-# The Norwegian season runs from spring thaw to early winter. 30 Eliteserien
-# rounds have to fit inside this window with at least 3 days between a team's
-# matches, which is what makes the calendar tight rather than trivial.
-start: 2026-03-28
+# The outer envelope for both competitions: earliest kickoff to latest final
+# round, across Eliteserien and Toppserien. Verified 2026-08-16 via web search
+# against multiple corroborating sources (Wikipedia season-page snippets,
+# viasport.com) — see the `competitions/*.yml` files for each league's own,
+# narrower window: Eliteserien runs the full envelope (14 Mar – 6 Dec), but
+# Toppserien finishes almost a month earlier (20 Mar – 7 Nov). Previously this
+# file carried a single hand-guessed `start: 2026-03-28` for both leagues,
+# which was simply wrong for either one.
+start: 2026-03-14
 end: 2026-12-06
 
 competitions:

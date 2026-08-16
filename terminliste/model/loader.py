@@ -262,6 +262,18 @@ def validate_world(world: World) -> list[str]:
         for competition_id in season.competitions:
             if competition_id not in world.competitions:
                 errors.append(f"season {season.id!r} lists unknown competition {competition_id!r}")
+                continue
+            competition = world.competitions[competition_id]
+            if competition.start is not None and competition.start < season.start:
+                errors.append(
+                    f"competition {competition_id!r} starts {competition.start}, before "
+                    f"season {season.id!r} starts {season.start}"
+                )
+            if competition.end is not None and competition.end > season.end:
+                errors.append(
+                    f"competition {competition_id!r} ends {competition.end}, after "
+                    f"season {season.id!r} ends {season.end}"
+                )
         for blackout in season.venue_blackouts:
             if blackout.venue not in world.venues:
                 errors.append(
@@ -299,10 +311,15 @@ def _validate_fixed_requirements(world: World, season: Season) -> list[str]:
                 f"requirement {requirement.id!r} wants {requirement.home_team!r} at home in "
                 f"{requirement.competition!r}, but that team does not play in it"
             )
-        if not season.start <= requirement.date <= season.end:
+        window_start, window_end = season.start, season.end
+        competition = world.competitions.get(requirement.competition)
+        if competition is not None:
+            window_start = competition.start or season.start
+            window_end = competition.end or season.end
+        if not window_start <= requirement.date <= window_end:
             errors.append(
                 f"requirement {requirement.id!r} falls on {requirement.date}, outside the "
-                f"season window {season.start}..{season.end}"
+                f"{requirement.competition!r} window {window_start}..{window_end}"
             )
         if any(b.date == requirement.date for b in season.global_blackouts):
             errors.append(
@@ -319,11 +336,13 @@ def _validate_calendar_capacity(world: World, season: Season) -> list[str]:
     into 'this season is three weeks too short'.
     """
     errors: list[str] = []
-    available_days = (season.end - season.start).days + 1
     for competition_id in season.competitions:
         competition = world.competitions.get(competition_id)
         if competition is None:
             continue
+        window_start = competition.start or season.start
+        window_end = competition.end or season.end
+        available_days = (window_end - window_start).days + 1
         # Tight lower bound: the first round can land on day 1, and each
         # subsequent round only needs to clear min_rest_days from the one
         # before it — (rounds - 1) gaps, not `rounds` of them. The previous
@@ -332,9 +351,10 @@ def _validate_calendar_capacity(world: World, season: Season) -> list[str]:
         needed = (competition.rounds - 1) * competition.min_rest_days + 1
         if needed > available_days:
             errors.append(
-                f"season {season.id!r} spans {available_days} days but {competition_id!r} needs "
-                f"at least {needed} ({competition.rounds} rounds, {competition.min_rest_days} "
-                f"days rest between each) — widen the window or reduce rounds"
+                f"{competition_id!r} spans {available_days} days ({window_start}..{window_end}) "
+                f"but needs at least {needed} ({competition.rounds} rounds, "
+                f"{competition.min_rest_days} days rest between each) — widen the window or "
+                f"reduce rounds"
             )
     return errors
 

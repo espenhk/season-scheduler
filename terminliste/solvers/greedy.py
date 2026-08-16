@@ -18,7 +18,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from ..model.calendar import SeasonCalendar, anchor_dates, build_calendar
+from ..model.calendar import SeasonCalendar, anchor_dates, build_calendar, calendars_by_competition
 from ..model.loader import World
 from ..model.schema import WEEKDAYS, Competition, Fixture, Match, Season
 from ..rounds.round_robin import generate_fixtures
@@ -86,6 +86,7 @@ def plan_competitions(
     schedules and the three options offered at the end are not a real choice.
     """
     planned: list[PlannedCompetition] = []
+    by_competition = calendars_by_competition(calendar, competitions)
     for competition in competitions:
         teams = list(competition.teams)
         if rng is not None:
@@ -93,7 +94,7 @@ def plan_competitions(
         fixtures = generate_fixtures(competition.id, teams, competition.rounds_per_pairing)
         round_indexes = sorted({f.round_index for f in fixtures})
         dates = anchor_dates(
-            calendar,
+            by_competition[competition.id],
             competition.preferred_weekday,
             count=len(round_indexes),
             min_gap_days=competition.min_rest_days,
@@ -264,6 +265,7 @@ def build_initial_schedule(
     """
     rng = random.Random(seed)
     calendar = calendar or build_calendar(world, season)
+    by_competition = calendars_by_competition(calendar, competitions)
     planned = plan_competitions(world, season, competitions, calendar, rng)
     if align:
         align_dual_clubs(world, planned)
@@ -312,7 +314,9 @@ def build_initial_schedule(
 
     for anchor, _, fixture in work:
         plan = by_id[fixture.competition_id]
-        match = _place_fixture(world, calendar, plan, fixture, anchor, state, rng)
+        match = _place_fixture(
+            world, by_competition[fixture.competition_id], plan, fixture, anchor, state, rng
+        )
         matches.append(match)
         state.place(world, match)
 

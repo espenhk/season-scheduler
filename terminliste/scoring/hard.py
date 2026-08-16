@@ -104,14 +104,24 @@ class BlackoutDates:
                 reason = f"season blackout: {reason}"
 
             if reason is None:
-                if not (season.start <= match.date <= season.end):
+                competition = ctx.world.competitions.get(match.competition_id)
+                window_start = season.start
+                window_end = season.end
+                if competition is not None:
+                    window_start = competition.start or season.start
+                    window_end = competition.end or season.end
+                if not (window_start <= match.date <= window_end):
                     count += 1
                     penalty -= self.weight
                     if ctx.detail:
                         events.append(
                             Event(
                                 delta=-self.weight,
-                                detail=f"{match.date} falls outside the season window",
+                                detail=(
+                                    f"{match.date} falls outside the "
+                                    f"{match.competition_id} window "
+                                    f"{window_start}..{window_end}"
+                                ),
                                 match_keys=(match.key,),
                             )
                         )

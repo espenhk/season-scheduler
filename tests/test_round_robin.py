@@ -94,6 +94,47 @@ def test_home_matches_are_evenly_split_for_even_team_counts():
     assert set(home_counts.values()) == {15}
 
 
+@pytest.mark.parametrize("n", [8, 12, 16])
+def test_triple_league_every_pair_meets_three_times_with_a_two_one_split(n):
+    teams = [f"t{i}" for i in range(n)]
+    fixtures = generate_fixtures("comp", teams, rounds_per_pairing=3)
+
+    unordered = Counter(frozenset((f.home_team, f.away_team)) for f in fixtures)
+    assert len(unordered) == n * (n - 1) // 2
+    assert all(count == 3 for count in unordered.values())
+
+    # Every pairing splits 2-1 one way or the other — never 3-0.
+    home_side_counts: dict[frozenset[str], Counter] = {}
+    for f in fixtures:
+        key = frozenset((f.home_team, f.away_team))
+        home_side_counts.setdefault(key, Counter())[f.home_team] += 1
+    for key, sides in home_side_counts.items():
+        assert sorted(sides.values()) == [1, 2], f"{key}: {sides}"
+
+
+@pytest.mark.parametrize("n", [8, 12, 16])
+def test_triple_league_home_totals_are_balanced_within_one(n):
+    """Legs 1 and 3 share an orientation, leg 2 is the mirror of both.
+
+    Every team's home tally from legs 1+2 cancels exactly (each opponent
+    contributes one home and one away across those two legs, regardless of
+    orientation), so the only thing that can unbalance a team's season total
+    is leg 3 — which is the *same* single-leg assignment as leg 1, already
+    balanced by `assign_home_away`. That is what keeps a triple round-robin
+    fair without needing a season-aware balancing pass of its own.
+    """
+    teams = [f"t{i}" for i in range(n)]
+    fixtures = generate_fixtures("comp", teams, rounds_per_pairing=3)
+
+    home_counts = Counter(f.home_team for f in fixtures)
+    away_counts = Counter(f.away_team for f in fixtures)
+    for team in teams:
+        assert home_counts[team] + away_counts[team] == 3 * (n - 1)
+        assert abs(home_counts[team] - away_counts[team]) <= 1
+
+    assert max(home_counts.values()) - min(home_counts.values()) <= 1
+
+
 def test_swap_teams_preserves_round_robin_validity():
     teams = [f"t{i}" for i in range(8)]
     fixtures = generate_fixtures("comp", teams, rounds_per_pairing=2)

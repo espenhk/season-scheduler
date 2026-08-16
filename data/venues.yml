@@ -10,6 +10,20 @@ sources:
   - "wikipedia:2026_Eliteserien (via web search snippets)"
   - "wikipedia:2026_Toppserien (via web search snippets)"
   - "wikipedia:List_of_Eliteserien_venues"
+  - "2026-08-16 re-check: still `verified: false`, deliberately. Two things
+    were tried and both came up short of trustworthy: (1) direct fetches to
+    Wikipedia, worldfootball.net, thesportsdb.com etc. are still blocked by
+    this environment's egress policy, same as when this file was first
+    built; (2) web-search *synthesis* (as opposed to a direct fetch) turned
+    out not to be a safe substitute — one query conflated Haugesund Stadion
+    (Eliteserien-women's-adjacent, Haugesund) with AKA Arena (a different
+    club's ground in Hønefoss), and repeated queries for the same venue
+    returned different capacities from different low-quality aggregators.
+    Overwriting an honest 'approximate' with a confident-but-wrong number
+    would be worse than leaving this as-is. `cli.py refresh-reference-data`
+    (see terminliste/refdata/) is the real fix: a structured API queried
+    from an environment that can actually reach it, diffed against this
+    file rather than blindly overwriting it."
 
 venues:
   - id: color_line_stadion

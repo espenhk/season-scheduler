@@ -106,7 +106,21 @@ def generate_fixtures(
 
     For `rounds_per_pairing=2` the second leg mirrors the first with home and
     away reversed, so every pair has met once before any pair meets twice.
-    Higher values keep alternating.
+    Higher values keep alternating — odd legs share leg 1's orientation, even
+    legs are its mirror.
+
+    That alternation is what keeps an odd `rounds_per_pairing` (a triple
+    round-robin, e.g.) fair without any extra balancing work. Every pairing
+    contributes one home and one away appearance to each team across any
+    (orientation, mirror) leg pair, so legs 1+2 cancel exactly for every team
+    regardless of how `base` was oriented; legs 3+4 would cancel the same
+    way; and so on. What's left over is at most one unpaired leg — leg 3 in
+    the `rounds_per_pairing=3` case — which repeats leg 1's own orientation,
+    already balanced per-team by `assign_home_away` above. So a team's final
+    home total is `(rounds_per_pairing // 2) * (n - 1) + leg_1_home_count`,
+    and since `leg_1_home_count` is within 1 of `(n - 1) / 2` for every team,
+    the season-total split is within 1 of even for every team too — see
+    `test_triple_league_home_totals_are_balanced_within_one`.
     """
     if len(teams) < 2:
         return []

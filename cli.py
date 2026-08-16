@@ -6,10 +6,13 @@
     python cli.py score my_schedule.csv --season 2026
                                                    # score a real/proposed schedule
     python cli.py explain schedules/2026.json      # score breakdown in the terminal
+    python cli.py refresh-reference-data           # diff data/*.yml against a live API
 
 `validate` and `score` need no solver and run in well under a second.
 `generate` runs the local-search solver by default (`--solver cpsat` needs
-OR-Tools installed).
+OR-Tools installed). `refresh-reference-data` is the only command that
+touches the network, and only to read — it never rewrites `data/*.yml`
+itself; see `terminliste/refdata/refresh.py`.
 """
 
 from __future__ import annotations
@@ -28,10 +31,21 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from terminliste.external_schedule import ExternalScheduleError, load_external_schedule  # noqa: E402
 from terminliste.model.loader import DataError, load_world  # noqa: E402
 from terminliste.model.travel import HaversineTravelModel  # noqa: E402
+from terminliste.refdata import refresh_competition  # noqa: E402
 from terminliste.report.render import render_report, write_json  # noqa: E402
 from terminliste.scoring.base import EvalContext, Score, evaluate  # noqa: E402
 from terminliste.scoring.registry import build_constraints  # noqa: E402
 from terminliste.solvers import Candidate, SolveRequest, SolverResult, get_scheduler  # noqa: E402
+
+# TheSportsDB's league-name string for each competition this project knows
+# about. Unconfirmed against a live call in this sandbox — the network egress
+# policy here blocks the API host entirely (see README) — so treat these as
+# a documented best guess to verify the first time this runs somewhere that
+# can actually reach the API, not as tested constants.
+API_LEAGUE_NAMES = {
+    "eliteserien_2026": "Norwegian Eliteserien",
+    "toppserien_2026": "Norwegian Toppserien",
+}
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -176,6 +190,44 @@ def cmd_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_refresh_reference_data(args: argparse.Namespace) -> int:
+    world = _load_world_or_exit()
+    season = _season_or_exit(world, args.season)
+
+    any_diffs = False
+    for competition_id in season.competitions:
+        league_name = API_LEAGUE_NAMES.get(competition_id)
+        if league_name is None:
+            print(f"skipping {competition_id!r}: no API league name mapped for it")
+            continue
+
+        report = refresh_competition(world, competition_id, league_name, force=args.force)
+        print(f"\n=== {competition_id} ({league_name}) — source: {report.source} ===")
+        if report.error:
+            print(f"  note: {report.error}")
+        if report.source == "unavailable":
+            print("  no data to compare — using whatever is already in data/*.yml")
+            continue
+
+        if not report.diffs and not report.unmatched_api_teams and not report.unmatched_local_teams:
+            print("  no differences found")
+        for diff in report.diffs:
+            any_diffs = True
+            print(f"  {diff.team_id}: {diff.field} — file has {diff.current!r}, API has {diff.fetched!r}")
+        if report.unmatched_api_teams:
+            any_diffs = True
+            print(f"  API teams not matched to a local team: {', '.join(report.unmatched_api_teams)}")
+        if report.unmatched_local_teams:
+            any_diffs = True
+            print(f"  local teams not matched to an API team: {', '.join(report.unmatched_local_teams)}")
+
+    print(
+        "\nThis only reports differences — nothing in data/*.yml has been changed. "
+        "Fold in anything you trust by hand."
+    )
+    return 1 if any_diffs else 0
+
+
 def _print_summary(result: SolverResult) -> None:
     print(f"\n{len(result.candidates)} option(s), {result.iterations} iterations, "
           f"{result.elapsed_s:.1f}s elapsed")
@@ -251,6 +303,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_explain.add_argument("schedule_json")
     p_explain.add_argument("--option", default=None, help="only this option's label, e.g. 'Option 1'")
     p_explain.set_defaults(func=cmd_explain)
+
+    p_refresh = sub.add_parser(
+        "refresh-reference-data",
+        help="diff data/*.yml's team/venue data against a live API (read-only, needs network)",
+    )
+    p_refresh.add_argument("--season", default="2026")
+    p_refresh.add_argument(
+        "--force", action="store_true", help="ignore the cache and re-fetch from the API"
+    )
+    p_refresh.set_defaults(func=cmd_refresh_reference_data)
 
     return parser
 

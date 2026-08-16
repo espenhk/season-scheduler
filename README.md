@@ -18,6 +18,7 @@ cd football-scheduler
 python cli.py validate                              # data integrity, no solving
 python cli.py generate --season 2026                 # solve, write schedules/2026.html
 python cli.py score my_schedule.csv --season 2026     # score a real/proposed schedule
+python cli.py refresh-reference-data                  # diff data/*.yml against a live API
 python -m pytest ..                                   # -m pytest tests/ from the repo root
 ```
 
@@ -25,17 +26,30 @@ python -m pytest ..                                   # -m pytest tests/ from th
 `--solver cpsat` uses OR-Tools for a near-optimal search — install it with
 `poetry install --with football-scheduler-cpsat` (or `pip install ortools`).
 
+`validate`, `generate` and `score` never touch the network — everything
+about them is exactly as reproducible as the YAML in `data/`.
+`refresh-reference-data` is the one command that does, and even then it only
+reads: it prints a diff against `data/*.yml`, it never rewrites it. See
+"Reference-data refresh" below.
+
 ## What's here
 
 - **`data/`** — the source of truth: venues, clubs/teams, competitions,
   season calendar (blackouts, fixed requirements), and curated travel-time
-  overrides. All YAML, hand-editable. Every file is marked `verified: false`
-  because the sandbox this was built in couldn't reach Wikipedia or the
-  stats sites — assembled from web search snippets plus general knowledge.
-  **Check the rosters, venues and coordinates before using this for
-  anything real**; `cli.py validate` only catches referential and
-  geometric problems (unknown ids, coordinates outside Norway), not factual
-  ones.
+  overrides. All YAML, hand-editable. `venues.yml`, `clubs.yml` and
+  `travel_overrides.yml` are marked `verified: false` because the sandbox
+  this was built in couldn't reach Wikipedia or the stats sites — assembled
+  from web search snippets plus general knowledge, and a follow-up pass
+  couldn't do better (see the header comment in `venues.yml` for exactly
+  what was tried and why it stayed unverified rather than risk swapping
+  honest-but-approximate numbers for confident-but-wrong ones). The season
+  calendar's competition windows (`competitions/*.yml`) and the club/team
+  roster were re-checked against web search on 2026-08-16 and are now on
+  firmer footing — see those files' own comments. **Check the venues and
+  coordinates before using this for anything real**; `cli.py validate` only
+  catches referential and geometric problems (unknown ids, coordinates
+  outside Norway), not factual ones. `cli.py refresh-reference-data` is a
+  real (if unproven, in this sandbox) path to closing this out — see below.
 - **`terminliste/model/`** — Pydantic schema + loader (`World`), the season
   calendar (blackout resolution, anchor-date selection), and the travel-time
   model.
@@ -61,6 +75,9 @@ python -m pytest ..                                   # -m pytest tests/ from th
   anywhere (a real league's published fixtures, a hand-drafted proposal) and
   scores it against the same rules, so `cli.py score` can point out exactly
   what's wrong with a schedule the tool didn't generate.
+- **`terminliste/refdata/`** — an optional, explicit-opt-in fetch/cache
+  layer for team and venue reference data. See "Reference-data refresh"
+  below.
 
 ## Data model
 
@@ -68,11 +85,22 @@ python -m pytest ..                                   # -m pytest tests/ from th
 Venue     id, name, city, lat/lon, capacity, surface
 Team      id, gender, level (senior|second|youth), home_venue, club_id
 Club      id, name, teams[]                    # 1+ teams; "dual clubs" have 2+ senior teams
-Competition  id, season, gender, format (league|cup), teams[], preferred_weekday, weights{}
+Competition  id, season, gender, format (league|cup), teams[], start/end (optional),
+             preferred_weekday, weights{}
 Season    id, year, window, global_blackouts[], venue_blackouts[], fixed_requirements[]
 Fixture   an unscheduled pairing (home, away, leg, round)
 Match     a Fixture placed on a date at a venue
 ```
+
+A `Competition`'s `start`/`end` are optional and default to the season's own
+window — the common case, when every competition in a season shares one
+calendar. 2026 is the exception the fields exist for: Eliteserien and
+Toppserien don't actually run the same length of season (Toppserien
+finishes almost a month before Eliteserien), so `toppserien_2026.yml` sets
+its own, narrower window rather than letting the solver believe it has a
+month it doesn't. `Season.start`/`.end` become the outer envelope across
+every competition sharing that calendar — global blackouts, discouraged
+dates and venue blackouts still apply season-wide.
 
 `Team.level` and `Competition.format` are wider than today's use needs on
 purpose — a reserve side is a data edit (`level: second`), and a cup is a new
@@ -94,18 +122,55 @@ by travel time, capped at an 8h default), `home_away_breaks`,
 Run `python cli.py score <file> --season 2026` on any schedule to see every
 rule's contribution, with named examples for anything that fired.
 
+## Reference-data refresh
+
+`python cli.py refresh-reference-data [--season 2026] [--force]` fetches
+each competition's teams from [TheSportsDB](https://www.thesportsdb.com)'s
+free API (`terminliste/refdata/client.py`), caches the result for a day
+(`terminliste/refdata/cache.py`), and diffs the fetched stadium name/capacity
+against what's in `data/clubs.yml`/`data/venues.yml` for each matched team
+(`terminliste/refdata/refresh.py`). It never writes to `data/*.yml` — a
+capacity or a coordinate feeding into the scheduler is worth a human glance
+before it changes, so this prints a diff and stops; folding an accepted
+change in is still a hand edit, the same as any other data correction.
+
+It fails soft, on purpose: an unreachable API (or, inside this project's own
+sandboxed dev environment, an egress policy that blocks the API host
+outright) falls back to the last cache, or to reporting "no data to
+compare" — never a crash, and never worse than not running it at all. Try
+it yourself and you'll likely see exactly that fallback fire, which is the
+point:
+
+```
+$ python cli.py refresh-reference-data
+=== eliteserien_2026 (Norwegian Eliteserien) — source: unavailable ===
+  note: could not reach https://www.thesportsdb.com/api/v1/json/3: ...
+  no data to compare — using whatever is already in data/*.yml
+```
+
+The `API_LEAGUE_NAMES` mapping in `cli.py` (TheSportsDB's league-name string
+per competition) is a documented best guess, not something this environment
+could confirm against a live call — verify it the first time this runs
+somewhere with real network access.
+
 ## Testing
 
 ```bash
 python -m pytest tests/ -v
 ```
 
-- `test_round_robin.py` — exhaustive n=2..20 checks on the pairing generator.
+- `test_round_robin.py` — exhaustive n=2..20 checks on the pairing generator,
+  plus the triple-round-robin (`rounds_per_pairing=3`) checks backing
+  Toppserien: every pairing meets three times with a 2-1 split, and every
+  team's season-total home/away count is within 1 of even.
 - `test_hard_constraints.py` / `test_soft_constraints.py` — each rule at its
   boundary, hand-built 4-team schedules, plus a check that every hard rule is
   silent on a clean schedule.
 - `test_calendar.py`, `test_travel.py`, `test_loader.py` — the supporting
-  model layer, including curated overrides and referential-integrity errors.
+  model layer, including curated overrides, referential-integrity errors,
+  and a competition's own (optionally narrower) start/end window.
+- `test_refdata.py` — the reference-data client, cache and diff logic behind
+  `cli.py refresh-reference-data`, entirely mocked at the HTTP layer.
 - `test_external_schedule.py` — CSV/JSON parsing, leg inference, coverage
   warnings, and a schedule with deliberate flaws scoring the right hard
   violations.
@@ -125,3 +190,14 @@ In short: add a Norwegian Cup (single elimination, mid-week slots, all four
 top-flight tiers feeding in) before European qualifiers, since it exercises
 new competition machinery (byes, replays, cross-competition rest) without
 requiring calendar data terminliste has no way to source reliably yet.
+
+Also worth doing, now that `refresh-reference-data` exists but has never run
+against the real API:
+- Run it somewhere with real network access, confirm the `API_LEAGUE_NAMES`
+  strings and the field names `client.py` expects (`strTeam`,
+  `strStadium`, `intStadiumCapacity`) against TheSportsDB's actual current
+  responses, and fold in whatever diffs it turns up.
+- Extend the diff beyond stadium name/capacity to coordinates once a
+  provider that reliably has them is confirmed reachable — TheSportsDB's
+  team records don't carry lat/lon, so `venues.yml`'s coordinates are still
+  unverified even once the rest of this closes out.

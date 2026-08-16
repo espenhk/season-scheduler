@@ -30,6 +30,14 @@ teams:
   - valerenga_m
   - viking_m
 
+# The real 2026 Eliteserien window (verified 2026-08-16 via web search —
+# multiple sources agree on 14 March kickoff and 6 December final round,
+# excluding relegation/European playoffs). Equal to the season's own
+# start/end, so this is redundant in effect — set explicitly anyway so both
+# leagues' windows are spelled out here rather than one being implicit.
+start: 2026-03-14
+end: 2026-12-06
+
 # Eliteserien wants the bulk of its matches on Sunday.
 preferred_weekday: sunday
 

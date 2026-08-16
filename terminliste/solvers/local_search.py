@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from ..model.calendar import SeasonCalendar, build_calendar
+from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
 from ..model.loader import World
 from ..model.schema import Competition, Match
 from ..scoring.base import HARD_PENALTY, Constraint, EvalContext, ScheduleIndex, evaluate
@@ -99,6 +99,7 @@ class LocalSearchScheduler:
     def solve(self, request: SolveRequest) -> SolverResult:
         started = time.perf_counter()
         calendar = build_calendar(request.world, request.season)
+        by_competition = calendars_by_competition(calendar, request.competitions)
         budget_per_restart = request.time_budget_s / max(1, self.restarts)
 
         candidates: list[Candidate] = []
@@ -132,7 +133,7 @@ class LocalSearchScheduler:
                 working,
                 pinned,
                 request,
-                calendar,
+                by_competition,
                 seed=seed,
                 budget_s=budget_per_restart,
                 start_temperature=self.start_temperature,
@@ -198,7 +199,7 @@ def _anneal(
     matches: list[WorkingMatch],
     pinned: set[str],
     request: SolveRequest,
-    calendar: SeasonCalendar,
+    calendars: dict[str, SeasonCalendar],
     seed: int,
     budget_s: float,
     start_temperature: float,
@@ -207,7 +208,7 @@ def _anneal(
     rng = random.Random(seed)
     ctx = request.ctx
     constraints = request.constraints
-    moves = _MoveSet(matches, pinned, request.world, request.competitions, calendar)
+    moves = _MoveSet(matches, pinned, request.world, request.competitions, calendars)
 
     current_cost = _cost(matches, constraints, ctx)
     best_cost = current_cost
@@ -269,12 +270,12 @@ class _MoveSet:
         pinned: set[str],
         world: World,
         competitions: list[Competition],
-        calendar: SeasonCalendar,
+        calendars: dict[str, SeasonCalendar],
     ) -> None:
         self._matches = matches
         self._pinned = pinned
         self._world = world
-        self._calendar = calendar
+        self._calendars = calendars
         self._competitions = {c.id: c for c in competitions}
 
         # Pinned matches are tracked by list position, not by key: a key
@@ -347,7 +348,8 @@ class _MoveSet:
             return None
 
         anchor = self._anchors[(match.competition_id, match.round_index)]
-        window = self._calendar.window(anchor, competition.match_window_days, match.venue)
+        calendar = self._calendars[match.competition_id]
+        window = calendar.window(anchor, competition.match_window_days, match.venue)
         window = [d for d in window if d != match.date]
         if not window:
             return None
