@@ -103,9 +103,19 @@ def cup_round(
 
 
 def cup_placement(
-    round_id: str, dates: dict[str, date], round_name: str | None = None, note: str = ""
+    round_id: str,
+    dates: dict[str, date],
+    round_name: str | None = None,
+    venue_type: str = "away",
+    note: str = "",
 ) -> CupRoundPlacement:
-    return CupRoundPlacement(round_id=round_id, round_name=round_name or round_id, dates=dates, note=note)
+    return CupRoundPlacement(
+        round_id=round_id,
+        round_name=round_name or round_id,
+        dates=dates,
+        venue_type=venue_type,
+        note=note,
+    )
 
 
 def cup_schedule(

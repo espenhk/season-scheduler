@@ -128,7 +128,12 @@ a warning rather than a failure when it can't. See
 Cup pairings are still drawn round by round and never modelled as fixtures
 — nobody knows who plays whom yet — so a `CupSchedule` records only *when*
 each entered team's round falls, on the base assumption that every team is
-still alive through the final. A season lists which competitions of each
+still alive through the final. Home/away is resolved per round too, since
+who the opponent is doesn't change which side of the tie an entered team is
+on: away for each team's first three rounds (an Eliteserien/Toppserien side
+is assumed to draw and travel to a lower-division opponent), then
+alternating from the fourth round on, except the final, always at neutral
+ground (Ullevål stadion) — see `_venue_type` in `cup_schedule.py`. A season lists which competitions of each
 kind it holds under `competitions` (leagues) and `cup_competitions` (cups)
 respectively; the two are kept separate because only the former is fed to
 the round-robin/solver pipeline — a cup is resolved once, up front, and the

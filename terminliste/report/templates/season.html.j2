@@ -188,12 +188,15 @@
      unicode glyph here previously rendered visibly larger than the
      surrounding text depending on the reader's font, which is what made
      some fixtures look like they had "bigger text" than others. */
-  .swatch, .swatch-diamond {
+  .swatch, .swatch-diamond, .swatch-neutral {
     display: inline-block; width: 8px; height: 8px; margin-right: 5px;
     vertical-align: middle; flex: none;
   }
   .swatch { border-radius: 2px; }
   .swatch-diamond { border-radius: 1px; transform: rotate(45deg); }
+  /* Cup final only: neutral ground, so neither the square (home) nor the
+     diamond (away) marker applies. */
+  .swatch-neutral { border-radius: 50%; }
   .pair-badge {
     display: inline-flex; align-items: center; justify-content: center;
     width: 13px; height: 13px; margin-left: 6px; border-radius: 50%;
@@ -265,6 +268,21 @@
   {% if match.paired %}
   <span class="pair-badge" role="img" aria-label="back-to-back home day with the club's other team"></span>
   {% endif %}
+</span>
+{% endmacro %}
+
+{% macro cup_fx_card(fixture) %}
+<span class="fx" data-clubs="{{ fixture.club_id }}" title="{{ fixture.venue_label }}">
+  <span class="d">{{ fixture.weekday }} {{ fixture.date.strftime('%d/%m') }}</span>
+  {% if fixture.venue_type == 'home' %}
+  <span class="swatch" style="background:{{ fixture.color }}" aria-hidden="true"></span>
+  {% elif fixture.venue_type == 'away' %}
+  <span class="swatch-diamond" style="background:{{ fixture.color }}" aria-hidden="true"></span>
+  {% else %}
+  <span class="swatch-neutral" style="background:{{ fixture.color }}" aria-hidden="true"></span>
+  {% endif %}
+  <span class="h" title="{{ fixture.team_full }}">{{ fixture.team }}</span>
+  <span style="color:var(--muted)"> v TBD</span>
 </span>
 {% endmacro %}
 
@@ -457,6 +475,7 @@
     <span><span class="fx-demo" aria-hidden="true"></span>green = back-to-back home day for a dual club</span>
     <span><span class="swatch" style="background:var(--ink)" aria-hidden="true"></span>square = home club colour</span>
     <span><span class="swatch-diamond" style="background:var(--ink)" aria-hidden="true"></span>diamond = away club colour</span>
+    <span><span class="swatch-neutral" style="background:var(--ink)" aria-hidden="true"></span>circle = cup final, neutral ground</span>
   </div>
 
   <div class="cal-wrap view-pane" data-view="by-competition">
@@ -465,19 +484,18 @@
       <h3>{{ competition.name }}</h3>
       {% if competition.is_cup %}
       <div class="meta">
-        {{ competition.match_count }} teams entered · real-world round dates, pairings drawn closer
-        to each round
+        {{ competition.match_count }} teams entered · opponent drawn closer to each round, so dates
+        are per-team, not fixtures · home/away assumed per NM rules (away for the first three
+        rounds, then alternating; final always neutral)
       </div>
       {% for round in competition.rounds %}
       <div class="round">
-        <div class="rlabel">
+        <div class="rlabel" {% if round.note %}title="{{ round.note }}"{% endif %}>
           <b>{{ round.name }}</b>
-          {{ round.dates }}
+          {{ round.dates }} · {{ round.venue_summary }}
         </div>
         <div class="fixtures">
-          <span class="fx" {% if round.note %}title="{{ round.note }}"{% endif %}>
-            All {{ round.team_count }} entered teams assumed still in it
-          </span>
+          {% for fixture in round.fixtures %}{{ cup_fx_card(fixture) }}{% endfor %}
         </div>
       </div>
       {% endfor %}
@@ -587,8 +605,9 @@
         el.classList.toggle('club-hidden', !visible);
       });
       // Hide now-empty round/week groups and competitions rather than
-      // leaving blank labels behind. Cup rounds have no `data-clubs`
-      // fixtures at all, so they are never touched here and stay visible.
+      // leaving blank labels behind. Cup fixtures carry `data-clubs` too
+      // (one entry per entered team, not per pairing), so the same filter
+      // reaches them.
       panel.querySelectorAll('.round').forEach(function (round) {
         var fixtures = round.querySelectorAll('.fx[data-clubs]');
         if (!fixtures.length) return;

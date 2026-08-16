@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
 import factories as f
-from terminliste.model.schema import CupRound, DatedNote
+from terminliste.model.schema import Competition, CupRound, DatedNote
 from terminliste.rounds.cup_schedule import (
     CupSchedulingError,
     resolved_cup_windows,
@@ -149,6 +149,60 @@ def test_teams_spread_across_a_windowed_rounds_span_not_all_on_one_day():
     assert len(set(placement.dates.values())) > 1, "8 teams over several legal days should not clump"
     assert placement.spread_days <= 6
     assert warnings == []
+
+
+# -- schedule_cup: home/away resolution --------------------------------------
+
+
+def _n_round_cup(n: int) -> Competition:
+    """A cup with `n` windowed rounds, each a month apart, far enough apart
+    that ordering/rest-gap constraints never come into play — these tests are
+    only about the home/away resolution, not placement."""
+    rounds = [
+        f.cup_round(
+            f"r{i}",
+            window_start=date(2026, 1, 1) + timedelta(days=i * 30),
+            window_end=date(2026, 1, 28) + timedelta(days=i * 30),
+            granularity="month",
+            name=f"Round {i + 1}",
+        )
+        for i in range(n)
+    ]
+    return f.competition("cup", ["t1", "t2"], format="cup", cup_rounds=rounds)
+
+
+def test_first_three_rounds_are_always_away():
+    cup = _n_round_cup(7)
+    schedule, _ = schedule_cup(cup, blackouts=set())
+    assert [p.venue_type for p in schedule.rounds[:3]] == ["away", "away", "away"]
+
+
+def test_rounds_after_the_third_alternate_home_and_away():
+    cup = _n_round_cup(7)
+    schedule, _ = schedule_cup(cup, blackouts=set())
+    # Round 4 (index 3) starts the alternation at home, then away, home, ...
+    assert [p.venue_type for p in schedule.rounds[3:6]] == ["home", "away", "home"]
+
+
+def test_final_round_is_always_neutral_even_if_the_alternation_would_land_on_home():
+    cup = _n_round_cup(7)
+    schedule, _ = schedule_cup(cup, blackouts=set())
+    assert schedule.rounds[-1].venue_type == "neutral"
+
+
+def test_final_is_neutral_even_in_a_cup_short_enough_to_still_be_in_the_away_stretch():
+    """A hypothetical 2-round cup: round 1 would normally be "away" (first
+    three rounds), but it's also the last round, so the final-is-neutral
+    override wins."""
+    cup = _n_round_cup(2)
+    schedule, _ = schedule_cup(cup, blackouts=set())
+    assert [p.venue_type for p in schedule.rounds] == ["away", "neutral"]
+
+
+def test_a_single_round_cup_is_just_the_final_and_is_neutral():
+    cup = _n_round_cup(1)
+    schedule, _ = schedule_cup(cup, blackouts=set())
+    assert schedule.rounds[0].venue_type == "neutral"
 
 
 # -- schedule_cup: a forced round never moves -------------------------------

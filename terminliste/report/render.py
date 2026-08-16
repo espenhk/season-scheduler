@@ -19,7 +19,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..model.loader import World
 from ..model.schema import Match, Season
-from ..rounds.cup_schedule import CupSchedule
+from ..rounds.cup_schedule import NEUTRAL_CUP_VENUE, CupRoundPlacement, CupSchedule
 from ..scoring.base import ConstraintResult, Event, Score
 from ..scoring.registry import describe
 from ..solvers.base import Candidate, SolverResult
@@ -114,7 +114,7 @@ def _build_option(
         "upsides": [_result_row(r, full=full_diagnostics) for r in score.biggest_upsides(limit=limit)],
         "breakdown": [_result_row(r, full=True) for r in _ordered_results(score)],
         "fairness": _fairness_rows(world, candidate),
-        "by_competition": _competition_views(world, entries) + _cup_views(cup_schedules),
+        "by_competition": _competition_views(world, entries) + _cup_views(world, cup_schedules, club_colors),
         "combined_calendar": _combined_calendar_view(entries),
         "combined_list": entries,
     }
@@ -284,13 +284,16 @@ def _combined_calendar_view(entries: list[dict]) -> list[dict]:
     return views
 
 
-def _cup_views(cup_schedules: list[CupSchedule]) -> list[dict]:
+def _cup_views(
+    world: World, cup_schedules: list[CupSchedule], club_colors: dict[str, str]
+) -> list[dict]:
     """Cup rounds, in the same shape `_competition_views` uses for leagues.
 
     Pairings are drawn round by round and unknown ahead of time, so there is
-    no fixture list here — just each round's resolved date span (a single day
-    when every team landed on the same one) and how many of the tracked teams
-    are still assumed to be in it.
+    no home-vs-away fixture list here — the opponent is always "TBD". What we
+    do know per round, per entered team, is its own resolved date and which
+    side of the (still-undrawn) tie it is on — see `CupRoundPlacement.venue_type`
+    and `_venue_type` in `rounds/cup_schedule.py` for the home/away/neutral rule.
     """
     views: list[dict] = []
     for schedule in sorted(cup_schedules, key=lambda s: s.competition_id):
@@ -313,14 +316,53 @@ def _cup_views(cup_schedules: list[CupSchedule]) -> list[dict]:
                                 f"{placement.latest_date.strftime('%d %b %Y')}"
                             )
                         ),
-                        "team_count": len(placement.dates),
+                        "venue_summary": _cup_venue_summary(placement.venue_type),
                         "note": placement.note,
+                        "fixtures": _cup_fixtures(world, placement, club_colors),
                     }
                     for i, placement in enumerate(schedule.rounds)
                 ],
             }
         )
     return views
+
+
+def _cup_fixtures(world: World, placement: CupRoundPlacement, club_colors: dict[str, str]) -> list[dict]:
+    """One entry per entered team for a resolved cup round: its own date and
+    which side of the undrawn tie it's on, sorted the way a calendar reads —
+    by date, then team."""
+    fixtures = []
+    for team_id, team_date in placement.dates.items():
+        club_id = world.team(team_id).club_id
+        fixtures.append(
+            {
+                "team": world.team_short_label(team_id),
+                "team_full": world.team_label(team_id),
+                "club_id": club_id,
+                "color": club_colors.get(club_id, ""),
+                "date": team_date,
+                "weekday": team_date.strftime("%a"),
+                "venue_type": placement.venue_type,
+                "venue_label": _cup_venue_label(world, team_id, placement.venue_type),
+            }
+        )
+    return sorted(fixtures, key=lambda fx: (fx["date"], fx["team"]))
+
+
+def _cup_venue_label(world: World, team_id: str, venue_type: str) -> str:
+    if venue_type == "home":
+        return world.home_venue_of(team_id).name
+    if venue_type == "neutral":
+        return f"{NEUTRAL_CUP_VENUE} (neutral)"
+    return "Away (opponent's ground)"
+
+
+def _cup_venue_summary(venue_type: str) -> str:
+    if venue_type == "home":
+        return "Home leg · opponent drawn later"
+    if venue_type == "neutral":
+        return f"Final · neutral ground ({NEUTRAL_CUP_VENUE})"
+    return "Away leg · opponent drawn later"
 
 
 def _fairness_rows(world: World, candidate: Candidate) -> list[dict]:

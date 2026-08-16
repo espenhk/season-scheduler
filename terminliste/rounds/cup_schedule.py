@@ -15,6 +15,14 @@ of the league's simulated annealing: cup rounds are far too coarse-grained
 lets the league scheduler treat the result as fixed input — exactly as it
 already treated a cup's dates before this module existed.
 
+Home/away is resolved here too, per round rather than per fixture, since who
+the opponent is stays unknown until the draw: every entered team plays away
+for its first three rounds (an Eliteserien/Toppserien side entering a real NM
+draw is assumed to draw a lower-division side and travel to them), then
+alternates home/away from the fourth round on, except the final, which is
+always at neutral ground (Ullevål stadion) regardless of where the
+alternation would otherwise land. See `_venue_type`.
+
 Two rules are enforced here, matching how the season's own round-robin
 guarantees things by construction rather than leaving them to be discovered
 as violations later:
@@ -46,8 +54,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from typing import Literal
 
 from ..model.schema import Competition, CupRound, Season
+
+VenueType = Literal["home", "away", "neutral"]
+
+# The final of both the men's and women's Norwegian Cup is played at neutral
+# ground, not either finalist's home venue — Ullevål stadion, Oslo.
+NEUTRAL_CUP_VENUE = "Ullevål stadion"
 
 
 class CupSchedulingError(Exception):
@@ -67,6 +82,7 @@ class CupRoundPlacement:
     round_id: str
     round_name: str
     dates: dict[str, date]
+    venue_type: VenueType = "away"
     note: str = ""
 
     @property
@@ -110,8 +126,9 @@ def schedule_cup(competition: Competition, blackouts: set[date]) -> tuple[CupSch
     placements: list[CupRoundPlacement] = []
     warnings: list[str] = []
     previous_latest: date | None = None
+    total_rounds = len(competition.cup_rounds)
 
-    for round_ in competition.cup_rounds:
+    for index, round_ in enumerate(competition.cup_rounds):
         anchor, lower_bound, upper_bound = _resolve_anchor(
             competition, round_, previous_latest, gap
         )
@@ -119,7 +136,11 @@ def schedule_cup(competition: Competition, blackouts: set[date]) -> tuple[CupSch
             competition.teams, anchor, spread, blackouts, lower_bound, upper_bound
         )
         placement = CupRoundPlacement(
-            round_id=round_.id, round_name=round_.name, dates=team_dates, note=round_.note
+            round_id=round_.id,
+            round_name=round_.name,
+            dates=team_dates,
+            venue_type=_venue_type(index, total_rounds),
+            note=round_.note,
         )
         placements.append(placement)
         if blacked_out:
@@ -138,6 +159,24 @@ def schedule_cup(competition: Competition, blackouts: set[date]) -> tuple[CupSch
         ),
         warnings,
     )
+
+
+def _venue_type(index: int, total_rounds: int) -> VenueType:
+    """Home/away for round `index` (0-based) of `total_rounds`, per team.
+
+    Uniform across every team entered in the round, not resolved per team,
+    since who each team's opponent is (and therefore whose ground the tie is
+    really played at) is only settled by a draw made closer to the round —
+    this only captures which side of that unknown pairing an entered team is
+    on. The final overrides everything else: it is always neutral ground,
+    even for a cup short enough that "the final" would otherwise fall inside
+    the first-three-rounds-away stretch.
+    """
+    if index == total_rounds - 1:
+        return "neutral"
+    if index < 3:
+        return "away"
+    return "home" if (index - 3) % 2 == 0 else "away"
 
 
 def _resolve_anchor(
@@ -274,9 +313,11 @@ def cup_conflict(cup_windows: dict[str, list[tuple[date, int]]], team_id: str, d
 
 
 __all__ = [
+    "NEUTRAL_CUP_VENUE",
     "CupRoundPlacement",
     "CupSchedule",
     "CupSchedulingError",
+    "VenueType",
     "cup_conflict",
     "resolved_cup_windows",
     "schedule_cup",
