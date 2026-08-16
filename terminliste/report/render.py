@@ -99,6 +99,7 @@ def _build_option(
         "feasible": score.feasible,
         "hard_violations": score.hard_violations,
         "soft_total": score.soft_total,
+        "points": score.points,
         "headlines": _headlines(world, candidate),
         "hard_violation_detail": (
             [_result_row(r, full=True) for r in score.hard_results() if r.count]
@@ -247,6 +248,7 @@ def write_json(result: SolverResult, output_path: Path) -> Path:
                 "seed": candidate.seed,
                 "hard_violations": candidate.score.hard_violations,
                 "soft_total": round(candidate.score.soft_total, 2),
+                "points": round(candidate.score.points, 1),
                 "breakdown": [
                     {
                         "constraint": r.constraint_id,

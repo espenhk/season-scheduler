@@ -152,7 +152,7 @@
   {% for option in options %}
   <button class="tab" role="tab" data-panel="panel-{{ loop.index }}"
           aria-selected="{{ 'true' if loop.first else 'false' }}">
-    {{ option.label }}<span class="score">{{ '%.0f'|format(option.soft_total) }}</span>
+    {{ option.label }}<span class="score">{{ '%.0f'|format(option.points) }}</span>
   </button>
   {% endfor %}
 </div>
@@ -161,7 +161,7 @@
 <section class="panel" id="panel-{{ loop.index }}" role="tabpanel" {% if not loop.first %}hidden{% endif %}>
 
   <div class="scoreline">
-    <div class="total">{{ '%.1f'|format(option.soft_total) }}<small>schedule score</small></div>
+    <div class="total">{{ '%.0f'|format(option.points) }}<small>/ 100 · raw soft score {{ '%.1f'|format(option.soft_total) }}</small></div>
     {% if option.feasible %}
       <span class="badge ok">feasible · 0 hard violations</span>
     {% else %}

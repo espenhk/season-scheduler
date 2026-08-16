@@ -18,6 +18,7 @@ way somewhere better.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Literal, Protocol
@@ -31,6 +32,34 @@ ConstraintKind = Literal["hard", "soft"]
 # accumulation of soft rewards can pay for one, small enough to stay finite so
 # gradients still exist inside infeasible territory.
 HARD_PENALTY = 10_000.0
+
+# `Score.points` calibration. INFEASIBLE_CEILING is the hard cap a schedule
+# with any hard violation can reach; a feasible schedule with a soft score of
+# exactly zero lands on the midpoint of the range above it (currently 60, the
+# dead centre between 20 and 100). SOFT_SCALE is the soft-reward-per-match
+# that pulls a feasible schedule halfway from that midpoint to 100 — chosen
+# so that the shipped Eliteserien + Toppserien data, which nets 6-8 soft
+# points/match once searched for a minute, lands in the low-to-mid 90s.
+INFEASIBLE_CEILING = 20.0
+SOFT_SCALE = 3.0
+
+# Floor for the feasible-side saturation factor. `_sigmoid` underflows to an
+# exact 0.0 once its input is a few hundred past zero, which an extreme (if
+# unrealistic) negative soft score can reach — left unclamped, that would let
+# a feasible schedule's points hit INFEASIBLE_CEILING exactly rather than
+# staying strictly above it.
+_MIN_SATURATION = 1e-9
+
+
+def _sigmoid(x: float) -> float:
+    """Numerically stable logistic function — plain `1/(1+exp(-x))` overflows
+    `math.exp` once `x` gets a few hundred past zero in either direction, which
+    an extreme (if unrealistic) soft score can reach."""
+    if x >= 0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    z = math.exp(x)
+    return z / (1.0 + z)
 
 
 @dataclass(frozen=True)
@@ -133,11 +162,34 @@ class Score:
     hard_violations: int
     soft_total: float
     results: list[ConstraintResult] = field(default_factory=list)
+    num_matches: int = 0
 
     @property
     def sort_key(self) -> tuple[int, float]:
         """Lexicographic: feasibility first, then soft score. Lower is better."""
         return (self.hard_violations, -self.soft_total)
+
+    @property
+    def points(self) -> float:
+        """Overall schedule quality on a fixed 0-100 scale.
+
+        Comparable across seasons of any size: soft reward is normalised per
+        match before being squashed into range, rather than letting a bigger
+        league outscore a smaller one just by having more matches to earn
+        points from.
+
+        Any hard violation caps the result at `INFEASIBLE_CEILING`, decaying
+        towards 0 as violations pile up — a broken schedule can never
+        outscore a working one here, however good its soft score is. Every
+        feasible schedule lands strictly above that ceiling, up to 100 for
+        one that saturates the soft rules.
+        """
+        if self.hard_violations:
+            return INFEASIBLE_CEILING * math.exp(-0.25 * self.hard_violations)
+
+        per_match = self.soft_total / self.num_matches if self.num_matches else 0.0
+        saturation = max(_sigmoid(per_match / SOFT_SCALE), _MIN_SATURATION)
+        return INFEASIBLE_CEILING + (100.0 - INFEASIBLE_CEILING) * saturation
 
     @property
     def search_cost(self) -> float:
@@ -184,7 +236,12 @@ def evaluate(
     results = [c.evaluate(index, ctx) for c in constraints]
     hard_violations = sum(r.count for r in results if r.kind == "hard")
     soft_total = sum(r.total for r in results if r.kind == "soft")
-    return Score(hard_violations=hard_violations, soft_total=soft_total, results=results)
+    return Score(
+        hard_violations=hard_violations,
+        soft_total=soft_total,
+        results=results,
+        num_matches=len(matches),
+    )
 
 
 def evaluate_cost(

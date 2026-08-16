@@ -165,6 +165,7 @@ def cmd_explain(args: argparse.Namespace) -> int:
 
     for option in options:
         print(f"=== {option['label']} (seed {option.get('seed', '?')}) ===")
+        print(f"  points:          {option.get('points', '?')} / 100")
         print(f"  hard violations: {option['hard_violations']}")
         print(f"  soft total:      {option['soft_total']}")
         for row in sorted(option["breakdown"], key=lambda r: (r["kind"] != "hard", -abs(r["total"]))):
@@ -182,7 +183,7 @@ def _print_summary(result: SolverResult) -> None:
         print(f"  note: {note}")
     for candidate in result.candidates:
         badge = "feasible" if candidate.score.feasible else f"{candidate.score.hard_violations} HARD VIOLATIONS"
-        print(f"  {candidate.label}: score={candidate.score.soft_total:.1f} ({badge})")
+        print(f"  {candidate.label}: {candidate.score.points:.0f}/100 ({badge})")
 
 
 def _print_score(score: Score) -> None:
@@ -200,6 +201,7 @@ def _print_score(score: Score) -> None:
                 print(f"      ...and {len(result.events) - 5} more")
         print()
 
+    print(f"Score: {score.points:.0f} / 100\n")
     print(f"Soft score: {score.soft_total:.1f}\n")
     print("Soft rules, worst first:")
     for result in sorted(score.soft_results(), key=lambda r: r.total):
