@@ -33,7 +33,7 @@ from ..model.loader import World
 from ..model.schema import Competition, Match
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import HARD_PENALTY, Constraint, EvalContext, ScheduleIndex, evaluate
-from .base import Candidate, SolveRequest, SolverResult, select_diverse
+from .base import Candidate, ProgressUpdate, SearchStats, SolveRequest, SolverResult, select_diverse
 from .greedy import build_initial_schedule
 
 
@@ -111,6 +111,7 @@ class LocalSearchScheduler:
         candidates: list[Candidate] = []
         total_iterations = 0
         notes: list[str] = []
+        overall_stats = SearchStats()
 
         for restart in range(self.restarts):
             seed = request.seed + restart * 7919
@@ -140,7 +141,7 @@ class LocalSearchScheduler:
                 for m in initial
             ]
 
-            best, iterations = _anneal(
+            best, iterations, restart_stats = _anneal(
                 working,
                 pinned,
                 request,
@@ -149,8 +150,11 @@ class LocalSearchScheduler:
                 budget_s=budget_per_restart,
                 start_temperature=self.start_temperature,
                 end_temperature=self.end_temperature,
+                restart_index=restart,
+                total_restarts=self.restarts,
             )
             total_iterations += iterations
+            overall_stats += restart_stats
 
             matches = [m.to_match() for m in best]
             matches.sort(key=lambda m: (m.date, m.competition_id, m.home_team))
@@ -184,6 +188,7 @@ class LocalSearchScheduler:
             iterations=total_iterations,
             elapsed_s=time.perf_counter() - started,
             notes=notes,
+            search_stats=overall_stats,
         )
 
 
@@ -197,16 +202,28 @@ def _with_detail(ctx: EvalContext) -> EvalContext:
     )
 
 
-def _cost(matches: list[WorkingMatch], constraints: list[Constraint], ctx: EvalContext) -> float:
+@dataclass(slots=True)
+class _CostResult:
+    cost: float
+    # Ids of hard constraints this scenario broke — empty means viable. Built
+    # from `result.count` the cost loop already computes for every
+    # constraint, so tracking it costs nothing extra beyond the append.
+    hard_ids: tuple[str, ...]
+
+
+def _cost(matches: list[WorkingMatch], constraints: list[Constraint], ctx: EvalContext) -> _CostResult:
     index = ScheduleIndex(matches)  # type: ignore[arg-type]
     cost = 0.0
+    hard_ids: list[str] = []
     for constraint in constraints:
         result = constraint.evaluate(index, ctx)
         if result.kind == "hard":
             cost += result.count * HARD_PENALTY
+            if result.count:
+                hard_ids.append(constraint.id)
         else:
             cost -= result.total
-    return cost
+    return _CostResult(cost, tuple(hard_ids))
 
 
 def _anneal(
@@ -218,7 +235,9 @@ def _anneal(
     budget_s: float,
     start_temperature: float,
     end_temperature: float,
-) -> tuple[list[WorkingMatch], int]:
+    restart_index: int = 0,
+    total_restarts: int = 1,
+) -> tuple[list[WorkingMatch], int, SearchStats]:
     ctx = request.ctx
     constraints = request.constraints
 
@@ -234,23 +253,38 @@ def _anneal(
     rng = random.Random(seed)
     moves = _MoveSet(matches, pinned, request.world, request.competitions, calendars)
 
-    current_cost = _cost(matches, constraints, ctx)
+    current_cost = _cost(matches, constraints, ctx).cost
     best_cost = current_cost
     best_snapshot = _capture_all(matches)
 
     decay = math.log(end_temperature / start_temperature)
+    stats = SearchStats()
+    # Throttled by iteration count, not wall-clock: a clock poll every
+    # iteration would be the one thing in this loop that actually costs
+    # something (see the cooling-schedule note above for why time is kept out
+    # of the hot path entirely). ~40 updates per restart is plenty for a
+    # human watching a terminal.
+    report_every = max(1, total_iterations // 40)
 
     iterations = 0
     while iterations < total_iterations:
-        progress = iterations / max(1, total_iterations - 1)
-        temperature = start_temperature * math.exp(decay * progress)
+        anneal_progress = iterations / max(1, total_iterations - 1)
+        temperature = start_temperature * math.exp(decay * anneal_progress)
 
         undo = moves.apply(rng)
         if undo is None:
             continue
         iterations += 1
 
-        new_cost = _cost(matches, constraints, ctx)
+        evaluated = _cost(matches, constraints, ctx)
+        new_cost = evaluated.cost
+        stats.investigated += 1
+        if evaluated.hard_ids:
+            stats.hard_violation_scenarios += 1
+            stats.hard_violation_counts.update(evaluated.hard_ids)
+        else:
+            stats.feasible += 1
+
         delta = new_cost - current_cost
 
         if delta <= 0 or rng.random() < math.exp(-delta / max(temperature, 1e-9)):
@@ -261,8 +295,19 @@ def _anneal(
         else:
             _restore(matches, undo)
 
+        if request.progress is not None and iterations % report_every == 0:
+            request.progress(
+                ProgressUpdate(
+                    restart=restart_index,
+                    total_restarts=total_restarts,
+                    iterations=iterations,
+                    total_iterations=total_iterations,
+                    stats=stats.copy(),
+                )
+            )
+
     _restore(matches, best_snapshot)
-    return matches, iterations
+    return matches, iterations, stats
 
 
 # Iterations/second this process can push through a given problem size, keyed

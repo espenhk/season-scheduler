@@ -23,7 +23,7 @@ from ..model.schema import WEEKDAYS, Match, Season
 from ..rounds.cup_schedule import NEUTRAL_CUP_VENUE, CupRoundPlacement, CupSchedule
 from ..scoring.base import ConstraintResult, Event, Score
 from ..scoring.registry import describe
-from ..solvers.base import Candidate, SolverResult
+from ..solvers.base import Candidate, SearchStats, SolverResult
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -116,6 +116,7 @@ def render_report(
         season=season,
         result=result,
         options=options,
+        search_stats=_search_stats_view(result.search_stats),
         club_colors=club_colors,
         all_clubs=sorted(world.clubs.values(), key=lambda c: c.name),
         dual_clubs=sorted(world.dual_clubs(), key=lambda c: c.name),
@@ -170,6 +171,44 @@ def _build_option(
         "by_competition": _competition_views(world, entries) + _cup_views(world, cup_schedules, club_colors),
         "combined_calendar": _combined_calendar_view(combined_entries),
         "combined_list": _combined_list_view(combined_entries),
+    }
+
+
+_DIFFICULTY_COPY = {
+    "easy": "Easy — most scenarios tried were already viable.",
+    "moderate": "Took real search — a large share of scenarios hit a hard rule.",
+    "hard": "A hard search — the vast majority of scenarios tried broke a hard rule.",
+    "unknown": "",
+}
+
+
+def _search_stats_view(stats: SearchStats) -> dict | None:
+    """How hard the search had to work (issue #34), shaped for the template.
+
+    `None` when nothing was tracked — the `score` command's imported-schedule
+    path builds a `SolverResult` without ever running a search, so there is
+    nothing to report here.
+    """
+    if not stats.investigated:
+        return None
+    breakdown = [
+        {
+            "id": constraint_id,
+            "description": describe(constraint_id),
+            "count": count,
+            "pct": 100.0 * count / stats.hard_violation_scenarios if stats.hard_violation_scenarios else 0.0,
+        }
+        for constraint_id, count in stats.hard_violation_counts.most_common()
+    ]
+    return {
+        "investigated": stats.investigated,
+        "feasible": stats.feasible,
+        "feasible_pct": 100.0 * stats.feasible_rate,
+        "hard_violation_scenarios": stats.hard_violation_scenarios,
+        "hard_violation_pct": 100.0 * stats.hard_violation_scenarios / stats.investigated,
+        "difficulty": stats.difficulty,
+        "difficulty_label": _DIFFICULTY_COPY.get(stats.difficulty, ""),
+        "breakdown": breakdown,
     }
 
 
@@ -707,11 +746,20 @@ def _round_date_label(entries: list[dict]) -> str:
 
 def write_json(result: SolverResult, output_path: Path) -> Path:
     """Machine-readable twin of the HTML, for diffing and test snapshots."""
+    stats = result.search_stats
     payload = {
         "solver": result.solver,
         "iterations": result.iterations,
         "elapsed_s": round(result.elapsed_s, 2),
         "notes": result.notes,
+        "search_stats": {
+            "investigated": stats.investigated,
+            "feasible": stats.feasible,
+            "hard_violation_scenarios": stats.hard_violation_scenarios,
+            "feasible_rate": round(stats.feasible_rate, 4),
+            "difficulty": stats.difficulty,
+            "hard_violation_counts": dict(stats.hard_violation_counts.most_common()),
+        },
         "options": [
             {
                 "label": candidate.label,

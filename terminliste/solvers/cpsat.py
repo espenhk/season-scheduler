@@ -32,7 +32,7 @@ from ..model.schema import Match
 from ..rounds.cup_schedule import cup_conflict, resolved_cup_windows
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import evaluate
-from .base import Candidate, SolveRequest, SolverResult, select_diverse
+from .base import Candidate, SearchStats, SolveRequest, SolverResult, select_diverse
 from .greedy import align_dual_clubs, align_home_teams_to_round_pins, plan_competitions, resolve_round_pins
 
 _ONE_DAY = timedelta(days=1)
@@ -67,6 +67,15 @@ class CpSatScheduler:
         forbidden: list[dict[str, date]] = []
         budget_per_pass = request.time_budget_s / max(1, request.top_n)
 
+        # One CP-SAT pass is this backend's unit of "scenario investigated"
+        # (issue #34) — the same unit local search uses is one proposed move,
+        # which has no CP-SAT analogue; a pass is the coarsest thing both
+        # backends' stats can be compared at. `hard_violation_counts` is
+        # populated from whichever hard rule(s) either made the model
+        # infeasible (the assumption culprits) or are still broken in the
+        # extracted schedule our own scorer checked.
+        stats = SearchStats()
+
         for pass_index in range(request.top_n):
             built = _build_model(
                 cp_model, request, planned, calendar, forbidden, round_pins
@@ -82,10 +91,12 @@ class CpSatScheduler:
             solver.parameters.random_seed = request.seed + pass_index
 
             status = solver.Solve(model)
+            stats.investigated += 1
             if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-                notes.append(
-                    _infeasibility_note(solver, status, assumptions, cp_model, pass_index)
-                )
+                culprits = _infeasibility_culprits(solver, status, assumptions, cp_model)
+                stats.hard_violation_scenarios += 1
+                stats.hard_violation_counts.update(culprits or ["unknown"])
+                notes.append(_infeasibility_note(solver, status, culprits, cp_model, pass_index))
                 break
 
             matches = _extract(solver, placement, fixtures, request)
@@ -95,6 +106,13 @@ class CpSatScheduler:
             )
             detail_ctx = _with_detail(request.ctx)
             score = evaluate(matches, request.constraints, detail_ctx)
+            if score.feasible:
+                stats.feasible += 1
+            else:
+                stats.hard_violation_scenarios += 1
+                stats.hard_violation_counts.update(
+                    r.constraint_id for r in score.hard_results() if r.count
+                )
             candidates.append(
                 Candidate(
                     matches=matches,
@@ -119,6 +137,7 @@ class CpSatScheduler:
             solver=self.name,
             elapsed_s=time.perf_counter() - started,
             notes=notes,
+            search_stats=stats,
         )
 
 
@@ -451,11 +470,14 @@ def _extract(solver, placement, fixtures, request) -> list[Match]:
     return matches
 
 
-def _infeasibility_note(solver, status, assumptions, cp_model, pass_index: int) -> str:
-    """Name the rules responsible instead of reporting a bare INFEASIBLE."""
-    if status != cp_model.INFEASIBLE:
-        return f"pass {pass_index}: solver returned {solver.StatusName(status)}"
+def _infeasibility_culprits(solver, status, assumptions, cp_model) -> list[str]:
+    """The hard rules the solver names as responsible for an INFEASIBLE result.
 
+    Empty if the status wasn't INFEASIBLE, or if this OR-Tools build can't
+    isolate a conflicting core.
+    """
+    if status != cp_model.INFEASIBLE:
+        return []
     culprits: list[str] = []
     try:
         core = set(solver.SufficientAssumptionsForInfeasibility())
@@ -464,6 +486,13 @@ def _infeasibility_note(solver, status, assumptions, cp_model, pass_index: int) 
                 culprits.append(name)
     except Exception:  # pragma: no cover - depends on solver build
         pass
+    return culprits
+
+
+def _infeasibility_note(solver, status, culprits: list[str], cp_model, pass_index: int) -> str:
+    """Name the rules responsible instead of reporting a bare INFEASIBLE."""
+    if status != cp_model.INFEASIBLE:
+        return f"pass {pass_index}: solver returned {solver.StatusName(status)}"
 
     if culprits:
         return (

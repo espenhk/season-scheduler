@@ -3,12 +3,14 @@ HTML page's new controls (issues #21-25, #39)."""
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import date
 
 import html
 import json
 
 import factories as f
+import pytest
 from terminliste.report.render import (
     _club_headlines,
     _cup_entries,
@@ -16,11 +18,12 @@ from terminliste.report.render import (
     _fairness_rows,
     _json_attr,
     _match_entries,
+    _search_stats_view,
     render_report,
 )
 from terminliste.scoring.base import ConstraintResult, EvalContext, Event, evaluate
 from terminliste.scoring.soft import ConsecutiveHomeDays
-from terminliste.solvers.base import Candidate, SolverResult
+from terminliste.solvers.base import Candidate, SearchStats, SolverResult
 
 
 class _FixedTravel:
@@ -388,3 +391,69 @@ def test_combined_views_include_cup_rounds_alongside_league_matches():
     assert "v TBD" in calendar_section
     assert "NM Cup" in list_section
     assert "TBD (Round 1)" in list_section
+
+
+# -- search stats (issue #34) -------------------------------------------------
+
+
+def test_search_stats_view_is_none_when_nothing_was_tracked():
+    """`score`'s imported-schedule path never runs a search — its `SolverResult`
+    carries a default, empty `SearchStats`, and the report should just omit
+    the section rather than show an all-zero one."""
+    assert _search_stats_view(SearchStats()) is None
+
+
+def test_search_stats_view_summarises_investigated_and_breakdown():
+    stats = SearchStats(
+        investigated=100,
+        feasible=40,
+        hard_violation_scenarios=60,
+        hard_violation_counts=Counter({"min_rest_days": 50, "venue_double_booking": 10}),
+    )
+    view = _search_stats_view(stats)
+
+    assert view["investigated"] == 100
+    assert view["feasible"] == 40
+    assert view["feasible_pct"] == 40.0
+    assert view["hard_violation_scenarios"] == 60
+    assert view["hard_violation_pct"] == 60.0
+    assert view["difficulty"] == "moderate"
+    assert view["breakdown"][0]["id"] == "min_rest_days"
+    assert view["breakdown"][0]["count"] == 50
+    assert view["breakdown"][0]["pct"] == pytest.approx(83.333, rel=1e-3)
+
+
+def test_render_report_shows_search_difficulty_section_when_stats_present():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    candidate = _candidate(world, season, matches, [])
+    stats = SearchStats(investigated=10, feasible=1, hard_violation_scenarios=9,
+                         hard_violation_counts=Counter({"min_rest_days": 9}))
+    result = SolverResult(candidates=[candidate], solver="test", iterations=10, search_stats=stats)
+
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = render_report(world, season, result, Path(tmp) / "out.html")
+        rendered = out.read_text(encoding="utf-8")
+
+    assert "How hard was this to schedule?" in rendered
+    assert "difficulty-hard" in rendered
+    assert "min rest days" in rendered
+
+
+def test_render_report_omits_search_difficulty_section_when_no_stats():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    candidate = _candidate(world, season, matches, [])
+    result = SolverResult(candidates=[candidate], solver="test")
+
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = render_report(world, season, result, Path(tmp) / "out.html")
+        rendered = out.read_text(encoding="utf-8")
+
+    assert "How hard was this to schedule?" not in rendered

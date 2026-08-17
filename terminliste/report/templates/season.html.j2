@@ -151,6 +151,18 @@
   .kind.hard { background: #eef4fa; color: var(--accent); }
   tr.violated td { background: #fdf4f3; }
 
+  /* -- search difficulty (issue #34) -- */
+  .search-stats { margin-top: 16px; }
+  .search-stats > summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .difficulty-pill {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .difficulty-easy { background: #e8f6ee; color: var(--good); }
+  .difficulty-moderate { background: #fdf6ea; color: var(--warn); }
+  .difficulty-hard { background: #fdf0ee; color: var(--bad); }
+  .search-stats .desc { margin-top: 6px; }
+
   /* -- fairness across teams -- */
   .fairness-row { margin: 14px 0 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; }
   .fairness-row.flagged { border-color: #f0cf98; background: #fdf8ef; }
@@ -265,6 +277,39 @@
   <div style="font-weight:700;margin-bottom:4px">Coverage notes</div>
   {% for warning in warnings %}<div>⚠ {{ warning }}</div>{% endfor %}
 </div>
+{% endif %}
+
+{% if search_stats %}
+<details class="search-stats">
+  <summary>
+    How hard was this to schedule?
+    <span class="difficulty-pill difficulty-{{ search_stats.difficulty }}">{{ search_stats.difficulty }}</span>
+    <span style="font-weight:400;color:var(--muted)">
+      · {{ '{:,}'.format(search_stats.investigated) }} scenarios investigated ·
+      {{ '%.0f'|format(search_stats.feasible_pct) }}% viable
+    </span>
+  </summary>
+  <div class="item-body">
+    <div class="desc">{{ search_stats.difficulty_label }}</div>
+    <div class="desc">
+      {{ '{:,}'.format(search_stats.feasible) }} scenario{{ '' if search_stats.feasible == 1 else 's' }} came out viable,
+      {{ '{:,}'.format(search_stats.hard_violation_scenarios) }} hit at least one hard-rule violation
+      ({{ '%.0f'|format(search_stats.hard_violation_pct) }}% of everything tried).
+    </div>
+    {% if search_stats.breakdown %}
+    <div style="font-weight:700;margin:14px 0 6px;font-size:13px">Where the dead ends came from</div>
+    <div class="fairness-bars">
+      {% for row in search_stats.breakdown %}
+      <div class="fairness-bar" title="{{ row.description }}">
+        <span class="flabel">{{ row.id.replace('_', ' ') }}</span>
+        <span class="ftrack"><span class="ffill" style="width:{{ row.pct }}%"></span></span>
+        <span class="fcount">{{ '{:,}'.format(row.count) }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</details>
 {% endif %}
 
 <div class="tabs" role="tablist">

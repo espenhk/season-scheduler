@@ -1,11 +1,22 @@
-from .base import Candidate, Scheduler, SolveRequest, SolverResult, divergence, select_diverse
+from .base import (
+    Candidate,
+    ProgressUpdate,
+    Scheduler,
+    SearchStats,
+    SolveRequest,
+    SolverResult,
+    divergence,
+    select_diverse,
+)
 from .greedy import build_initial_schedule, plan_competitions
 from .local_search import LocalSearchScheduler
 
 __all__ = [
     "Candidate",
     "LocalSearchScheduler",
+    "ProgressUpdate",
     "Scheduler",
+    "SearchStats",
     "SolveRequest",
     "SolverResult",
     "build_initial_schedule",

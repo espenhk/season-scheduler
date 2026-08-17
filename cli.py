@@ -36,7 +36,7 @@ from terminliste.report.render import render_report, write_json  # noqa: E402
 from terminliste.rounds.cup_schedule import CupSchedulingError, schedule_cups  # noqa: E402
 from terminliste.scoring.base import EvalContext, Score, evaluate  # noqa: E402
 from terminliste.scoring.registry import build_constraints  # noqa: E402
-from terminliste.solvers import Candidate, SolveRequest, SolverResult, get_scheduler  # noqa: E402
+from terminliste.solvers import Candidate, ProgressUpdate, SearchStats, SolveRequest, SolverResult, get_scheduler  # noqa: E402
 
 # TheSportsDB's league-name string for each competition this project knows
 # about. Unconfirmed against a live call in this sandbox — the network egress
@@ -107,6 +107,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
     ctx = EvalContext(world=world, season=season, travel=travel)
 
     scheduler = get_scheduler(args.solver)
+    # Live progress (issue #34) — a terminal-only courtesy: piped/redirected
+    # output (e.g. a CI log) would otherwise fill up with carriage-return
+    # updates that don't mean anything once flattened to lines.
+    live = sys.stdout.isatty()
     request = SolveRequest(
         world=world,
         season=season,
@@ -117,6 +121,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         seed=args.seed,
         top_n=args.top_n,
         time_budget_s=args.time_budget,
+        progress=_print_progress if live else None,
     )
 
     print(f"Solving with {scheduler.name} (budget {args.time_budget:.0f}s, seed {args.seed})...")
@@ -125,8 +130,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
     try:
         result = scheduler.solve(request)
     except RuntimeError as exc:
+        if live:
+            print()
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
+    if live:
+        print()  # leave the last progress line intact rather than overwriting it
 
     if not result.candidates:
         print("FAIL: solver produced no candidates.", file=sys.stderr)
@@ -271,9 +280,37 @@ def cmd_refresh_reference_data(args: argparse.Namespace) -> int:
     return 1 if any_diffs else 0
 
 
+def _print_progress(update: ProgressUpdate) -> None:
+    """Live "how's it going" line (issue #34), overwritten in place."""
+    pct = 100 * update.iterations / max(1, update.total_iterations)
+    stats = update.stats
+    feasible_pct = 100 * stats.feasible_rate if stats.investigated else 0.0
+    sys.stdout.write(
+        f"\r  restart {update.restart + 1}/{update.total_restarts}: "
+        f"{update.iterations:,}/{update.total_iterations:,} ({pct:.0f}%) scenarios tried — "
+        f"{feasible_pct:.0f}% viable so far   "
+    )
+    sys.stdout.flush()
+
+
+def _print_search_stats(stats: SearchStats) -> None:
+    if not stats.investigated:
+        return
+    print(
+        f"  search: {stats.investigated:,} scenarios investigated, "
+        f"{stats.feasible:,} viable ({100 * stats.feasible_rate:.0f}%), "
+        f"{stats.hard_violation_scenarios:,} hit a hard-rule violation — difficulty: {stats.difficulty}"
+    )
+    if stats.hard_violation_counts:
+        top = stats.hard_violation_counts.most_common(3)
+        breakdown = ", ".join(f"{name} ({count:,})" for name, count in top)
+        print(f"    most common dead end: {breakdown}")
+
+
 def _print_summary(result: SolverResult) -> None:
     print(f"\n{len(result.candidates)} option(s), {result.iterations} iterations, "
           f"{result.elapsed_s:.1f}s elapsed")
+    _print_search_stats(result.search_stats)
     for note in result.notes:
         print(f"  note: {note}")
     for candidate in result.candidates:

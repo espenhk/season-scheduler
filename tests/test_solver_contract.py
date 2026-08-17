@@ -155,6 +155,55 @@ def test_zero_hard_violations_is_achievable_on_an_easy_calendar(solver_name):
     assert result.best.score.feasible, result.best.score.hard_results()
 
 
+@pytest.mark.parametrize("solver_name", SOLVERS)
+def test_search_stats_account_for_every_scenario_investigated(solver_name):
+    """Issue #34: both backends must report how hard the search had to work —
+    total scenarios tried, how many were viable, how many hit a hard rule, and
+    (for the ones that didn't come out viable) which rule was the culprit."""
+    world, season, competitions = _small_world()
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=6, top_n=1, time_budget_s=10.0,
+    )
+    result = _get_scheduler(solver_name).solve(request)
+    stats = result.search_stats
+
+    assert stats.investigated > 0
+    assert stats.feasible + stats.hard_violation_scenarios == stats.investigated
+    assert 0.0 <= stats.feasible_rate <= 1.0
+    assert stats.difficulty in ("easy", "moderate", "hard")
+    if stats.hard_violation_scenarios:
+        assert stats.hard_violation_counts
+        assert all(count > 0 for count in stats.hard_violation_counts.values())
+
+
+def test_local_search_progress_callback_reports_a_live_running_total():
+    """The CLI's live progress line (issue #34) depends on each `ProgressUpdate`
+    being an independent snapshot — not a shared, still-mutating object — and
+    on the running totals only ever growing within a restart."""
+    world, season, competitions = _small_world()
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    updates = []
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=8, top_n=1, time_budget_s=4.0, progress=updates.append,
+    )
+    result = _get_scheduler("local").solve(request)
+
+    assert updates
+    by_restart: dict[int, list] = {}
+    for update in updates:
+        by_restart.setdefault(update.restart, []).append(update)
+    for restart_updates in by_restart.values():
+        investigated = [u.stats.investigated for u in restart_updates]
+        assert investigated == sorted(investigated)
+        assert all(u.stats.investigated <= u.total_iterations for u in restart_updates)
+    assert updates[-1].stats.investigated <= result.search_stats.investigated
+
+
 def test_local_search_is_deterministic_for_a_fixed_seed():
     world, season, competitions = _small_world()
     constraints = build_constraints(world, season, competitions)
