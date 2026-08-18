@@ -19,6 +19,7 @@ python cli.py validate                              # data integrity, no solving
 python cli.py generate --season 2026                 # solve, write schedules/2026.html
 python cli.py score my_schedule.csv --season 2026     # score a real/proposed schedule
 python cli.py refresh-reference-data                  # diff data/*.yml against a live API
+python cli.py refresh-travel-times                    # fetch real ground travel times
 python scripts/refresh_baselines.py                   # re-score the committed real-schedule baselines
 python -m pytest ..                                   # -m pytest tests/ from the repo root
 ```
@@ -29,15 +30,18 @@ python -m pytest ..                                   # -m pytest tests/ from th
 
 `validate`, `generate` and `score` never touch the network — everything
 about them is exactly as reproducible as the YAML in `data/`.
-`refresh-reference-data` is the one command that does, and even then it only
-reads: it prints a diff against `data/*.yml`, it never rewrites it. See
-"Reference-data refresh" below.
+`refresh-reference-data` and `refresh-travel-times` are the two commands that
+do, and both only read: `refresh-reference-data` prints a diff against
+`data/*.yml` and never rewrites it; `refresh-travel-times` writes to the
+gitignored `data/.refdata_cache/`, never to `data/*.yml`. See
+"Reference-data refresh" and "Travel time" below.
 
 ## What's here
 
 - **`data/`** — the source of truth: venues, clubs/teams, competitions,
-  season calendar (blackouts, fixed requirements), and curated travel-time
-  overrides. All YAML, hand-editable. `venues.yml`, `clubs.yml` and
+  season calendar (blackouts, fixed requirements), and a small file of
+  curated travel-time overrides for the rare pair a routing API gets wrong.
+  All YAML, hand-editable. `venues.yml`, `clubs.yml` and
   `travel_overrides.yml` are marked `verified: false` because the sandbox
   this was built in couldn't reach Wikipedia or the stats sites — assembled
   from web search snippets plus general knowledge, and a follow-up pass
@@ -254,6 +258,39 @@ per competition) is a documented best guess, not something this environment
 could confirm against a live call — verify it the first time this runs
 somewhere with real network access.
 
+## Travel time
+
+The `consecutive_away_days` soft rule (below) only rewards a back-to-back
+away pairing if the squad can plausibly get from one venue to the other, so
+it needs a real travel-time number, not a straight-line guess. There's no
+self-rolled distance-over-average-speed model for roads: `python cli.py
+refresh-travel-times` fetches an actual driving route (time and distance)
+for every venue pair from [OSRM](https://project-osrm.org)'s free public
+routing API (`terminliste/refdata/travel_client.py`), and caches the result
+for 30 days in `data/.refdata_cache/travel.json`
+(`terminliste/refdata/travel_refresh.py`) — gitignored, so it starts empty
+in a fresh clone, same as the `refresh-reference-data` cache.
+`ApiTravelModel` (`terminliste/model/travel.py`) only ever reads that cache;
+it never calls the network itself, keeping `validate`/`generate`/`score`
+fully offline.
+
+Great-circle distance is a bad proxy for a road (Norwegian roads follow
+fjords and go around mountains), but it's *exactly* what a flight covers —
+so it's still used, just honestly, to estimate air time: cruise speed plus a
+fixed door-to-door overhead for check-in/security/boarding. Air time is
+checked whenever ground travel is missing (no cached route yet) or slow, and
+the cheaper of the two wins. A pair where neither gets under
+`UNTRAVELABLE_THRESHOLD_HOURS` (8h by default) is flagged unreachable.
+`travel_overrides.yml` still wins over both, for the rare pair the API (or
+the flight estimate) gets wrong — mountain crossings with no direct route,
+or the far north where nothing short of flying is realistic.
+
+Like `refresh-reference-data`, this fails soft: the same sandboxed dev
+environment that blocks TheSportsDB also blocks OSRM, so
+`refresh-travel-times` here will report every pair as failed and leave the
+cache empty — `ApiTravelModel` falls straight through to the flight
+estimate for every pair until it's run somewhere with real network access.
+
 ## Testing
 
 ```bash
@@ -270,13 +307,16 @@ python -m pytest tests/ -v
   boundary, hand-built 4-team schedules, plus a check that every hard rule is
   silent on a clean schedule.
 - `test_calendar.py`, `test_travel.py`, `test_loader.py` — the supporting
-  model layer, including curated overrides, referential-integrity errors,
-  and a competition's own (optionally narrower) start/end window.
+  model layer, including the ground-cache/air-estimate/override precedence
+  in `ApiTravelModel`, referential-integrity errors, and a competition's own
+  (optionally narrower) start/end window.
 - `test_cup_schedule.py` — resolving a cup's forced dates/windows to real
   per-team dates: round ordering enforced and rejected when infeasible,
   teams spread within a round's window, and the blackout-fallback warning.
 - `test_refdata.py` — the reference-data client, cache and diff logic behind
   `cli.py refresh-reference-data`, entirely mocked at the HTTP layer.
+- `test_travel_refresh.py` — the OSRM client and cache-refresh logic behind
+  `cli.py refresh-travel-times`, also entirely mocked at the HTTP layer.
 - `test_external_schedule.py` — CSV/JSON parsing, leg inference, coverage
   warnings, and a schedule with deliberate flaws scoring the right hard
   violations.
@@ -318,3 +358,8 @@ against the real API:
   provider that reliably has them is confirmed reachable — TheSportsDB's
   team records don't carry lat/lon, so `venues.yml`'s coordinates are still
   unverified even once the rest of this closes out.
+
+Same story for `refresh-travel-times` (issue #27): run it somewhere with
+real network access to actually populate `data/.refdata_cache/travel.json`
+from OSRM — in this sandbox every pair falls through to the flight-time
+estimate, since the egress policy blocks `router.project-osrm.org` too.

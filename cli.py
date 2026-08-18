@@ -7,12 +7,15 @@
                                                    # score a real/proposed schedule
     python cli.py explain schedules/2026.json      # score breakdown in the terminal
     python cli.py refresh-reference-data           # diff data/*.yml against a live API
+    python cli.py refresh-travel-times             # fetch real ground travel times
 
 `validate` and `score` need no solver and run in well under a second.
 `generate` runs the local-search solver by default (`--solver cpsat` needs
-OR-Tools installed). `refresh-reference-data` is the only command that
-touches the network, and only to read — it never rewrites `data/*.yml`
-itself; see `terminliste/refdata/refresh.py`.
+OR-Tools installed). `refresh-reference-data` and `refresh-travel-times` are
+the only commands that touch the network, and only to read — neither
+rewrites `data/*.yml`; `refresh-travel-times` writes to the gitignored
+`data/.refdata_cache/` instead. See `terminliste/refdata/refresh.py` and
+`terminliste/refdata/travel_refresh.py`.
 """
 
 from __future__ import annotations
@@ -30,8 +33,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from terminliste.external_schedule import ExternalScheduleError, load_external_schedule  # noqa: E402
 from terminliste.model.loader import DataError, load_world  # noqa: E402
-from terminliste.model.travel import HaversineTravelModel  # noqa: E402
-from terminliste.refdata import refresh_competition  # noqa: E402
+from terminliste.model.travel import ApiTravelModel  # noqa: E402
+from terminliste.refdata import refresh_competition, refresh_travel_times  # noqa: E402
 from terminliste.report.render import render_report, write_json  # noqa: E402
 from terminliste.rounds.cup_schedule import CupSchedulingError, schedule_cups  # noqa: E402
 from terminliste.scoring.base import EvalContext, Score, evaluate  # noqa: E402
@@ -103,7 +106,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     competitions = [world.competition(c) for c in season.competitions]
     cup_schedules, cup_warnings = _schedule_cups_or_exit(world, season)
     constraints = build_constraints(world, season, competitions, cup_schedules)
-    travel = HaversineTravelModel(world)
+    travel = ApiTravelModel(world)
     ctx = EvalContext(world=world, season=season, travel=travel)
 
     scheduler = get_scheduler(args.solver)
@@ -170,7 +173,7 @@ def cmd_score(args: argparse.Namespace) -> int:
     competitions = [world.competition(c) for c in season.competitions]
     cup_schedules, cup_warnings = _schedule_cups_or_exit(world, season)
     constraints = build_constraints(world, season, competitions, cup_schedules)
-    travel = HaversineTravelModel(world)
+    travel = ApiTravelModel(world)
 
     try:
         matches, warnings = load_external_schedule(Path(args.schedule), world)
@@ -278,6 +281,24 @@ def cmd_refresh_reference_data(args: argparse.Namespace) -> int:
         "Fold in anything you trust by hand."
     )
     return 1 if any_diffs else 0
+
+
+def cmd_refresh_travel_times(args: argparse.Namespace) -> int:
+    world = _load_world_or_exit()
+    report = refresh_travel_times(world, force=args.force)
+
+    print(
+        f"{report.fetched} fetched, {report.reused} reused from cache, "
+        f"{len(report.failed)} failed (of {report.pairs_total} venue pairs)"
+    )
+    for error in report.failed:
+        print(f"  ⚠ {error}")
+    if report.failed:
+        print(
+            "\nFailed pairs keep whatever was cached before (or fall back to the "
+            "air-travel estimate at run time). Re-run to retry them."
+        )
+    return 0
 
 
 def _print_progress(update: ProgressUpdate) -> None:
@@ -403,6 +424,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="ignore the cache and re-fetch from the API"
     )
     p_refresh.set_defaults(func=cmd_refresh_reference_data)
+
+    p_refresh_travel = sub.add_parser(
+        "refresh-travel-times",
+        help=(
+            "fetch real ground travel times between venues via OSRM and cache them "
+            "(never touches data/*.yml; needs network)"
+        ),
+    )
+    p_refresh_travel.add_argument(
+        "--force", action="store_true", help="ignore the cache and re-fetch every pair"
+    )
+    p_refresh_travel.set_defaults(func=cmd_refresh_travel_times)
 
     return parser
 

@@ -177,9 +177,9 @@ def test_a_broken_real_schedule_scores_hard_violations(world, season):
         # Viking play again two days later: min_rest_days (needs 3).
         _entry_match(world, "eliteserien_2026", "kristiansund_m", "viking_m", "2026-04-10"),
     ]
-    from terminliste.model.travel import HaversineTravelModel
+    from terminliste.model.travel import ApiTravelModel
 
-    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world), detail=True)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world), detail=True)
     score = evaluate(matches, constraints, ctx)
 
     assert not score.feasible

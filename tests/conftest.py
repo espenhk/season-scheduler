@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from terminliste.model.loader import load_world
-from terminliste.model.travel import HaversineTravelModel
+from terminliste.model.travel import ApiTravelModel
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_ROOT = PROJECT_ROOT / "data"
@@ -26,4 +26,4 @@ def competitions(world, season):
 
 @pytest.fixture(scope="session")
 def travel(world):
-    return HaversineTravelModel(world)
+    return ApiTravelModel(world)

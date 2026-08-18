@@ -1,17 +1,19 @@
-# Curated surface travel times (hours, bus or train) for venue pairs where the
-# great-circle estimate in terminliste/model/travel.py is badly wrong.
+# Curated surface travel times (hours, bus or train) for venue pairs, used by
+# terminliste/model/travel.py's ApiTravelModel.
 #
-# Norwegian geography defeats straight lines: fjords, mountains and the sheer
-# length of the country mean the road between two points is often two or three
-# times the distance a crow flies, and north of Trondheim it stops being a
-# realistic same-trip option at all. Anything listed here wins over the
-# computed value.
+# Ground travel is normally read from data/.refdata_cache/travel.json, a
+# cache of real routes fetched from OSRM by `cli.py refresh-travel-times`
+# (gitignored — regenerate it locally; it's empty in a fresh clone). This
+# file exists for the rare pair where a routing API still gets it wrong —
+# e.g. north of Trondheim, where the "route" isn't really a same-trip option
+# even though a road technically connects the dots — and always wins over
+# both the cached fetch and the flight-time estimate.
 #
 # `hours: null` means "no reasonable surface connection" — treated as infinite,
 # so the away-day pairing bonus never fires for that pair.
 verified: false
 sources:
-  - "General knowledge of Norwegian road/rail distances; replace with a routing API"
+  - "General knowledge of Norwegian road/rail distances; cross-check against `cli.py refresh-travel-times`"
 
 overrides:
   # Nord-Norge: not reachable by bus/train in any schedulable window.

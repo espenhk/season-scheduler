@@ -40,7 +40,7 @@ import yaml
 from .external_schedule import ExternalScheduleError, load_external_schedule
 from .model.loader import World
 from .model.schema import Match
-from .model.travel import HaversineTravelModel
+from .model.travel import ApiTravelModel
 from .rounds.cup_schedule import CupSchedulingError, schedule_cups
 from .scoring.base import EvalContext, Score, evaluate
 from .scoring.registry import build_constraints
@@ -193,7 +193,7 @@ def evaluate_baseline(source: BaselineSource, world: World) -> BaselineEvaluatio
     ctx = EvalContext(
         world=world,
         season=season,
-        travel=HaversineTravelModel(world),
+        travel=ApiTravelModel(world),
         detail=True,
     )
     return BaselineEvaluation(

@@ -16,19 +16,20 @@ from .schema import (
     Team,
     Venue,
 )
-from .travel import HaversineTravelModel, TravelModel
+from .travel import ApiTravelModel, TravelEstimate, TravelModel
 
 __all__ = [
+    "ApiTravelModel",
     "Club",
     "Competition",
     "DataError",
     "FixedRequirement",
     "Fixture",
-    "HaversineTravelModel",
     "Match",
     "Season",
     "SeasonCalendar",
     "Team",
+    "TravelEstimate",
     "TravelModel",
     "Venue",
     "World",

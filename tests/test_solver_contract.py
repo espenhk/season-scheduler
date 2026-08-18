@@ -13,7 +13,7 @@ from datetime import date, timedelta
 import factories as f
 import pytest
 
-from terminliste.model.travel import HaversineTravelModel
+from terminliste.model.travel import ApiTravelModel
 from terminliste.rounds.cup_schedule import schedule_cups
 from terminliste.scoring.registry import build_constraints
 from terminliste.scoring.base import EvalContext
@@ -64,7 +64,7 @@ SOLVERS = ["local"] + (["cpsat"] if HAS_ORTOOLS else [])
 def test_returns_requested_number_of_diverse_candidates(solver_name):
     world, season, competitions = _small_world()
     constraints = build_constraints(world, season, competitions)
-    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
     request = SolveRequest(
         world=world, season=season, competitions=competitions, constraints=constraints,
         ctx=ctx, seed=1, top_n=3, time_budget_s=10.0,
@@ -82,7 +82,7 @@ def test_returns_requested_number_of_diverse_candidates(solver_name):
 def test_every_fixture_is_placed_exactly_once(solver_name):
     world, season, competitions = _small_world()
     constraints = build_constraints(world, season, competitions)
-    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
     request = SolveRequest(
         world=world, season=season, competitions=competitions, constraints=constraints,
         ctx=ctx, seed=2, top_n=1, time_budget_s=10.0,
@@ -128,7 +128,7 @@ def test_cup_schedule_is_respected_by_both_backends(solver_name):
     assert cup_warnings == []
 
     constraints = build_constraints(world, season, competitions, cup_schedules)
-    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
     request = SolveRequest(
         world=world, season=season, competitions=competitions, cup_schedules=cup_schedules,
         constraints=constraints, ctx=ctx, seed=11, top_n=1, time_budget_s=15.0,
@@ -145,7 +145,7 @@ def test_cup_schedule_is_respected_by_both_backends(solver_name):
 def test_zero_hard_violations_is_achievable_on_an_easy_calendar(solver_name):
     world, season, competitions = _small_world()
     constraints = build_constraints(world, season, competitions)
-    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
     request = SolveRequest(
         world=world, season=season, competitions=competitions, constraints=constraints,
         ctx=ctx, seed=3, top_n=1, time_budget_s=15.0,
@@ -162,7 +162,7 @@ def test_search_stats_account_for_every_scenario_investigated(solver_name):
     (for the ones that didn't come out viable) which rule was the culprit."""
     world, season, competitions = _small_world()
     constraints = build_constraints(world, season, competitions)
-    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
     request = SolveRequest(
         world=world, season=season, competitions=competitions, constraints=constraints,
         ctx=ctx, seed=6, top_n=1, time_budget_s=10.0,
@@ -185,7 +185,7 @@ def test_local_search_progress_callback_reports_a_live_running_total():
     on the running totals only ever growing within a restart."""
     world, season, competitions = _small_world()
     constraints = build_constraints(world, season, competitions)
-    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
     updates = []
     request = SolveRequest(
         world=world, season=season, competitions=competitions, constraints=constraints,
@@ -207,7 +207,7 @@ def test_local_search_progress_callback_reports_a_live_running_total():
 def test_local_search_is_deterministic_for_a_fixed_seed():
     world, season, competitions = _small_world()
     constraints = build_constraints(world, season, competitions)
-    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
     scheduler = _get_scheduler("local")
 
     def run():
@@ -239,7 +239,7 @@ def test_final_round_and_full_round_pins_are_honoured(solver_name):
         full_round_requirements=[requirement],
     )
     constraints = build_constraints(world, season, competitions)
-    ctx = EvalContext(world=world, season=season, travel=HaversineTravelModel(world))
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
     request = SolveRequest(
         world=world, season=season, competitions=competitions, constraints=constraints,
         ctx=ctx, seed=4, top_n=1, time_budget_s=15.0,
@@ -273,7 +273,7 @@ def test_unsolvable_calendar_reports_which_hard_rule_is_broken():
         global_blackouts=blackouts,
     )
     constraints = build_constraints(world, tight_season, competitions)
-    ctx = EvalContext(world=world, season=tight_season, travel=HaversineTravelModel(world))
+    ctx = EvalContext(world=world, season=tight_season, travel=ApiTravelModel(world))
     request = SolveRequest(
         world=world, season=tight_season, competitions=competitions, constraints=constraints,
         ctx=ctx, seed=5, top_n=1, time_budget_s=6.0,
