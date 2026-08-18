@@ -60,8 +60,10 @@ gitignored `data/.refdata_cache/`, never to `data/*.yml`. See
   model.
 - **`terminliste/rounds/`** — the circle-method round-robin generator (pure
   combinatorics, no dates: who plays whom, home or away, is decided here and
-  is correct by construction) and `cup_schedule.py`, the cup's own one-shot
-  resolve from declared forced dates/windows to actual per-team dates.
+  is correct by construction); `cup_schedule.py`, the cup's own one-shot
+  resolve from declared forced dates/windows to actual per-team dates; and
+  `european_schedule.py`, the UEFA qualifying cascade's equivalent — see
+  "European qualifying cascade" below.
 - **`terminliste/scoring/`** — the constraint framework. Every rule (hard or
   soft) is an object with an `evaluate()` method; `registry.py` assembles the
   list for a season. Add a rule by writing a class and registering it — both
@@ -100,16 +102,28 @@ gitignored `data/.refdata_cache/`, never to `data/*.yml`. See
 Venue     id, name, city, lat/lon, capacity, surface
 Team      id, gender, level (senior|second|youth), home_venue, club_id
 Club      id, name, teams[]                    # 1+ teams; "dual clubs" have 2+ senior teams
-Competition  id, season, gender, format (league|cup), teams[], start/end (optional),
-             preferred_weekday, weights{}
+Competition  id, season, gender, format (league|cup|european), movable, teams[],
+             start/end (optional), preferred_weekday, weights{}
              cup_rounds[]                       # cup only: id, name, note, and either a
                                                  # forced_date or a window_start/window_end
-Season    id, year, window, competitions[], cup_competitions[], global_blackouts[],
-          venue_blackouts[], fixed_requirements[]
+             european_rounds[]                  # european only: id, name, note,
+                                                 # first_leg/second_leg (each its own
+                                                 # forced_date/window), ties[],
+                                                 # drop_to_competition/_round
+Season    id, year, window, competitions[], cup_competitions[], european_competitions[],
+          global_blackouts[], venue_blackouts[], fixed_requirements[]
 Fixture   an unscheduled pairing (home, away, leg, round)         # league only
 Match     a Fixture placed on a date at a venue                    # league only
 CupSchedule  a cup's rounds resolved to dates (see below)
+EuropeanCommitmentDate  one resolved leg date a team is committed to,
+             from the reachable part of its UEFA qualifying cascade (see below)
 ```
+
+`Competition.movable` (issue #31) is explicit rather than inferred from
+`format`, even though in practice every non-`league` competition sets it
+`False`: a league's fixtures are the solver's to place, a cup's or European
+competition's are UEFA's or NFF's, and the solver must schedule its own
+fixtures around them, never propose moving them.
 
 A `Competition`'s `start`/`end` are optional and default to the season's own
 window — the common case, when every competition in a season shares one
@@ -159,13 +173,82 @@ each have a small, fixed candidate window around a round anchor chosen
 without cup awareness and would otherwise have no way to route around a
 conflict discovered too late.
 
+### European qualifying cascade
+
+Issues #29, #30, #32: the Champions/Europa/Conference League qualifying
+rounds Norway's Eliteserien clubs enter (`format: european`, `movable:
+false`) resolve differently from a domestic cup round, for three reasons a
+cup doesn't have. First, not every listed team enters every round —
+2026-27's Champions League runner-up (Bodø/Glimt) enters the third
+qualifying round while the champion (Viking) enters straight at the
+play-off round — so each round declares its own `ties` rather than
+inheriting the whole competition's team list (`EuropeanRound.entrants` is
+the plain team-id list derived from it). Second, a round is *two* legs, not
+one date or window covering both — `first_leg`/`second_leg`, each its own
+`EuropeanLeg` (the same forced-date-XOR-window shape `CupRound` uses,
+factored out as `_DateSpec` so both share it). Third, and the reason for
+issue #29's cascade and issue #32's conditional fixtures: a leg's opponent
+is often known well ahead of the tie (`EuropeanTie.opponent`), but whether
+a team is still in *this* round at all — rather than having lost the one
+before and dropped into a different UEFA competition's equivalent round —
+often isn't.
+
+Modelling a round as two separate legs rather than one span covering both
+is what makes a normal European week actually schedulable: a club can
+legitimately play Thursday (a leg) – Sunday (a league match) – Thursday
+(the next leg), and blocking only each leg's own date (plus
+`min_rest_days`) leaves that Sunday free, where blocking the whole span
+between the legs would rule it out by construction — the mistake an
+earlier version of this feature made, and that Thu-Sun-Thu week is common
+once a club is through to a second continental round.
+
+`terminliste/rounds/european_schedule.py` doesn't guess which branch of the
+cascade is real. `resolve_all_legs` first resolves every declared round's
+two legs to actual dates — a `forced_date` honoured exactly, a window
+resolved to its earliest non-blackout day, the same idea as
+`rounds/cup_schedule.py`'s own resolution, just with no round-to-round
+ordering to derive since each `EuropeanRound`'s dates come from real,
+independently-sourced UEFA scheduling data rather than being inferred from
+where the previous round landed. Then, starting from a team's entry round,
+`resolve_team_cascade` walks every reachable round — the next round in the
+same competition if the team survives (implicit: no pointer needed, just
+listed as that round's own entrant too), and whatever
+`drop_to_competition`/`drop_to_round` names if it doesn't — collecting both
+legs' resolved dates from every round reached, across every cascade branch
+still open, as a flat list of `EuropeanCommitmentDate`. `EuropeanCommitmentConflict`
+(`scoring/hard.py`) is `CupRoundConflict`'s counterpart for these — point-date-
+plus-`min_rest_days`, the same arithmetic as `cup_conflict`, not a range.
+
+Resolving a real result is a data edit, not a re-model: once a tie is
+decided, delete the `EuropeanRound` on the branch not taken (or turn a
+leg's window into a `forced_date` once UEFA confirms it) and regenerate —
+issue #32's "harder case" (a conditional fixture whose date, once
+triggered, is fixed and non-reschedulable, forcing other fixtures to move)
+needs no new mechanism beyond `forced_date` and a normal solver re-run. See
+`data/competitions/champions_league_2026.yml`, `europa_league_2026.yml` and
+`conference_league_2026.yml` for the real 2026-27 entrants, dates and (where
+UEFA has confirmed them) opponents and home/away — Champions League is
+modelled end to end; Europa League's third-qualifying-round-to-Conference-
+League-play-off hop is the one cascade wired between two competitions on
+real data, demonstrating the mechanism, while every other branch that ends
+in a competition's league phase (out of this project's scope, which stops
+at qualifying) is intentionally left without a `drop_to_*` — see those
+files' headers for exactly which hops are wired and why the rest are a
+documented gap. European rounds also show up in the generated report
+(`_european_views`/`_european_entries` in `report/render.py`, mirroring the
+cup pair): the real opponent where UEFA has named one, "TBD" where the tie
+is still conditional. A written plan for all of this lives in
+`docs/european_qualifiers_plan.md`.
+
 ## Constraints implemented
 
 **Hard** (`terminliste/scoring/hard.py`) — a schedule with any of these
 present is not feasible, full stop:
 `min_rest_days`, `blackout_dates`, `venue_double_booking`, `club_home_clash`,
 `leg_ordering`, `fixed_requirement`, `one_match_per_team_per_day`,
-`cup_round_conflict`, `final_round_same_slot` (every league's final round
+`cup_round_conflict`, `european_commitment_conflict` (a team's league
+matches stay clear of its resolved UEFA qualifying leg dates — see
+"European qualifying cascade" above), `final_round_same_slot` (every league's final round
 shares one date and kickoff time — `Competition.final_round_kickoff_time`,
 enforced by pinning the round's fixtures to one candidate date up front in
 both solver backends, see `solvers/greedy.py::resolve_round_pins`),
@@ -313,6 +396,11 @@ python -m pytest tests/ -v
 - `test_cup_schedule.py` — resolving a cup's forced dates/windows to real
   per-team dates: round ordering enforced and rejected when infeasible,
   teams spread within a round's window, and the blackout-fallback warning.
+- `test_european_schedule.py` — resolving a team's UEFA qualifying cascade:
+  entry-round detection, win-progression to the next round, following
+  `drop_to_competition`/`drop_to_round`, merging same-depth branches into
+  one window, and the error paths (unknown entrant, dangling cascade
+  pointer).
 - `test_refdata.py` — the reference-data client, cache and diff logic behind
   `cli.py refresh-reference-data`, entirely mocked at the HTTP layer.
 - `test_travel_refresh.py` — the OSRM client and cache-refresh logic behind
@@ -338,15 +426,43 @@ python -m pytest tests/ -v
 ## Suggested next steps
 
 See the write-up delivered alongside this project for the full discussion.
-The Norwegian Cup is now in (`cup_men_2027.yml` / `cup_women_2027.yml`,
+The Norwegian Cup is in (`cup_men_2027.yml` / `cup_women_2027.yml`,
 `terminliste/rounds/cup_schedule.py`, `CupRoundConflict`) — only the
 top-flight clubs' rounds are tracked, and only Round 1 (men), Round 2
 (women), and the "final in spring 2027, end of May" framing are
 NFF-confirmed; every other round is an estimated window, flagged per round
 via `note`, pending NFF publishing the real ones (see each file's header).
-Natural next steps from here: European qualifiers for the tournaments this
-project doesn't control the scheduling of (issue #31), and cascading
-Champions/Europa/Conference League qualifier progression (issue #29).
+
+European qualifiers (issue #31) and the Champions/Europa/Conference League
+cascade (issue #29) are in too — see "European qualifying cascade" above
+and `docs/european_qualifiers_plan.md`. Champions League is modelled end to
+end for both Norwegian entrants; Europa League and Conference League carry
+their own real rounds and entrants but only one cascade hop between them is
+wired (Europa League Q3 -> Conference League play-off, the one real
+UEFA rule that lands on another *qualifying* round rather than a league
+phase this project doesn't track) — a natural next step is deciding whether
+that league-phase boundary is worth crossing (many more matchdays, spread
+across autumn, for a team that could end up in any of three competitions'
+league phases depending on results) or stays out of scope.
+
+Both solvers already prune candidate dates that conflict with a resolved
+European commitment up front — `solvers/greedy.py`'s cost function
+(`_EUROPEAN_CONFLICT`) and `solvers/cpsat.py`'s candidate-set construction
+(`_european_clear`, composed with the existing `_cup_clear`) — mirroring
+how each already treats `cup_conflict`. European commitments block only
+each leg's own resolved date plus `min_rest_days`, not the whole span
+between a tie's two legs — an earlier version of this modelled a round as
+one range covering both legs, which ruled out a normal Thu-Sun-Thu week by
+construction; that's fixed. Even so, `cli.py generate`'s default
+`--time-budget` is 180s, not the 30-60s a season with no European
+commitments needs: measured across the same seeds the window-based model
+struggled on, the per-leg model reaches a feasible top option at 60s on
+4 of 6, needs up to 120s on a 5th and up to 180s on the 6th — real headroom
+over the no-Europe case, just far less than the old model's need for a
+full 300s on nearly every seed. 180s is that measured ceiling, not extra
+margin on top of it — the scheduler runs once a season, so a slower seed
+or slower hardware pushing past it occasionally is an acceptable trade for
+not defaulting every run to a longer wait than usually needed.
 
 Also worth doing, now that `refresh-reference-data` exists but has never run
 against the real API:

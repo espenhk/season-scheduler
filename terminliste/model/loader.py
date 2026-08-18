@@ -267,6 +267,9 @@ def validate_world(world: World) -> list[str]:
         if competition.min_rest_days < 1:
             errors.append(f"competition {competition.id!r} has min_rest_days < 1")
         errors.extend(_validate_cup_rounds(competition))
+        errors.extend(_validate_european_rounds(competition))
+
+    errors.extend(_validate_european_cascade(world))
 
     for season in world.seasons.values():
         if season.end <= season.start:
@@ -280,6 +283,11 @@ def validate_world(world: World) -> list[str]:
                 errors.append(
                     f"season {season.id!r} lists {competition_id!r} under competitions, but it is "
                     f"a {competition.format} — cups belong under cup_competitions"
+                )
+            elif not competition.movable:
+                errors.append(
+                    f"season {season.id!r} lists {competition_id!r} under competitions (the "
+                    f"solver-generated, movable list), but it is marked movable: false"
                 )
             if competition.start is not None and competition.start < season.start:
                 errors.append(
@@ -301,6 +309,17 @@ def validate_world(world: World) -> list[str]:
                 errors.append(
                     f"season {season.id!r} lists {competition_id!r} under cup_competitions, but "
                     f"it is a {competition.format} — leagues belong under competitions"
+                )
+        for competition_id in season.european_competitions:
+            competition = world.competitions.get(competition_id)
+            if competition is None:
+                errors.append(
+                    f"season {season.id!r} lists unknown european competition {competition_id!r}"
+                )
+            elif competition.format != "european":
+                errors.append(
+                    f"season {season.id!r} lists {competition_id!r} under european_competitions, "
+                    f"but it is a {competition.format}"
                 )
         for blackout in season.venue_blackouts:
             if blackout.venue not in world.venues:
@@ -353,6 +372,92 @@ def _validate_cup_rounds(competition: Competition) -> list[str]:
                 f"round {previous_round.id!r} ({previous_round.earliest}..{previous_round.latest})"
             )
         previous_round = round_
+    return errors
+
+
+def _validate_european_rounds(competition: Competition) -> list[str]:
+    """Structural check for a `format == "european"` competition's rounds:
+    at least one, unique ids, sane order, and every `entrants` id actually
+    belongs to the competition. Mirrors `_validate_cup_rounds`; the one
+    thing that check doesn't need and this one does is `entrants`, since a
+    European competition's rounds don't all share the same team list the
+    way a cup's do (see `EuropeanRound`)."""
+    errors: list[str] = []
+    if competition.format != "european":
+        return errors
+    if not competition.european_rounds:
+        errors.append(f"european competition {competition.id!r} declares no european_rounds")
+        return errors
+
+    seen_ids: set[str] = set()
+    previous_round = None
+    for round_ in competition.european_rounds:
+        if round_.id in seen_ids:
+            errors.append(
+                f"competition {competition.id!r} has duplicate european round id {round_.id!r}"
+            )
+        seen_ids.add(round_.id)
+        seen_teams: set[str] = set()
+        for tie in round_.ties:
+            if tie.team not in competition.teams:
+                errors.append(
+                    f"competition {competition.id!r} round {round_.id!r} lists entrant "
+                    f"{tie.team!r}, which is not in the competition's teams"
+                )
+            if tie.team in seen_teams:
+                errors.append(
+                    f"competition {competition.id!r} round {round_.id!r} lists {tie.team!r} "
+                    f"twice"
+                )
+            seen_teams.add(tie.team)
+        if previous_round is not None and round_.latest < previous_round.earliest:
+            errors.append(
+                f"competition {competition.id!r} european round {round_.id!r} "
+                f"({round_.earliest}..{round_.latest}) falls entirely before the previous "
+                f"round {previous_round.id!r} ({previous_round.earliest}..{previous_round.latest})"
+            )
+        previous_round = round_
+    return errors
+
+
+def _validate_european_cascade(world: World) -> list[str]:
+    """Cross-competition check: every `drop_to_competition`/`drop_to_round`
+    pointer names a competition and round that actually exist, and the
+    target is a different (lower) competition, not the same one — a
+    cascade always crosses into another UEFA competition, never loops
+    within its own rounds."""
+    errors: list[str] = []
+    for competition in world.competitions.values():
+        if competition.format != "european":
+            continue
+        for round_ in competition.european_rounds:
+            if round_.drop_to_competition is None:
+                continue
+            if round_.drop_to_competition == competition.id:
+                errors.append(
+                    f"competition {competition.id!r} round {round_.id!r} drops into itself — "
+                    f"drop_to_competition must name a different competition"
+                )
+                continue
+            target = world.competitions.get(round_.drop_to_competition)
+            if target is None:
+                errors.append(
+                    f"competition {competition.id!r} round {round_.id!r} drops into unknown "
+                    f"competition {round_.drop_to_competition!r}"
+                )
+                continue
+            if target.format != "european":
+                errors.append(
+                    f"competition {competition.id!r} round {round_.id!r} drops into "
+                    f"{round_.drop_to_competition!r}, which is a {target.format}, not european"
+                )
+                continue
+            if round_.drop_to_round not in {r.id for r in target.european_rounds}:
+                errors.append(
+                    f"competition {competition.id!r} round {round_.id!r} drops into "
+                    f"{round_.drop_to_competition!r} round {round_.drop_to_round!r}, which does "
+                    f"not exist there"
+                )
     return errors
 
 

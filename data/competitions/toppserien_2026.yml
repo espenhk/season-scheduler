@@ -4,6 +4,10 @@ season: 2026
 gender: women
 format: league
 
+# Scheduler-controlled, same as eliteserien_2026.yml — see its comment and
+# issue #31.
+movable: true
+
 # Double round-robin, same as Eliteserien: every pairing meets twice, once
 # home and once away.
 rounds_per_pairing: 2
@@ -38,7 +42,7 @@ end: 2026-11-07
 # than something the solver has to fight the weekday preference to reach.
 preferred_weekday: saturday
 
-min_rest_days: 3
+min_rest_days: 2
 match_window_days: 3
 
 weights:

@@ -1,0 +1,78 @@
+# 2026-27 UEFA Conference League qualifying — issue #29.
+#
+# format: european, movable: false — see champions_league_2026.yml's header
+# for the general shape of this file and its sourcing/verification notes.
+#
+# SK Brann enter the second qualifying round directly and, on the same
+# win-progression logic as Tromsø in europa_league_2026.yml, are carried as
+# a tie in Q3 and the play-off round too. Tromsø IL also appear at the
+# play-off round here — not a direct Conference League entrant, but the
+# landing spot of europa_league_2026.yml's Q3 -> playoff cascade if they
+# lose their Europa League third qualifying round. `teams` lists both for
+# that reason, even though only Brann is Norway's real, direct Conference
+# League entrant. Opponents weren't part of this research pass — see
+# europa_league_2026.yml's header — so Brann's ties are left at "TBD".
+#
+# UEFA.com's Conference League qualifying calendar gives each leg a 3-day
+# window rather than Europa League's single project-wide date (Conference
+# League ties are spread Tue-Thu, not all on one day) — except the
+# play-off's first leg, which is a single confirmed date. That's reflected
+# leg by leg below, the same way champions_league_2026.yml mixes windows
+# and forced dates within one round.
+id: conference_league_2026
+name: UEFA Conference League qualifying
+season: 2026
+gender: men
+format: european
+movable: false
+
+team_count: 2
+teams:
+  - brann_m
+  - tromso_m
+
+min_rest_days: 2
+
+european_rounds:
+  - id: q2
+    name: Second qualifying round
+    note: "Brann's entry round."
+    first_leg:
+      window_start: 2026-07-21
+      window_end: 2026-07-23
+      granularity: week
+    second_leg:
+      window_start: 2026-07-28
+      window_end: 2026-07-30
+      granularity: week
+    ties:
+      - team: brann_m
+
+  - id: q3
+    name: Third qualifying round
+    note: "Reached only if Brann win Q2."
+    first_leg:
+      window_start: 2026-08-04
+      window_end: 2026-08-06
+      granularity: week
+    second_leg:
+      window_start: 2026-08-11
+      window_end: 2026-08-13
+      granularity: week
+    ties:
+      - team: brann_m
+
+  - id: playoff
+    name: Play-off round
+    note: >-
+      Brann's round if they win Q3; also where Tromsø IL land if eliminated
+      from europa_league_2026.yml's Q3 (see that file's cascade note).
+    first_leg:
+      forced_date: 2026-08-20
+    second_leg:
+      window_start: 2026-08-26
+      window_end: 2026-08-27
+      granularity: week
+    ties:
+      - team: brann_m
+      - team: tromso_m

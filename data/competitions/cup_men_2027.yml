@@ -25,6 +25,10 @@ season: 2027
 gender: men
 format: cup
 
+# NFF fixes these rounds' dates (forced or windowed) — issue #31 — never
+# something this project's solver proposes moving.
+movable: false
+
 # Same 16 clubs as eliteserien_2026 — the cup edition this data models only
 # tracks the top flight, not the ~150 lower-division sides also in the draw.
 team_count: 16
@@ -49,7 +53,7 @@ teams:
 # The floor on the gap between one round's last placement and the next
 # round's first — a safety minimum, not a target; the windows below do the
 # real spacing. Also how close a league match may land to a team's cup date.
-min_rest_days: 3
+min_rest_days: 2
 
 # How many days forward from a windowed round's earliest legal date its teams'
 # placements may spread across (3 gives a 4-day span, well inside a calendar

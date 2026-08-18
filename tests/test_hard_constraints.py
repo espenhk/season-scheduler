@@ -12,10 +12,12 @@ from datetime import date
 
 import factories as f
 from terminliste.scoring.base import EvalContext, evaluate
+from terminliste.rounds.european_schedule import EuropeanCommitmentDate
 from terminliste.scoring.hard import (
     BlackoutDates,
     ClubHomeClash,
     CupRoundConflict,
+    EuropeanCommitmentConflict,
     FinalRoundSameSlot,
     FixedDateRequirement,
     FullRoundOnDate,
@@ -377,6 +379,69 @@ def test_cup_round_conflict_uses_each_teams_own_resolved_date():
     # side fires.
     matches = [f.match("league", "t1", "t2", date(2026, 8, 21), "v1")]
     result = evaluate(matches, [constraint], _ctx(world, season))
+    assert result.hard_violations == 1
+
+
+# -- european_commitment_conflict ---------------------------------------
+
+
+def _european_world():
+    v1 = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    world = f.world(clubs, [v1], [])
+    season = f.season(competitions=[], european_competitions=["euro"])
+    commitment = EuropeanCommitmentDate(
+        team_id="t1",
+        date=date(2026, 8, 4),
+        min_rest_days=3,
+        label="cl: q3 (first leg)",
+    )
+    return world, season, commitment
+
+
+def test_european_commitment_conflict_fires_on_the_commitment_date_itself():
+    world, season, commitment = _european_world()
+    constraint = EuropeanCommitmentConflict(commitments_by_team={"t1": [commitment]})
+
+    on_date = [f.match("league", "t1", "t2", date(2026, 8, 4), "v1")]
+    result = evaluate(on_date, [constraint], _ctx(world, season))
+    assert result.hard_violations == 1
+
+
+def test_european_commitment_conflict_fires_within_min_rest_days_but_not_beyond():
+    world, season, commitment = _european_world()
+    constraint = EuropeanCommitmentConflict(commitments_by_team={"t1": [commitment]})
+
+    # 1 full rest day before (4 Aug): a violation, short of the 3 required.
+    too_close_before = [f.match("league", "t1", "t2", date(2026, 8, 2), "v1")]
+    assert evaluate(too_close_before, [constraint], _ctx(world, season)).hard_violations == 1
+
+    # Exactly 3 full rest days before: clear — this is the Thu-Sun-Thu case (a
+    # European leg on Tuesday 4 Aug, a league match the preceding Friday 31
+    # July has Sat/Sun/Mon — three full days — between them).
+    far_enough_before = [f.match("league", "t1", "t2", date(2026, 7, 31), "v1")]
+    assert evaluate(far_enough_before, [constraint], _ctx(world, season)).hard_violations == 0
+
+    # 1 full rest day after: a violation.
+    too_close_after = [f.match("league", "t1", "t2", date(2026, 8, 6), "v1")]
+    assert evaluate(too_close_after, [constraint], _ctx(world, season)).hard_violations == 1
+
+    # Exactly 3 full rest days after: clear.
+    far_enough_after = [f.match("league", "t1", "t2", date(2026, 8, 8), "v1")]
+    assert evaluate(far_enough_after, [constraint], _ctx(world, season)).hard_violations == 0
+
+
+def test_european_commitment_conflict_is_silent_for_a_team_with_no_commitments():
+    world, season, commitment = _european_world()
+    constraint = EuropeanCommitmentConflict(commitments_by_team={"t1": [commitment]})
+
+    matches = [f.match("league", "t2", "t1", date(2026, 8, 5), "v1")]
+    result = evaluate(matches, [constraint], _ctx(world, season))
+    # t1's commitment fires (it plays the match, 1 day from its 4 Aug
+    # commitment); t2 has no commitments of its own, so it contributes
+    # nothing beyond that.
     assert result.hard_violations == 1
 
 

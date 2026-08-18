@@ -25,6 +25,15 @@ cup_competitions:
   - cup_men_2027
   - cup_women_2027
 
+# UEFA-fixed qualifying cascade (Champions/Europa/Conference League) —
+# issue #29. Not fed to the round-robin/solver pipeline, same reason as
+# cup_competitions above; see `data/competitions/champions_league_2026.yml`
+# and `terminliste/rounds/european_schedule.py`.
+european_competitions:
+  - champions_league_2026
+  - europa_league_2026
+  - conference_league_2026
+
 # Dates on which nobody plays, in any competition.
 global_blackouts:
   - {date: 2026-04-03, reason: "Langfredag (Good Friday)"}

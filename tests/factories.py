@@ -17,6 +17,9 @@ from terminliste.model.schema import (
     Club,
     Competition,
     CupRound,
+    EuropeanLeg,
+    EuropeanRound,
+    EuropeanTie,
     FixedRequirement,
     FullRoundRequirement,
     Match,
@@ -74,7 +77,9 @@ def competition(
     weights: dict | None = None,
     rounds_per_pairing: int = 2,
     format: str = "league",
+    movable: bool | None = None,
     cup_rounds: list[CupRound] | None = None,
+    european_rounds: list[EuropeanRound] | None = None,
     start: date | None = None,
     end: date | None = None,
     final_round_kickoff_time: str = "18:00",
@@ -86,6 +91,7 @@ def competition(
         season=2026,
         gender=gender,
         format=format,
+        movable=movable if movable is not None else (format == "league"),
         team_count=len(teams),
         teams=teams,
         preferred_weekday=preferred_weekday,
@@ -95,6 +101,7 @@ def competition(
         weights=weights or {},
         rounds_per_pairing=rounds_per_pairing,
         cup_rounds=cup_rounds or [],
+        european_rounds=european_rounds or [],
         start=start,
         end=end,
         final_round_kickoff_time=final_round_kickoff_time,
@@ -119,6 +126,60 @@ def cup_round(
         window_end=window_end,
         granularity=granularity,
         note=note,
+    )
+
+
+def european_leg(
+    forced_date: date | None = None,
+    window_start: date | None = None,
+    window_end: date | None = None,
+    granularity: str | None = None,
+) -> EuropeanLeg:
+    return EuropeanLeg(
+        forced_date=forced_date,
+        window_start=window_start,
+        window_end=window_end,
+        granularity=granularity,
+    )
+
+
+def european_tie(team: str, opponent: str = "TBD", home_leg: str | None = None) -> EuropeanTie:
+    return EuropeanTie(team=team, opponent=opponent, home_leg=home_leg)
+
+
+def european_round(
+    id: str,
+    entrants: list[str] | None = None,
+    forced_date: date | None = None,
+    window_start: date | None = None,
+    window_end: date | None = None,
+    granularity: str | None = None,
+    first_leg: EuropeanLeg | None = None,
+    second_leg: EuropeanLeg | None = None,
+    ties: list[EuropeanTie] | None = None,
+    name: str | None = None,
+    note: str = "",
+    drop_to_competition: str | None = None,
+    drop_to_round: str | None = None,
+) -> EuropeanRound:
+    """`forced_date`/`window_*` give both legs the same date/window — the
+    common case for a test that doesn't care about leg-level granularity.
+    Pass `first_leg`/`second_leg` explicitly for one that does. `entrants`
+    builds a plain `EuropeanTie` (opponent "TBD") per team; pass `ties`
+    directly for a test that needs opponent/home_leg detail."""
+    if first_leg is None:
+        first_leg = european_leg(forced_date, window_start, window_end, granularity)
+    if second_leg is None:
+        second_leg = european_leg(forced_date, window_start, window_end, granularity)
+    return EuropeanRound(
+        id=id,
+        name=name or id,
+        first_leg=first_leg,
+        second_leg=second_leg,
+        ties=ties if ties is not None else [european_tie(team) for team in (entrants or [])],
+        note=note,
+        drop_to_competition=drop_to_competition,
+        drop_to_round=drop_to_round,
     )
 
 
@@ -156,6 +217,7 @@ def season(
     id: str = "test",
     competitions: list[str] | None = None,
     cup_competitions: list[str] | None = None,
+    european_competitions: list[str] | None = None,
     global_blackouts=None,
     venue_blackouts=None,
     fixed_requirements: list[FixedRequirement] | None = None,
@@ -173,6 +235,7 @@ def season(
         end=end,
         competitions=competitions or [],
         cup_competitions=cup_competitions or [],
+        european_competitions=european_competitions or [],
         global_blackouts=global_blackouts or [],
         venue_blackouts=venue_blackouts or [],
         fixed_requirements=fixed_requirements or [],

@@ -15,6 +15,7 @@ from terminliste.report.render import (
     _club_headlines,
     _cup_entries,
     _entity_counts,
+    _european_entries,
     _fairness_rows,
     _json_attr,
     _match_entries,
@@ -391,6 +392,90 @@ def test_combined_views_include_cup_rounds_alongside_league_matches():
     assert "v TBD" in calendar_section
     assert "NM Cup" in list_section
     assert "TBD (Round 1)" in list_section
+
+
+def test_european_entries_flatten_one_row_per_entered_team_per_leg():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    club_colors = {c.id: c.color for c in world.clubs.values()}
+    competition_colors = {"cl": {"fg": "#111111", "bg": "#eeeeee"}}
+    round_ = f.european_round(
+        "q3",
+        first_leg=f.european_leg(forced_date=date(2026, 8, 4)),
+        second_leg=f.european_leg(forced_date=date(2026, 8, 11)),
+        ties=[f.european_tie("a_m", opponent="Union Saint-Gilloise", home_leg="second")],
+    )
+    comp = f.competition("cl", ["a_m"], format="european", european_rounds=[round_])
+    resolved_legs = {("cl", "q3"): (date(2026, 8, 4), date(2026, 8, 11))}
+
+    entries = _european_entries(world, [comp], resolved_legs, club_colors, competition_colors)
+
+    assert len(entries) == 2
+    first_leg_entry = next(e for e in entries if e["date"] == date(2026, 8, 4))
+    assert first_leg_entry["is_european"] is True
+    assert first_leg_entry["competition_id"] == "cl"
+    assert first_leg_entry["opponent"] == "Union Saint-Gilloise"
+    assert first_leg_entry["club_id"] == "club_a"
+    # home_leg="second" -> the first leg is away for this team.
+    assert first_leg_entry["venue_type"] == "away"
+    assert first_leg_entry["comp_fg"] == "#111111"
+
+    second_leg_entry = next(e for e in entries if e["date"] == date(2026, 8, 11))
+    assert second_leg_entry["venue_type"] == "home"
+
+
+def test_european_entries_use_unknown_venue_type_when_home_leg_is_not_set():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    club_colors = {c.id: c.color for c in world.clubs.values()}
+    round_ = f.european_round(
+        "playoff",
+        forced_date=date(2026, 8, 18),
+        ties=[f.european_tie("a_m")],  # opponent/home_leg left at their defaults
+    )
+    comp = f.competition("cl", ["a_m"], format="european", european_rounds=[round_])
+    resolved_legs = {("cl", "playoff"): (date(2026, 8, 18), date(2026, 8, 18))}
+
+    entries = _european_entries(world, [comp], resolved_legs, club_colors, {})
+    assert all(e["venue_type"] == "unknown" for e in entries)
+    assert all(e["opponent"] == "TBD" for e in entries)
+
+
+def test_combined_views_include_european_rounds_alongside_league_matches():
+    """A European round used to be invisible in the report — it must show up
+    both under "By competition" and in the combined calendar/list views,
+    with the real opponent shown where the data has one."""
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    candidate = _candidate(world, season, matches, [])
+    round_ = f.european_round(
+        "q3",
+        forced_date=date(2026, 6, 6),
+        ties=[f.european_tie("a_m", opponent="Union Saint-Gilloise", home_leg="first")],
+    )
+    comp = f.competition("cl", ["a_m"], format="european", european_rounds=[round_])
+    resolved_legs = {("cl", "q3"): (date(2026, 6, 6), date(2026, 6, 6))}
+    result = SolverResult(candidates=[candidate], solver="test")
+
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = render_report(
+            world,
+            season,
+            result,
+            Path(tmp) / "out.html",
+            european_competitions=[comp],
+            resolved_legs=resolved_legs,
+        )
+        html = out.read_text(encoding="utf-8")
+
+    calendar_section = html.split('class="cal-wrap view-pane" data-view="combined-calendar"')[1].split(
+        'class="cal-wrap view-pane" data-view="combined-list"'
+    )[0]
+    list_section = html.split('class="cal-wrap view-pane" data-view="combined-list"')[1]
+
+    assert "Union Saint-Gilloise" in calendar_section
+    assert "Union Saint-Gilloise" in list_section
 
 
 # -- search stats (issue #34) -------------------------------------------------

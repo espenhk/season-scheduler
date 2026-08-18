@@ -7,7 +7,7 @@ from datetime import date
 import pytest
 
 from terminliste.model.loader import DataError, validate_world
-from terminliste.model.schema import FixedRequirement
+from terminliste.model.schema import CupRound, FixedRequirement
 
 
 def test_shipped_data_loads_and_validates_clean(world):
@@ -286,6 +286,214 @@ def test_competition_end_before_start_is_rejected_by_the_schema():
             start=date(2026, 6, 1),
             end=date(2026, 1, 1),
         )
+
+
+def test_non_league_competition_claiming_movable_is_rejected_by_the_schema():
+    from terminliste.model.schema import Competition
+
+    with pytest.raises(ValueError, match="cannot be movable"):
+        Competition(
+            id="cup",
+            name="cup",
+            season=2026,
+            gender="men",
+            format="cup",
+            movable=True,
+            team_count=1,
+            teams=["t1"],
+            cup_rounds=[CupRound(id="r1", name="Round 1", forced_date=date(2026, 8, 1))],
+        )
+
+
+def test_season_competitions_rejects_a_non_movable_league():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    not_movable = f.competition("comp", ["t1"], movable=False)
+    bad_world = f.world(clubs, [v], [not_movable])
+    season = f.season(competitions=["comp"])
+    bad_world.seasons[season.id] = season
+    errors = validate_world(bad_world)
+    assert any("movable: false" in e for e in errors)
+
+
+def test_european_competitions_are_present_and_shaped_correctly(world):
+    for comp_id in ("champions_league_2026", "europa_league_2026", "conference_league_2026"):
+        comp = world.competition(comp_id)
+        assert comp.format == "european"
+        assert comp.movable is False
+        assert len(comp.european_rounds) > 0
+        earliest_bounds = [r.earliest for r in comp.european_rounds]
+        assert earliest_bounds == sorted(earliest_bounds), f"{comp_id} rounds are not in order"
+
+    season = world.season("2026")
+    assert set(season.european_competitions) == {
+        "champions_league_2026",
+        "europa_league_2026",
+        "conference_league_2026",
+    }
+
+
+def test_european_commitments_resolve_cleanly_from_the_shipped_data(world):
+    """The shipped european data isn't just well-formed — its cascade
+    actually resolves, including the wired europa_league_2026 ->
+    conference_league_2026 hop."""
+    from terminliste.rounds.european_schedule import resolve_european_commitments
+
+    season = world.season("2026")
+    competitions = [world.competition(c) for c in season.european_competitions]
+    commitments_by_team, warnings = resolve_european_commitments(competitions, season)
+    assert commitments_by_team["bodo_glimt_m"], "Bodø/Glimt's Champions League run should resolve"
+    assert commitments_by_team["viking_m"]
+    # Tromsø's cascade crosses from europa_league_2026 into
+    # conference_league_2026 at Q3 -> playoff: Q2 and Q3 (2 legs each), then
+    # *both* branches still open at the play-off depth — Europa League's own
+    # play-off (win) and Conference League's (drop) — 4 more leg dates, for
+    # 8 in total. Brann's own run (Q2 -> Q3 -> play-off, no cascade) is a
+    # plain 3 rounds x 2 legs = 6.
+    assert len(commitments_by_team["tromso_m"]) == 8
+    assert len(commitments_by_team["brann_m"]) == 6
+    assert warnings == []
+
+
+def test_european_competition_with_no_rounds_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    comp = f.competition("euro", ["t1"], format="european")
+    bad_world = f.world(clubs, [v], [comp])
+    errors = validate_world(bad_world)
+    assert any("declares no european_rounds" in e for e in errors)
+
+
+def test_european_entrant_not_in_the_competitions_teams_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    comp = f.competition(
+        "euro",
+        ["t1"],
+        format="european",
+        european_rounds=[
+            f.european_round("q1", entrants=["ghost"], forced_date=date(2026, 8, 1))
+        ],
+    )
+    bad_world = f.world(clubs, [v], [comp])
+    errors = validate_world(bad_world)
+    assert any("ghost" in e for e in errors)
+
+
+def test_european_round_duplicate_ids_are_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    comp = f.competition(
+        "euro",
+        ["t1"],
+        format="european",
+        european_rounds=[
+            f.european_round("q1", entrants=["t1"], forced_date=date(2026, 8, 1)),
+            f.european_round("q1", entrants=["t1"], forced_date=date(2026, 8, 15)),
+        ],
+    )
+    bad_world = f.world(clubs, [v], [comp])
+    errors = validate_world(bad_world)
+    assert any("duplicate european round id" in e for e in errors)
+
+
+def test_european_cascade_into_a_self_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    comp = f.competition(
+        "euro",
+        ["t1"],
+        format="european",
+        european_rounds=[
+            f.european_round(
+                "q1", entrants=["t1"], forced_date=date(2026, 8, 1),
+                drop_to_competition="euro", drop_to_round="q1",
+            )
+        ],
+    )
+    bad_world = f.world(clubs, [v], [comp])
+    errors = validate_world(bad_world)
+    assert any("drops into itself" in e for e in errors)
+
+
+def test_european_cascade_into_an_unknown_competition_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    comp = f.competition(
+        "euro",
+        ["t1"],
+        format="european",
+        european_rounds=[
+            f.european_round(
+                "q1", entrants=["t1"], forced_date=date(2026, 8, 1),
+                drop_to_competition="ghost_competition", drop_to_round="q1",
+            )
+        ],
+    )
+    bad_world = f.world(clubs, [v], [comp])
+    errors = validate_world(bad_world)
+    assert any("unknown competition" in e for e in errors)
+
+
+def test_european_cascade_into_an_unknown_round_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    source = f.competition(
+        "el",
+        ["t1"],
+        format="european",
+        european_rounds=[
+            f.european_round(
+                "q1", entrants=["t1"], forced_date=date(2026, 8, 1),
+                drop_to_competition="uecl", drop_to_round="ghost_round",
+            )
+        ],
+    )
+    target = f.competition(
+        "uecl",
+        ["t1"],
+        format="european",
+        european_rounds=[f.european_round("q1", entrants=["t1"], forced_date=date(2026, 7, 1))],
+    )
+    bad_world = f.world(clubs, [v], [source, target])
+    errors = validate_world(bad_world)
+    assert any("does not exist there" in e for e in errors)
+
+
+def test_season_european_competitions_rejects_a_non_european_format():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    league = f.competition("league", ["t1"])
+    bad_world = f.world(clubs, [v], [league])
+
+    mixed_up = f.season(european_competitions=["league"])
+    bad_world.seasons[mixed_up.id] = mixed_up
+    errors = validate_world(bad_world)
+    assert any("but it is a league" in e for e in errors)
 
 
 def test_calendar_capacity_uses_the_competitions_own_narrower_window():

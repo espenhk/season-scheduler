@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 Gender = Literal["men", "women"]
 TeamLevel = Literal["senior", "second", "youth"]
 Surface = Literal["grass", "artificial", "hybrid"]
-CompetitionFormat = Literal["league", "cup"]
+CompetitionFormat = Literal["league", "cup", "european"]
 
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 Weekday = Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -89,43 +89,39 @@ class Club(BaseModel):
 RoundGranularity = Literal["week", "month", "quarter"]
 
 
-class CupRound(BaseModel):
-    """One round of a knockout cup: when it may be played, not who plays whom.
+class _DateSpec(BaseModel):
+    """Shared forced-date-XOR-window mechanics — issue #30's "vague/imprecise
+    game dates" mechanism.
 
-    Real-world cup rounds are announced at wildly different notice: a near-term
-    round may already have a confirmed date (`forced_date`), while a distant
-    one is only known to the week, month or quarter (`window_start`/
-    `window_end`, with `granularity` recording which). Exactly one of the two
-    must be set — never both, never neither.
-
-    Pairings are drawn round by round and are not known ahead of time, so this
-    only ever describes *when* a round falls; `terminliste/rounds/cup_schedule.py`
-    resolves it to an actual per-team date, honouring `forced_date` exactly and
-    picking a date inside the window otherwise.
+    A near-term date may already be confirmed (`forced_date`); a distant one
+    is only known to the week, month or quarter (`window_start`/
+    `window_end`, with `granularity` recording which). Exactly one of the
+    two must be set — never both, never neither — and narrowing a window
+    down to a `forced_date` once the real date is announced is a data edit,
+    not a re-model. Deliberately carries no identity of its own (no `id`,
+    `name`) — `_ScheduledRound` adds that for a whole round; `EuropeanLeg`
+    uses this bare, since a leg's identity is "first" or "second" within its
+    `EuropeanRound`, not something it needs to name itself.
     """
 
-    id: str
-    name: str
     forced_date: date | None = None
     window_start: date | None = None
     window_end: date | None = None
     granularity: RoundGranularity | None = None
-    note: str = ""
 
     @model_validator(mode="after")
-    def _forced_xor_window(self) -> "CupRound":
+    def _forced_xor_window(self) -> "_DateSpec":
         has_forced = self.forced_date is not None
         has_window = self.window_start is not None or self.window_end is not None
         if has_forced and has_window:
-            raise ValueError(f"cup round {self.id!r}: set forced_date OR a window, not both")
+            raise ValueError("set forced_date OR a window, not both")
         if not has_forced and not has_window:
-            raise ValueError(f"cup round {self.id!r}: needs either forced_date or a window")
+            raise ValueError("needs either forced_date or a window")
         if has_window and (self.window_start is None or self.window_end is None):
-            raise ValueError(f"cup round {self.id!r}: a window needs both window_start and window_end")
+            raise ValueError("a window needs both window_start and window_end")
         if has_window and self.window_end < self.window_start:
             raise ValueError(
-                f"cup round {self.id!r}: window_end ({self.window_end}) is before "
-                f"window_start ({self.window_start})"
+                f"window_end ({self.window_end}) is before window_start ({self.window_start})"
             )
         return self
 
@@ -135,13 +131,143 @@ class CupRound(BaseModel):
 
     @property
     def earliest(self) -> date:
-        """The earliest date this round could conceivably land on."""
+        """The earliest date this could conceivably land on."""
         return self.forced_date if self.forced_date is not None else self.window_start
 
     @property
     def latest(self) -> date:
-        """The latest date this round could conceivably land on."""
+        """The latest date this could conceivably land on."""
         return self.forced_date if self.forced_date is not None else self.window_end
+
+
+class _ScheduledRound(_DateSpec):
+    """`_DateSpec` plus the identity a whole round needs: `id`, `name`, and
+    an optional human `note`. `CupRound`'s shape — a cup round has one date
+    (or window) for the whole round, unlike `EuropeanRound`, which needs two
+    (`EuropeanLeg`, one per leg of a two-legged tie). `_DateSpec`'s own
+    forced-XOR-window validator is inherited as-is; it doesn't know about
+    `id`, but its message is still clear enough without one, and pydantic
+    reports which model failed regardless."""
+
+    id: str
+    name: str
+    note: str = ""
+
+
+class CupRound(_ScheduledRound):
+    """One round of a knockout cup: when it may be played, not who plays whom.
+
+    Pairings are drawn round by round and are not known ahead of time, so this
+    only ever describes *when* a round falls; `terminliste/rounds/cup_schedule.py`
+    resolves it to an actual per-team date, honouring `forced_date` exactly and
+    picking a date inside the window otherwise.
+    """
+
+
+class EuropeanLeg(_DateSpec):
+    """One leg's date (or window) within a two-legged `EuropeanRound`.
+
+    UEFA schedules a qualifying round's first legs on one pairing window
+    (e.g. "4/5 August") and its second legs on another ("11 August") — two
+    genuinely separate dates, not one span covering both, which is what
+    `EuropeanRound` used to model before this was split out. Resolving a
+    `EuropeanLeg` to a single date is `terminliste/rounds/european_schedule.py`'s
+    job (mirroring `rounds/cup_schedule.py`'s own forced/window resolution);
+    the domestic scheduler then only needs to stay clear of that one date
+    plus `min_rest_days`, not an entire span between the two legs — freeing
+    up the days in between for a league match, e.g. a Thu-Sun-Thu week.
+    """
+
+
+EuropeanHomeLeg = Literal["first", "second"]
+
+
+class EuropeanTie(BaseModel):
+    """One entrant's specific two-legged tie within a `EuropeanRound`.
+
+    More than one of a competition's teams can enter the same round (Norway
+    had two Champions League play-off entrants in 2026-27, each against a
+    different opponent), so opponent and home/away are per-tie, not
+    per-round. `opponent` defaults to `"TBD"` for a tie whose own opponent
+    is still conditional on another, unrelated fixture elsewhere in the
+    draw — same spirit as issue #32's conditional fixtures, just describing
+    who's on the other side of the tie rather than which round is played at
+    all. `home_leg` is `None` when even that isn't settled yet.
+    """
+
+    team: str
+    opponent: str = "TBD"
+    home_leg: EuropeanHomeLeg | None = None
+
+
+class EuropeanRound(BaseModel):
+    """One qualifying round of a UEFA competition (Champions/Europa/Conference
+    League), for the Norwegian team(s) entered in it.
+
+    Built for issue #29 (the CL/EL/UECL qualifying cascade) and issue #32
+    (conditional fixtures): unlike a domestic cup round, not every team
+    listed on the competition necessarily enters every round — Norway's
+    Champions League runner-up enters at the third qualifying round while
+    the champion enters directly at the play-off round, for instance — so
+    `ties` names exactly which of `Competition.teams` play this particular
+    round (`entrants` is the plain team-id list derived from it).
+
+    `drop_to_competition`/`drop_to_round` model the cascade: if an entrant
+    loses this round, that pair names the round (in a different, lower
+    competition) they drop into instead — e.g. a Champions League
+    Champions-Path third-qualifying-round loss drops into that season's
+    Europa League play-off round. Both are `None` when a loss here has no
+    further *qualifying* round to model, either because the real rule sends
+    the team straight into a competition's league phase (many matchdays,
+    not a single round — out of scope for this project, which only tracks
+    qualifying) or because this project simply hasn't sketched that hop yet
+    (see `data/competitions/europa_league_2026.yml`'s header for exactly
+    which hops are wired and which are left as a documented gap).
+
+    Because the outcome of a round is unknown ahead of time,
+    `terminliste/rounds/european_schedule.py` does not pick a branch: it
+    walks every reachable round from a team's entry point and blocks every
+    leg date reachable at once, so the domestic scheduler stays clear of a
+    European commitment regardless of which branch of the cascade actually
+    happens. Once a real result is known, resolving the conditional is a
+    data edit — delete the round(s) on the branch not taken (or narrow a
+    surviving leg's window to a `forced_date`) and regenerate; see the
+    module docstring for the mechanics.
+    """
+
+    id: str
+    name: str
+    first_leg: EuropeanLeg
+    second_leg: EuropeanLeg
+    ties: list[EuropeanTie] = Field(default_factory=list)
+    note: str = ""
+    drop_to_competition: str | None = None
+    drop_to_round: str | None = None
+
+    @model_validator(mode="after")
+    def _drop_to_is_paired(self) -> "EuropeanRound":
+        has_competition = self.drop_to_competition is not None
+        has_round = self.drop_to_round is not None
+        if has_competition != has_round:
+            raise ValueError(
+                f"european round {self.id!r}: drop_to_competition and drop_to_round must be "
+                f"set together, or not at all"
+            )
+        return self
+
+    @property
+    def entrants(self) -> list[str]:
+        return [tie.team for tie in self.ties]
+
+    @property
+    def earliest(self) -> date:
+        """The earliest date this round (either leg) could conceivably land on."""
+        return min(self.first_leg.earliest, self.second_leg.earliest)
+
+    @property
+    def latest(self) -> date:
+        """The latest date this round (either leg) could conceivably land on."""
+        return max(self.first_leg.latest, self.second_leg.latest)
 
 
 class Competition(BaseModel):
@@ -158,6 +284,15 @@ class Competition(BaseModel):
     season: int
     gender: Gender
     format: CompetitionFormat = "league"
+
+    # Issue #31: whether the solver is free to place this competition's
+    # fixtures (`True`, the league default) or must treat its dates as a
+    # given to schedule *around* (`False` — every cup and european
+    # competition; see `README.md`'s "Data model" section). Explicit rather
+    # than inferred from `format` so the flag is visible in the data itself,
+    # even though in practice every `format != "league"` competition sets
+    # it `False`.
+    movable: bool = True
 
     rounds_per_pairing: int = 2
     team_count: int
@@ -212,6 +347,11 @@ class Competition(BaseModel):
     # into, in the order they are played. Empty for a league.
     cup_rounds: list[CupRound] = Field(default_factory=list)
 
+    # European-only: the UEFA qualifying rounds this competition's Norwegian
+    # entrant(s) play, in the order they are played — see `EuropeanRound`
+    # and issue #29. Empty for a league or cup.
+    european_rounds: list[EuropeanRound] = Field(default_factory=list)
+
     @property
     def min_gap_days(self) -> int:
         """Calendar days required between two matches: `min_rest_days` full
@@ -237,15 +377,35 @@ class Competition(BaseModel):
             raise ValueError(f"{self.id}: end ({self.end}) is before start ({self.start})")
         return self
 
+    @model_validator(mode="after")
+    def _non_league_is_not_movable(self) -> "Competition":
+        """Makes the `movable` comment above self-policing rather than just
+        descriptive: a cup or European competition claiming `movable: true`
+        is a data error, not a legitimate choice — the solver never
+        generates or dates either one's fixtures, so the flag would be
+        lying about what actually happens. A `league` may still set
+        `movable: false` deliberately (e.g. to keep it out of
+        `season.competitions` while modelling it) — only the reverse is
+        forbidden here."""
+        if self.format != "league" and self.movable:
+            raise ValueError(
+                f"{self.id}: a {self.format} competition cannot be movable — the solver never "
+                f"generates or dates its fixtures, so set movable: false"
+            )
+        return self
+
     @property
     def rounds(self) -> int:
         """Total rounds.
 
         League: (n-1) per leg for even n, n for odd n (bye rounds). Cup: the
-        number of real-world rounds its teams are entered into.
+        number of real-world rounds its teams are entered into. European:
+        the number of qualifying rounds tracked, same idea as a cup.
         """
         if self.format == "cup":
             return len(self.cup_rounds)
+        if self.format == "european":
+            return len(self.european_rounds)
         n = self.team_count
         per_leg = n - 1 if n % 2 == 0 else n
         return per_leg * self.rounds_per_pairing
@@ -256,9 +416,11 @@ class Competition(BaseModel):
 
     @property
     def total_matches(self) -> int:
-        """League only — a cup's pairings are drawn round by round and are
-        not modelled as fixtures, so this is 0 for `format == "cup"`."""
-        if self.format == "cup":
+        """League only — a cup's or European competition's pairings are not
+        modelled as fixtures (opponents are drawn, or simply not this
+        project's concern), so this is 0 for anything but `format ==
+        "league"`."""
+        if self.format != "league":
             return 0
         return self.matches_per_leg * self.rounds_per_pairing
 
@@ -359,6 +521,11 @@ class Season(BaseModel):
     # August 2026 and runs into the following spring) — that is expected, not
     # a data error.
     cup_competitions: list[str] = Field(default_factory=list)
+    # European (UEFA qualifying) competitions tied to this season — issue
+    # #29 — kept separate for the same reason as `cup_competitions`: these
+    # are resolved once, up front (`rounds/european_schedule.py`), not fed
+    # to the round-robin/solver pipeline.
+    european_competitions: list[str] = Field(default_factory=list)
     global_blackouts: list[DatedNote] = Field(default_factory=list)
     discouraged_dates: list[DatedNote] = Field(default_factory=list)
     venue_blackouts: list[VenueBlackout] = Field(default_factory=list)

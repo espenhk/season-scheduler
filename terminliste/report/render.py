@@ -19,8 +19,9 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..model.loader import World
-from ..model.schema import WEEKDAYS, Match, Season
+from ..model.schema import WEEKDAYS, Competition, EuropeanRound, Match, Season
 from ..rounds.cup_schedule import NEUTRAL_CUP_VENUE, CupRoundPlacement, CupSchedule
+from ..rounds.european_schedule import ResolvedLegs
 from ..scoring.base import ConstraintResult, Event, Score
 from ..scoring.registry import describe
 from ..solvers.base import Candidate, SearchStats, SolverResult
@@ -68,6 +69,8 @@ def render_report(
     full_diagnostics: bool = False,
     warnings: list[str] | None = None,
     cup_schedules: list[CupSchedule] | None = None,
+    european_competitions: list[Competition] | None = None,
+    resolved_legs: ResolvedLegs | None = None,
 ) -> Path:
     """Render a solver result (or a single scored schedule) as one HTML page.
 
@@ -79,6 +82,9 @@ def render_report(
     `cup_schedules` are the season's cups already resolved to a date per team
     (see `rounds/cup_schedule.py`) — the caller resolves them once and passes
     the result in, rather than this function resolving them again per render.
+    `european_competitions` + `resolved_legs` are the same idea for UEFA
+    qualifying rounds (see `rounds/european_schedule.py::resolve_all_legs`) —
+    pass both together or neither.
     """
     env = Environment(
         loader=FileSystemLoader(TEMPLATE_DIR),
@@ -96,6 +102,8 @@ def render_report(
     dual_club_ids = {c.id for c in world.dual_clubs()}
     competition_colors = _competition_colors(world)
     cup_schedules = cup_schedules or []
+    european_competitions = european_competitions or []
+    resolved_legs = resolved_legs or {}
 
     options = [
         _build_option(
@@ -105,6 +113,8 @@ def render_report(
             club_colors,
             dual_club_ids,
             cup_schedules,
+            european_competitions,
+            resolved_legs,
             competition_colors,
             full_diagnostics,
         )
@@ -134,6 +144,8 @@ def _build_option(
     club_colors: dict[str, str],
     dual_club_ids: set[str],
     cup_schedules: list[CupSchedule],
+    european_competitions: list[Competition],
+    resolved_legs: ResolvedLegs,
     competition_colors: dict[str, dict],
     full_diagnostics: bool = False,
 ) -> dict:
@@ -141,7 +153,10 @@ def _build_option(
     limit = 200 if full_diagnostics else 4
     entries = _match_entries(world, candidate, club_colors, dual_club_ids, competition_colors)
     cup_entries = _cup_entries(world, cup_schedules, club_colors, competition_colors)
-    combined_entries = entries + cup_entries
+    european_entries = _european_entries(
+        world, european_competitions, resolved_legs, club_colors, competition_colors
+    )
+    combined_entries = entries + cup_entries + european_entries
     headlines = _headlines(world, candidate)
     club_headlines = _club_headlines(world, candidate, dual_club_ids)
     return {
@@ -168,7 +183,11 @@ def _build_option(
         "upsides": [_result_row(r, world, full=full_diagnostics) for r in score.biggest_upsides(limit=limit)],
         "breakdown": [_result_row(r, world, full=True) for r in _ordered_results(score)],
         "fairness": _fairness_rows(world, candidate),
-        "by_competition": _competition_views(world, entries) + _cup_views(world, cup_schedules, club_colors),
+        "by_competition": (
+            _competition_views(world, entries)
+            + _cup_views(world, cup_schedules, club_colors)
+            + _european_views(world, european_competitions, resolved_legs, club_colors)
+        ),
         "combined_calendar": _combined_calendar_view(combined_entries),
         "combined_list": _combined_list_view(combined_entries),
     }
@@ -636,6 +655,154 @@ def _cup_venue_summary(venue_type: str) -> str:
     if venue_type == "neutral":
         return f"Final · neutral ground ({NEUTRAL_CUP_VENUE})"
     return "Away leg · opponent drawn later"
+
+
+def _european_views(
+    world: World,
+    european_competitions: list[Competition],
+    resolved_legs: ResolvedLegs,
+    club_colors: dict[str, str],
+) -> list[dict]:
+    """European qualifying rounds, in the same shape `_cup_views` uses for
+    cups.
+
+    The one real difference from a cup round: an opponent is often already
+    known (`EuropeanTie.opponent`), since UEFA draws qualifying pairings
+    well ahead of the tie, unlike a cup's round-by-round draw — shown
+    directly where the data has it, "TBD" (the same fallback `EuropeanTie`
+    itself defaults to) where the tie is still conditional on another
+    result. Home/away is similarly read straight from `EuropeanTie.home_leg`
+    rather than inferred the way `_cup_views`' `venue_type` is.
+    """
+    views: list[dict] = []
+    for competition in sorted(european_competitions, key=lambda c: c.id):
+        views.append(
+            {
+                "id": competition.id,
+                "name": competition.name,
+                "is_european": True,
+                "match_count": len(competition.european_rounds),
+                "rounds": [
+                    {
+                        "index": i + 1,
+                        "name": round_.name,
+                        "note": round_.note,
+                        "dates": _european_round_date_label(
+                            resolved_legs[(competition.id, round_.id)]
+                        ),
+                        "fixtures": _european_fixtures(
+                            world,
+                            round_,
+                            resolved_legs[(competition.id, round_.id)],
+                            club_colors,
+                        ),
+                    }
+                    for i, round_ in enumerate(competition.european_rounds)
+                ],
+            }
+        )
+    return views
+
+
+def _european_fixtures(
+    world: World,
+    round_: EuropeanRound,
+    leg_dates: tuple[date, date],
+    club_colors: dict[str, str],
+) -> list[dict]:
+    """One entry per entered team per leg for a resolved European round:
+    its own date, opponent (or "TBD"), and home/away where known — the
+    European counterpart of `_cup_fixtures`."""
+    first_date, second_date = leg_dates
+    fixtures: list[dict] = []
+    for tie in round_.ties:
+        club_id = world.team(tie.team).club_id
+        for leg_label, leg_date in (("first", first_date), ("second", second_date)):
+            venue_type = _european_venue_type(tie.home_leg, leg_label)
+            fixtures.append(
+                {
+                    "team": world.team_short_label(tie.team),
+                    "team_full": world.team_label(tie.team),
+                    "club_id": club_id,
+                    "color": club_colors.get(club_id, ""),
+                    "date": leg_date,
+                    "weekday": leg_date.strftime("%a"),
+                    "opponent": tie.opponent,
+                    "leg_label": f"{leg_label} leg",
+                    "venue_type": venue_type,
+                    "venue_label": _european_venue_label(world, tie.team, venue_type),
+                }
+            )
+    return sorted(fixtures, key=lambda fx: (fx["date"], fx["team"]))
+
+
+def _european_entries(
+    world: World,
+    european_competitions: list[Competition],
+    resolved_legs: ResolvedLegs,
+    club_colors: dict[str, str],
+    competition_colors: dict[str, dict],
+) -> list[dict]:
+    """European rounds flattened to one row per entered team per leg — the
+    same granularity `_european_fixtures` produces for the by-competition
+    view — so the combined calendar/list can merge them with league (and
+    cup) entries. Tagged `is_european` so the template picks the
+    opponent-aware card/row instead of a league fixture's home-vs-away one.
+    """
+    entries: list[dict] = []
+    for competition in european_competitions:
+        comp_color = competition_colors.get(competition.id, _DEFAULT_COMP_COLOR)
+        for round_ in competition.european_rounds:
+            first_date, second_date = resolved_legs[(competition.id, round_.id)]
+            for tie in round_.ties:
+                club_id = world.team(tie.team).club_id
+                for leg_label, leg_date in (("first", first_date), ("second", second_date)):
+                    venue_type = _european_venue_type(tie.home_leg, leg_label)
+                    entries.append(
+                        {
+                            "is_european": True,
+                            "date": leg_date,
+                            "weekday": leg_date.strftime("%a"),
+                            "competition_id": competition.id,
+                            "competition_name": competition.name,
+                            "comp_fg": comp_color["fg"],
+                            "comp_bg": comp_color["bg"],
+                            "round_name": f"{round_.name} ({leg_label} leg)",
+                            "team": world.team_short_label(tie.team),
+                            "team_full": world.team_label(tie.team),
+                            "club_id": club_id,
+                            "color": club_colors.get(club_id, ""),
+                            "opponent": tie.opponent,
+                            "venue_type": venue_type,
+                            "venue_label": _european_venue_label(world, tie.team, venue_type),
+                        }
+                    )
+    return entries
+
+
+def _european_venue_type(home_leg: str | None, leg_label: str) -> str:
+    """`"home"`/`"away"` read straight from `EuropeanTie.home_leg`, or
+    `"unknown"` when even that isn't settled yet — distinct from a cup
+    round's `"neutral"`, which means something different (a final at a
+    fixed neutral ground, not "not yet known")."""
+    if home_leg is None:
+        return "unknown"
+    return "home" if home_leg == leg_label else "away"
+
+
+def _european_venue_label(world: World, team_id: str, venue_type: str) -> str:
+    if venue_type == "home":
+        return world.home_venue_of(team_id).name
+    if venue_type == "away":
+        return "Away (opponent's ground)"
+    return "Home/away not yet confirmed"
+
+
+def _european_round_date_label(leg_dates: tuple[date, date]) -> str:
+    first_date, second_date = leg_dates
+    if first_date == second_date:
+        return first_date.strftime("%d %b %Y")
+    return f"{first_date.strftime('%d %b')} – {second_date.strftime('%d %b %Y')}"
 
 
 def _fairness_rows(world: World, candidate: Candidate) -> list[dict]:

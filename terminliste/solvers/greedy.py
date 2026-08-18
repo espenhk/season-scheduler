@@ -22,6 +22,7 @@ from ..model.calendar import SeasonCalendar, anchor_dates, build_calendar, calen
 from ..model.loader import World
 from ..model.schema import WEEKDAYS, Competition, Fixture, Match, Season
 from ..rounds.cup_schedule import CupSchedule, cup_conflict, resolved_cup_windows
+from ..rounds.european_schedule import EuropeanCommitmentDate, european_conflict
 from ..rounds.round_robin import generate_fixtures
 
 # Local-heuristic weights. Deliberately crude — the real scoring lives in
@@ -31,6 +32,7 @@ _REST_VIOLATION = 1e6
 _VENUE_CLASH = 1e6
 _CLUB_HOME_CLASH = 1e6
 _CUP_CONFLICT = 1e6
+_EUROPEAN_CONFLICT = 1e6
 _OFF_PREFERRED_WEEKDAY = 12.0
 _DISCOURAGED_DATE = 20.0
 _CONSECUTIVE_HOME_BONUS = 40.0
@@ -355,6 +357,7 @@ def build_initial_schedule(
     calendar: SeasonCalendar | None = None,
     align: bool = True,
     cup_schedules: list[CupSchedule] | None = None,
+    european_commitments: dict[str, list[EuropeanCommitmentDate]] | None = None,
 ) -> tuple[list[Match], set[str]]:
     """Return a complete schedule plus the keys of fixtures pinned to a date.
 
@@ -369,7 +372,9 @@ def build_initial_schedule(
     `cup_schedules` (already resolved to a date per team) steers placement
     away from each team's cup round dates up front, so the local search
     starts from a schedule that mostly already respects `CupRoundConflict`
-    instead of having to fight its way there.
+    instead of having to fight its way there. `european_commitments` does the
+    same for resolved UEFA qualifying commitments (see
+    `rounds/european_schedule.py`) and `EuropeanCommitmentConflict`.
     """
     rng = random.Random(seed)
     calendar = calendar or build_calendar(world, season)
@@ -380,6 +385,7 @@ def build_initial_schedule(
     round_pins = resolve_round_pins(season, planned)
     align_home_teams_to_round_pins(season, planned, round_pins)
     cup_windows = resolved_cup_windows(cup_schedules or [])
+    european = european_commitments or {}
 
     state = PlacementState()
     matches: list[Match] = []
@@ -459,6 +465,7 @@ def build_initial_schedule(
             state,
             rng,
             cup_windows,
+            european,
         )
         matches.append(match)
         state.place(world, match)
@@ -486,6 +493,7 @@ def _place_fixture(
     state: PlacementState,
     rng: random.Random,
     cup_windows: dict[str, list[tuple[date, int]]],
+    european_commitments: dict[str, list[EuropeanCommitmentDate]],
 ) -> Match:
     competition = plan.competition
     venue = world.team(fixture.home_team).home_venue
@@ -503,7 +511,7 @@ def _place_fixture(
     for day in window:
         cost = _placement_cost(
             world, calendar, competition, fixture, venue, day, anchor, preferred_weekday, state,
-            cup_windows,
+            cup_windows, european_commitments,
         )
         # A little noise so different seeds explore different starting points;
         # small enough never to outweigh a real preference.
@@ -533,6 +541,7 @@ def _placement_cost(
     preferred_weekday: int,
     state: PlacementState,
     cup_windows: dict[str, list[tuple[date, int]]],
+    european_commitments: dict[str, list[EuropeanCommitmentDate]],
 ) -> float:
     cost = 0.0
 
@@ -549,6 +558,11 @@ def _placement_cost(
         cup_windows, fixture.away_team, day
     ):
         cost += _CUP_CONFLICT
+
+    if european_conflict(european_commitments, fixture.home_team, day) or european_conflict(
+        european_commitments, fixture.away_team, day
+    ):
+        cost += _EUROPEAN_CONFLICT
 
     if (venue, day) in state.venue_dates:
         cost += _VENUE_CLASH

@@ -1,0 +1,92 @@
+# 2026-27 UEFA Champions League qualifying — Norway's two entrants, issue #29.
+#
+# format: european — not scheduled by this project (`movable: false`, issue
+# #31); UEFA fixes these dates, and the domestic solver's job is only to
+# avoid conflicting with them (see `EuropeanCommitmentConflict` in
+# `terminliste/scoring/hard.py`). Only the rounds with a Norwegian entrant
+# are modelled — the first and second qualifying rounds (7/8 & 14/15 July,
+# 21/22 & 28/29 July 2026) carry none this cycle and are left out rather
+# than added as empty, inert entries.
+#
+# Each round is two legs (`first_leg`/`second_leg`), not one span covering
+# both — see `EuropeanLeg` in schema.py. This is what lets a normal
+# European week (a leg, a domestic league match, the next leg) actually be
+# schedulable: only each leg's own date is blocked, plus `min_rest_days`,
+# not the whole gap in between.
+#
+# Bodø/Glimt (2025 Eliteserien runner-up, League Path) enter the third
+# qualifying round; Viking (2025 champion, Champions Path) enter directly at
+# the play-off round — a champion is seeded past the earlier rounds the
+# runner-up still has to clear. Real, currently-live fixtures as of this
+# data's snapshot date (2026-08-17): Bodø/Glimt's Q3 tie against Union
+# Saint-Gilloise (legs 4/5 and 11 August) and their play-off draw against
+# Olympiakos or NEC Nijmegen are already public; Viking's play-off draw
+# (Dinamo Zagreb or Zalgiris Kaunas, legs 18/19 and 25/26 August) likewise.
+# Where an opponent is still conditional on another, unrelated tie (e.g.
+# Glimt's play-off pairing depends on the separate Olympiakos-NEC tie),
+# `opponent` records both names rather than a bare "TBD" — genuinely
+# unknown detail (home_leg for the play-off ties) is left `null`, not
+# guessed.
+# verified: false — assembled via web search (UEFA.com qualifying-schedule
+# pages, Washington Post / Yahoo Sports / FOX Sports draw coverage,
+# footballseeding.com's 2026-27 country-ranking breakdown) rather than a
+# single authoritative fixture list.
+#
+# Cascade (see `EuropeanRound.drop_to_competition`/`drop_to_round`): a
+# League Path Q3 loss, or a play-off loss on either path, sends the team
+# straight into the Europa League *league phase* under the post-2024
+# format — not another qualifying round — so neither round below sets a
+# drop_to; there is nothing further for this project to track once a team
+# is out of Champions League qualifying. See `europa_league_2026.yml` for
+# where a cascade *is* wired (Europa League Q3 -> Conference League
+# play-off), a hop that does land on another qualifying round.
+id: champions_league_2026
+name: UEFA Champions League qualifying
+season: 2026
+gender: men
+format: european
+movable: false
+
+team_count: 2
+teams:
+  - bodo_glimt_m
+  - viking_m
+
+min_rest_days: 2
+
+european_rounds:
+  - id: q3
+    name: Third qualifying round
+    note: >-
+      League Path. First leg 4 or 5 August (away, Brussels), second leg 11
+      August 2026 (home) — the second leg's date is UEFA-confirmed, unlike
+      the first, hence the forced_date/window split below.
+    first_leg:
+      window_start: 2026-08-04
+      window_end: 2026-08-05
+      granularity: week
+    second_leg:
+      forced_date: 2026-08-11
+    ties:
+      - team: bodo_glimt_m
+        opponent: Union Saint-Gilloise
+        home_leg: second
+
+  - id: playoff
+    name: Play-off round
+    note: >-
+      First legs 18/19 August, second legs 25/26 August 2026 — neither
+      confirmed to the day yet for either tie.
+    first_leg:
+      window_start: 2026-08-18
+      window_end: 2026-08-19
+      granularity: week
+    second_leg:
+      window_start: 2026-08-25
+      window_end: 2026-08-26
+      granularity: week
+    ties:
+      - team: bodo_glimt_m
+        opponent: Olympiakos or NEC Nijmegen
+      - team: viking_m
+        opponent: Dinamo Zagreb or Zalgiris Kaunas

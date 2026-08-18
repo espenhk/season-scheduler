@@ -1,0 +1,82 @@
+# 2026-27 UEFA Europa League qualifying — Norway's two entrants, issue #29.
+#
+# format: european, movable: false — see champions_league_2026.yml's header
+# for the general shape of this file, its per-leg modelling, and its
+# sourcing/verification notes.
+#
+# Tromsø IL enter the second qualifying round; Lillestrøm SK enter directly
+# at the play-off round as NM Cupen's most recent winners. Q3 and the
+# play-off round both carry Tromsø as a tie too (win-progression from Q2 —
+# see `EuropeanRound.entrants` in schema.py for how the resolver reads
+# that), not because their Q2 result is known, but because it isn't: the
+# dates blocked for Tromsø need to cover both "won Q2, playing Q3" and
+# "still eliminated, no further commitment" until a real result narrows it,
+# which is exactly issue #32's conditional-fixture case. Opponents for
+# Tromsø's and Lillestrøm's ties weren't part of this research pass — the
+# UEFA.com qualifying-schedule pages this file draws its dates from don't
+# carry the pairings themselves, only the round calendar — so they're left
+# at `EuropeanTie`'s "TBD" default rather than guessed.
+#
+# Unlike champions_league_2026.yml's Champions League rounds, UEFA.com's
+# Europa League qualifying calendar names a single date per leg
+# project-wide (e.g. "23 July" for every Q2 first leg, not "23/24"), so
+# every leg below is a `forced_date`, not a window.
+# verified: false — see champions_league_2026.yml's header for sourcing.
+#
+# Cascade: the four/six/seven losers of the third qualifying round (split
+# by path) drop into that season's Conference League play-off round under
+# the current format — the one hop this project wires end to end, both to
+# demonstrate the mechanism on real data and because, unlike the Champions
+# League cascade, it lands on another *qualifying* round rather than a
+# league phase. Every other round here (Q2, and a play-off loss) sends a
+# team into the next competition's *league phase* instead, which is out of
+# this project's scope the same way it is in champions_league_2026.yml.
+id: europa_league_2026
+name: UEFA Europa League qualifying
+season: 2026
+gender: men
+format: european
+movable: false
+
+team_count: 2
+teams:
+  - tromso_m
+  - lillestrom_m
+
+min_rest_days: 2
+
+european_rounds:
+  - id: q2
+    name: Second qualifying round
+    note: "Tromsø IL's entry round."
+    first_leg:
+      forced_date: 2026-07-23
+    second_leg:
+      forced_date: 2026-07-30
+    ties:
+      - team: tromso_m
+
+  - id: q3
+    name: Third qualifying round
+    note: "Reached only if Tromsø win Q2."
+    first_leg:
+      forced_date: 2026-08-06
+    second_leg:
+      forced_date: 2026-08-13
+    ties:
+      - team: tromso_m
+    drop_to_competition: conference_league_2026
+    drop_to_round: playoff
+
+  - id: playoff
+    name: Play-off round
+    note: >-
+      Lillestrøm's entry round (cup-winner slot); reached by Tromsø only if
+      they also win Q3.
+    first_leg:
+      forced_date: 2026-08-20
+    second_leg:
+      forced_date: 2026-08-27
+    ties:
+      - team: tromso_m
+      - team: lillestrom_m

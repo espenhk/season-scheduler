@@ -37,6 +37,11 @@ from terminliste.model.travel import ApiTravelModel  # noqa: E402
 from terminliste.refdata import refresh_competition, refresh_travel_times  # noqa: E402
 from terminliste.report.render import render_report, write_json  # noqa: E402
 from terminliste.rounds.cup_schedule import CupSchedulingError, schedule_cups  # noqa: E402
+from terminliste.rounds.european_schedule import (  # noqa: E402
+    EuropeanCascadeError,
+    resolve_all_legs,
+    resolve_european_commitments,
+)
 from terminliste.scoring.base import EvalContext, Score, evaluate  # noqa: E402
 from terminliste.scoring.registry import build_constraints  # noqa: E402
 from terminliste.solvers import Candidate, ProgressUpdate, SearchStats, SolveRequest, SolverResult, get_scheduler  # noqa: E402
@@ -69,34 +74,56 @@ def cmd_validate(args: argparse.Namespace) -> int:
         if competition.format == "cup":
             print(
                 f"     {competition.name}: {competition.team_count} teams entered, "
-                f"{competition.rounds} rounds tracked (forced/windowed dates, pairings TBD)"
+                f"{competition.rounds} rounds tracked (forced/windowed dates, pairings TBD), "
+                f"movable={competition.movable}"
+            )
+        elif competition.format == "european":
+            print(
+                f"     {competition.name}: {competition.team_count} teams entered, "
+                f"{competition.rounds} rounds tracked, movable={competition.movable}"
             )
         else:
             print(
                 f"     {competition.name}: {competition.team_count} teams, "
-                f"{competition.rounds} rounds, {competition.total_matches} matches"
+                f"{competition.rounds} rounds, {competition.total_matches} matches, "
+                f"movable={competition.movable}"
             )
 
     for season in world.seasons.values():
-        if not season.cup_competitions:
-            continue
-        cup_competitions = [world.competition(c) for c in season.cup_competitions]
-        try:
-            schedules, warnings = schedule_cups(cup_competitions, season)
-        except CupSchedulingError as exc:
-            print(f"FAIL: {exc}", file=sys.stderr)
-            return 1
-        for schedule in schedules:
-            print(f"     {schedule.competition_name} resolves cleanly:")
-            for placement in schedule.rounds:
-                span = (
-                    f"{placement.earliest_date}"
-                    if placement.spread_days == 0
-                    else f"{placement.earliest_date} – {placement.latest_date}"
+        if season.cup_competitions:
+            cup_competitions = [world.competition(c) for c in season.cup_competitions]
+            try:
+                schedules, warnings = schedule_cups(cup_competitions, season)
+            except CupSchedulingError as exc:
+                print(f"FAIL: {exc}", file=sys.stderr)
+                return 1
+            for schedule in schedules:
+                print(f"     {schedule.competition_name} resolves cleanly:")
+                for placement in schedule.rounds:
+                    span = (
+                        f"{placement.earliest_date}"
+                        if placement.spread_days == 0
+                        else f"{placement.earliest_date} – {placement.latest_date}"
+                    )
+                    print(f"       {placement.round_name}: {span}")
+            for warning in warnings:
+                print(f"     ⚠ {warning}")
+
+        if season.european_competitions:
+            european_competitions = [world.competition(c) for c in season.european_competitions]
+            try:
+                commitments_by_team, european_warnings = resolve_european_commitments(
+                    european_competitions, season
                 )
-                print(f"       {placement.round_name}: {span}")
-        for warning in warnings:
-            print(f"     ⚠ {warning}")
+            except EuropeanCascadeError as exc:
+                print(f"FAIL: {exc}", file=sys.stderr)
+                return 1
+            for team_id, commitments in sorted(commitments_by_team.items()):
+                print(f"     {world.team_label(team_id)} European commitments:")
+                for commitment in commitments:
+                    print(f"       {commitment.label}: {commitment.date}")
+            for warning in european_warnings:
+                print(f"     ⚠ {warning}")
     return 0
 
 
@@ -105,7 +132,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
     cup_schedules, cup_warnings = _schedule_cups_or_exit(world, season)
-    constraints = build_constraints(world, season, competitions, cup_schedules)
+    european_commitments, european_warnings = _resolve_european_or_exit(world, season)
+    constraints = build_constraints(
+        world, season, competitions, cup_schedules, european_commitments
+    )
     travel = ApiTravelModel(world)
     ctx = EvalContext(world=world, season=season, travel=travel)
 
@@ -119,6 +149,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         season=season,
         competitions=competitions,
         cup_schedules=cup_schedules,
+        european_commitments=european_commitments,
         constraints=constraints,
         ctx=ctx,
         seed=args.seed,
@@ -128,7 +159,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     )
 
     print(f"Solving with {scheduler.name} (budget {args.time_budget:.0f}s, seed {args.seed})...")
-    for warning in cup_warnings:
+    for warning in [*cup_warnings, *european_warnings]:
         print(f"  ⚠ {warning}")
     try:
         result = scheduler.solve(request)
@@ -151,14 +182,17 @@ def cmd_generate(args: argparse.Namespace) -> int:
     html_path = out_dir / f"{season.id}.html"
     json_path = out_dir / f"{season.id}.json"
 
+    european_competitions, resolved_legs = _european_report_data(world, season)
     render_report(
         world,
         season,
         result,
         html_path,
         title=f"{season.year} season schedule",
-        warnings=cup_warnings,
+        warnings=[*cup_warnings, *european_warnings],
         cup_schedules=cup_schedules,
+        european_competitions=european_competitions,
+        resolved_legs=resolved_legs,
     )
     write_json(result, json_path)
 
@@ -172,7 +206,10 @@ def cmd_score(args: argparse.Namespace) -> int:
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
     cup_schedules, cup_warnings = _schedule_cups_or_exit(world, season)
-    constraints = build_constraints(world, season, competitions, cup_schedules)
+    european_commitments, european_warnings = _resolve_european_or_exit(world, season)
+    constraints = build_constraints(
+        world, season, competitions, cup_schedules, european_commitments
+    )
     travel = ApiTravelModel(world)
 
     try:
@@ -185,7 +222,7 @@ def cmd_score(args: argparse.Namespace) -> int:
         print("FAIL: schedule file contained no matches.", file=sys.stderr)
         return 1
 
-    warnings = [*warnings, *cup_warnings]
+    warnings = [*warnings, *cup_warnings, *european_warnings]
     ctx = EvalContext(world=world, season=season, travel=travel, detail=True)
     score = evaluate(matches, constraints, ctx)
 
@@ -203,6 +240,7 @@ def cmd_score(args: argparse.Namespace) -> int:
         solver="external",
     )
     out_path = Path(args.out) if args.out else SCHEDULES_ROOT / f"{Path(args.schedule).stem}_scored.html"
+    european_competitions, resolved_legs = _european_report_data(world, season)
     render_report(
         world,
         season,
@@ -212,6 +250,8 @@ def cmd_score(args: argparse.Namespace) -> int:
         full_diagnostics=True,
         warnings=warnings,
         cup_schedules=cup_schedules,
+        european_competitions=european_competitions,
+        resolved_legs=resolved_legs,
     )
     print(f"\nWrote {out_path}")
 
@@ -388,6 +428,28 @@ def _schedule_cups_or_exit(world, season):
         sys.exit(1)
 
 
+def _resolve_european_or_exit(world, season):
+    """Resolve the season's European qualifying cascade, or exit with a
+    clear reason why not."""
+    european_competitions = [world.competition(c) for c in season.european_competitions]
+    try:
+        return resolve_european_commitments(european_competitions, season)
+    except EuropeanCascadeError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _european_report_data(world, season):
+    """The season's European competitions plus their rounds resolved to real
+    leg dates — what `render_report` needs to show them, as opposed to
+    `_resolve_european_or_exit`'s flattened, cascade-walked commitment list,
+    which is shaped for conflict-checking rather than display."""
+    european_competitions = [world.competition(c) for c in season.european_competitions]
+    blackouts = {b.date for b in season.global_blackouts}
+    resolved_legs, _ = resolve_all_legs(european_competitions, blackouts)
+    return european_competitions, resolved_legs
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -400,7 +462,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_generate.add_argument("--solver", choices=["local", "cpsat"], default="local")
     p_generate.add_argument("--seed", type=int, default=42)
     p_generate.add_argument("--top-n", type=int, default=3)
-    p_generate.add_argument("--time-budget", type=float, default=60.0, help="seconds")
+    p_generate.add_argument(
+        "--time-budget",
+        type=float,
+        default=180.0,
+        help=(
+            "seconds (default 180 — the 2026 season's European qualifying "
+            "commitments need real search headroom over a Europe-free season "
+            "to reliably reach a feasible schedule; see README's 'Suggested "
+            "next steps')"
+        ),
+    )
     p_generate.add_argument("--out", default=str(SCHEDULES_ROOT))
     p_generate.set_defaults(func=cmd_generate)
 

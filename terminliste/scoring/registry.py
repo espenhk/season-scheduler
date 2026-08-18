@@ -11,11 +11,13 @@ from __future__ import annotations
 from ..model.loader import World
 from ..model.schema import Competition, Season
 from ..rounds.cup_schedule import CupSchedule
+from ..rounds.european_schedule import EuropeanCommitmentDate
 from .base import Constraint
 from .hard import (
     BlackoutDates,
     ClubHomeClash,
     CupRoundConflict,
+    EuropeanCommitmentConflict,
     FinalRoundSameSlot,
     FixedDateRequirement,
     FullRoundOnDate,
@@ -43,13 +45,16 @@ def build_constraints(
     season: Season,
     competitions: list[Competition],
     cup_schedules: list[CupSchedule] | None = None,
+    european_commitments: dict[str, list[EuropeanCommitmentDate]] | None = None,
 ) -> list[Constraint]:
     """Every rule in force for this season, hard first.
 
     `competitions` are the league(s) actually being scheduled. `cup_schedules`
     are real-world-dated cups (already resolved to a date per team — see
     `rounds/cup_schedule.py`) that share teams with them — not scheduled
-    themselves, but kept clear of via `CupRoundConflict`.
+    themselves, but kept clear of via `CupRoundConflict`. `european_commitments`
+    is the same idea for UEFA qualifying leg dates — see
+    `rounds/european_schedule.py` and `EuropeanCommitmentConflict`.
     """
     hard_requirements = [r for r in season.fixed_requirements if r.hard]
 
@@ -69,6 +74,10 @@ def build_constraints(
         constraints.append(FullRoundOnDate(requirements=hard_full_rounds))
     if cup_schedules:
         constraints.append(CupRoundConflict(cup_schedules=cup_schedules))
+    if european_commitments:
+        constraints.append(
+            EuropeanCommitmentConflict(commitments_by_team=european_commitments)
+        )
 
     constraints.extend(
         [
@@ -113,6 +122,7 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
     "leg_ordering": "Every first meeting is played before any second meeting.",
     "fixed_requirement": "A named team must be at home on a named date.",
     "cup_round_conflict": "A team's league matches stay clear of its cup round dates.",
+    "european_commitment_conflict": "A team's league matches stay clear of its European qualifying leg dates.",
     "fixed_requirement_preferred": "A named team should be at home on a named date.",
     "preferred_weekday": "Matches on the league's preferred weekday.",
     "consecutive_home_days": "A club's two teams at home on back-to-back days.",

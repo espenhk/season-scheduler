@@ -20,6 +20,9 @@ season: 2027
 gender: women
 format: cup
 
+# NFF-fixed, not scheduler-controlled — see cup_men_2027.yml and issue #31.
+movable: false
+
 # Same 12 clubs as toppserien_2026.
 team_count: 12
 teams:
@@ -36,7 +39,7 @@ teams:
   - stabak_w
   - valerenga_w
 
-min_rest_days: 3
+min_rest_days: 2
 match_window_days: 3
 
 cup_rounds:

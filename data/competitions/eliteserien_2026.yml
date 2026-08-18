@@ -4,6 +4,12 @@ season: 2026
 gender: men
 format: league
 
+# This project generates and dates Eliteserien's fixtures — issue #31's
+# "scheduler-controlled" case, as opposed to a cup or European competition,
+# whose real-world dates the solver only schedules around (movable: false —
+# see cup_men_2027.yml and champions_league_2026.yml).
+movable: true
+
 # Double league: everyone meets twice, once home and once away. The second leg
 # is the mirror of the first, so all first meetings are complete before any
 # second meeting starts. Set to 1 for a single league; the round generator
@@ -42,7 +48,7 @@ end: 2026-12-06
 preferred_weekday: sunday
 
 # Hard rule parameters.
-min_rest_days: 3
+min_rest_days: 2
 
 # How far an individual match may float from its round's anchor date. A ±3 day
 # window turns a round into a Friday-to-Monday weekend, which is the freedom
