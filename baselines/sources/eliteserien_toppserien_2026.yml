@@ -1,0 +1,72 @@
+# Provenance sidecar for eliteserien_toppserien_2026.csv.
+#
+# Every baseline schedule carries one of these. The CSV is what gets scored;
+# this file is what tells you whether to believe it. `terminliste/baseline.py`
+# reads both, and refuses to score a CSV that has no sidecar — an unattributed
+# "real" fixture list is exactly the thing this project should not accumulate.
+
+id: eliteserien_toppserien_2026
+name: "2026 Eliteserien + Toppserien — opening rounds"
+season: 2026
+schedule_file: eliteserien_toppserien_2026.csv
+
+competitions:
+  - eliteserien_2026
+  - toppserien_2026
+
+# false until someone re-derives this from a fetchable primary source. Same
+# convention, and the same reason, as `verified: false` in data/venues.yml.
+verified: false
+
+retrieved: 2026-08-16
+
+# `partial` | `complete`. A partial baseline is a first-class thing to score —
+# see the module docstring in terminliste/external_schedule.py — but it changes
+# how the score reads, so it is recorded rather than left for the reader to
+# infer. See `expected_hard_violations` below.
+coverage: partial
+
+# What the CSV actually contains, as opposed to what a full season would.
+contains: "Round 1 of both leagues: 8 Eliteserien matches (14–15 March) and 6 Toppserien matches (20–21 March)."
+
+sources:
+  - "Web search results for the published 2026 Eliteserien and Toppserien fixture lists, retrieved 2026-08-16."
+  - "Eliteserien round 1 was returned identically by two independently-phrased queries, one of which also gave per-match kickoff times; both agree with the 2026-03-14 season start already recorded in data/seasons/2026.yml."
+  - "Toppserien round 1 came back once, with per-match dates and kickoff times, and agrees with the 2026-03-20 Toppserien start in data/competitions/toppserien_2026.yml."
+
+# Hard violations this baseline is *expected* to report, because they are
+# artefacts of its being partial rather than defects in the real schedule.
+# The markdown report prints these alongside the raw count so a reader does
+# not conclude that Norway's actual fixture list breaks our rules.
+expected_hard_violations:
+  - "full_round_on_date (16): every Eliteserien club is flagged as having no match on 2026-05-16, because this baseline stops in March. One violation per club, not one per schedule."
+  - "fixed_requirement (6): the four named 16 May home fixtures (Vålerenga, Brann, Rosenborg, Viking), plus Molde at home on 2026-07-19 for Moldejazz and Tromsø's 2026-07-11 Midnattsolkampen. All fall outside the dates this file covers."
+
+# Every hard violation this baseline currently reports is one of the above —
+# i.e. the published opening rounds break none of our rules on their own
+# merits. Once the file is extended past May, a violation that is *not* on
+# this list is a real finding about the real schedule, which is the whole
+# reason to keep the baseline around.
+
+notes: |
+  Why only round 1, rather than both full published schedules: the sandbox
+  this was assembled in cannot reach a single fixture source. Every host
+  that carries the data — fotball.no, eliteserien.no, fotmob, worldfootball,
+  transfermarkt, sofascore, and Wikipedia — is refused by the egress proxy
+  with a 403 policy denial, so `WebFetch` and `curl` are both dead ends and
+  web *search* is the only channel left. Search returns clean,
+  corroborated pairings for the opening round of each league, but past that
+  the round numbering drifts between queries (one set of eight fixtures came
+  back labelled "runde 2" in one query and "runde 3" in another) and the
+  dates stop being quoted at all. Since a schedule with wrong dates scores
+  as confidently as one with right dates, guessing would have produced a
+  reference baseline that is worse than no baseline.
+
+  What is here is therefore the subset that two or more signals agreed on.
+  To extend it, run the refresh from a machine with real network access —
+  `baselines/README.md` has the procedure.
+
+  The scoring format is date-only. Kickoff times exist at source (Eliteserien
+  round 1 ran 16:00 and 18:00 on the Saturday, 14:30 to 19:15 on the Sunday)
+  but `external_schedule.py` has no column for them, so they are recorded
+  here rather than silently dropped into a column the loader ignores.

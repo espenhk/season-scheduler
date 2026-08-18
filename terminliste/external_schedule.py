@@ -239,13 +239,21 @@ def _coverage_warnings(world: World, entries: list[RawEntry]) -> list[str]:
         missing = all_pairs - set(counts)
         wrong = {pair: n for pair, n in counts.items() if n != expected}
 
+        # `min` rather than `next(iter(...))` for the example pair: `missing`
+        # is a set, so iteration order moves with the hash seed and the same
+        # file would produce different warning text from one process to the
+        # next. That is invisible when the warning is printed and gone, but
+        # these strings also land in committed baseline reports, where a
+        # sentence that rewrites itself every run is a diff nobody can read.
+        # `wrong` is a dict in row order and so already stable; sorted anyway
+        # so the guarantee is stated rather than inherited by accident.
         if missing:
             warnings.append(
                 f"{competition.name}: {len(missing)} pair(s) never meet (expected {expected} "
-                f"meetings each) — e.g. {_label(world, next(iter(missing)))}"
+                f"meetings each) — e.g. {_label(world, min(missing))}"
             )
         if wrong:
-            example_pair, example_n = next(iter(wrong.items()))
+            example_pair, example_n = min(wrong.items())
             warnings.append(
                 f"{competition.name}: {len(wrong)} pair(s) meet a different number of times "
                 f"than {expected} — e.g. {_label(world, example_pair)} met {example_n} time(s)"

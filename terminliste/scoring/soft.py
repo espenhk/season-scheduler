@@ -300,10 +300,11 @@ class HomeAwayBalance:
 
     Over a full double league every team ends level by construction, so the
     only thing worth measuring is whether they got there smoothly or played
-    fifteen home matches and then fifteen away. An odd `rounds_per_pairing`
-    (Toppserien's triple round-robin) can only ever end within 1 of level —
-    see `round_robin.generate_fixtures` for why that's still guaranteed —
-    which this rule doesn't need to know about: it only ever looks at the
+    fifteen home matches and then fifteen away. Both competitions this
+    project schedules are double leagues today, but an odd `rounds_per_pairing`
+    (a triple round-robin, say) can only ever end within 1 of level — see
+    `round_robin.generate_fixtures` for why that's still guaranteed — which
+    this rule doesn't need to know about: it only ever looks at the
     within-half drift, never the season-end total.
     """
 

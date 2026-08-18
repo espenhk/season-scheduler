@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +14,8 @@ import pytest
 from terminliste.external_schedule import ExternalScheduleError, load_external_schedule
 from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.registry import build_constraints
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _write_csv(path: Path, rows: list[dict]) -> None:
@@ -100,6 +105,42 @@ def test_coverage_warning_flags_a_pair_that_never_meets(tmp_path, world):
     )
     _, warnings = load_external_schedule(path, world)
     assert any("never meet" in w for w in warnings)
+
+
+def test_coverage_warning_text_is_stable_across_hash_seeds(tmp_path, world):
+    """The example pair named in a warning must not move with the hash seed.
+
+    `missing` is a set, so an unordered pick would give different text run to
+    run. Harmless while the warning is only printed; not harmless once it is
+    committed to a baseline report, where it would show up as a spurious diff
+    on every refresh.
+    """
+    path = tmp_path / "schedule.csv"
+    _write_csv(
+        path,
+        [{"competition": "eliteserien_2026", "date": "2026-04-05", "home_team": "brann_m", "away_team": "viking_m", "venue": ""}],
+    )
+    script = (
+        "import sys, json;"
+        "sys.path.insert(0, %r);"
+        "from pathlib import Path;"
+        "from terminliste.model.loader import load_world;"
+        "from terminliste.external_schedule import load_external_schedule;"
+        "w = load_world(Path(%r));"
+        "print(json.dumps(load_external_schedule(Path(%r), w)[1]))"
+    ) % (str(PROJECT_ROOT), str(PROJECT_ROOT / "data"), str(path))
+
+    outputs = set()
+    for seed in ("0", "1", "2"):
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONHASHSEED": seed},
+        )
+        assert result.returncode == 0, result.stderr
+        outputs.add(result.stdout.strip())
+    assert len(outputs) == 1, f"warning text varies with PYTHONHASHSEED: {outputs}"
 
 
 def test_leg_inferred_from_meeting_order_not_input_order(tmp_path, world):

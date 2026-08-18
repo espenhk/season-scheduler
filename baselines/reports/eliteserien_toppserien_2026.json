@@ -1,0 +1,273 @@
+{
+  "id": "eliteserien_toppserien_2026",
+  "name": "2026 Eliteserien + Toppserien — opening rounds",
+  "season": "2026",
+  "verified": false,
+  "retrieved": "2026-08-16",
+  "coverage": "partial",
+  "num_matches": 14,
+  "feasible": false,
+  "hard_violations": 22,
+  "expected_hard_violations": [
+    "full_round_on_date (16): every Eliteserien club is flagged as having no match on 2026-05-16, because this baseline stops in March. One violation per club, not one per schedule.",
+    "fixed_requirement (6): the four named 16 May home fixtures (Vålerenga, Brann, Rosenborg, Viking), plus Molde at home on 2026-07-19 for Moldejazz and Tromsø's 2026-07-11 Midnattsolkampen. All fall outside the dates this file covers."
+  ],
+  "soft_total": 52.0,
+  "points": 0.1,
+  "coverage_warnings": [
+    "Eliteserien: 112 pair(s) never meet (expected 2 meetings each) — e.g. Aalesunds FK v FK Bodø/Glimt",
+    "Eliteserien: 8 pair(s) meet a different number of times than 2 — e.g. Aalesunds FK v Lillestrøm SK met 1 time(s)",
+    "Toppserien: 60 pair(s) never meet (expected 2 meetings each) — e.g. Aalesunds FK Kvinner v FK Bodø/Glimt Kvinner",
+    "Toppserien: 6 pair(s) meet a different number of times than 2 — e.g. Aalesunds FK Kvinner v Vålerenga Fotball Kvinner met 1 time(s)"
+  ],
+  "breakdown": [
+    {
+      "constraint": "blackout_dates",
+      "kind": "hard",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "club_home_clash",
+      "kind": "hard",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "consecutive_away_days",
+      "kind": "soft",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "consecutive_home_days",
+      "kind": "soft",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "cup_round_conflict",
+      "kind": "hard",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "final_round_same_slot",
+      "kind": "hard",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "fixed_requirement",
+      "kind": "hard",
+      "total": -6.0,
+      "count": 6
+    },
+    {
+      "constraint": "full_round_on_date",
+      "kind": "hard",
+      "total": -16.0,
+      "count": 16
+    },
+    {
+      "constraint": "grass_away_round_one",
+      "kind": "soft",
+      "total": 12.0,
+      "count": 3
+    },
+    {
+      "constraint": "home_away_balance",
+      "kind": "soft",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "home_away_breaks",
+      "kind": "soft",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "late_kickoff_long_travel",
+      "kind": "soft",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "leg_ordering",
+      "kind": "hard",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "min_rest_days",
+      "kind": "hard",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "one_match_per_team_per_day",
+      "kind": "hard",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "preferred_weekday",
+      "kind": "soft",
+      "total": 40.0,
+      "count": 10
+    },
+    {
+      "constraint": "rest_comfort",
+      "kind": "soft",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "rivalry_fixture_on_date",
+      "kind": "soft",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "soft_venue_preference",
+      "kind": "soft",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "venue_double_booking",
+      "kind": "hard",
+      "total": 0.0,
+      "count": 0
+    }
+  ],
+  "matches": [
+    {
+      "date": "2026-03-14",
+      "competition": "eliteserien_2026",
+      "round": 1,
+      "leg": 1,
+      "home": "hamkam_m",
+      "away": "viking_m",
+      "venue": "briskeby_arena"
+    },
+    {
+      "date": "2026-03-14",
+      "competition": "eliteserien_2026",
+      "round": 1,
+      "leg": 1,
+      "home": "molde_m",
+      "away": "rosenborg_m",
+      "venue": "aker_stadion"
+    },
+    {
+      "date": "2026-03-15",
+      "competition": "eliteserien_2026",
+      "round": 2,
+      "leg": 1,
+      "home": "aalesund_m",
+      "away": "lillestrom_m",
+      "venue": "color_line_stadion"
+    },
+    {
+      "date": "2026-03-15",
+      "competition": "eliteserien_2026",
+      "round": 2,
+      "leg": 1,
+      "home": "kfum_oslo_m",
+      "away": "start_m",
+      "venue": "kfum_arena"
+    },
+    {
+      "date": "2026-03-15",
+      "competition": "eliteserien_2026",
+      "round": 2,
+      "leg": 1,
+      "home": "kristiansund_m",
+      "away": "brann_m",
+      "venue": "kristiansund_stadion"
+    },
+    {
+      "date": "2026-03-15",
+      "competition": "eliteserien_2026",
+      "round": 2,
+      "leg": 1,
+      "home": "sarpsborg08_m",
+      "away": "bodo_glimt_m",
+      "venue": "sarpsborg_stadion"
+    },
+    {
+      "date": "2026-03-15",
+      "competition": "eliteserien_2026",
+      "round": 2,
+      "leg": 1,
+      "home": "tromso_m",
+      "away": "fredrikstad_m",
+      "venue": "romssa_arena"
+    },
+    {
+      "date": "2026-03-15",
+      "competition": "eliteserien_2026",
+      "round": 2,
+      "leg": 1,
+      "home": "valerenga_m",
+      "away": "sandefjord_m",
+      "venue": "intility_arena"
+    },
+    {
+      "date": "2026-03-20",
+      "competition": "toppserien_2026",
+      "round": 1,
+      "leg": 1,
+      "home": "bodo_glimt_w",
+      "away": "honefoss_w",
+      "venue": "aspmyra_stadion"
+    },
+    {
+      "date": "2026-03-20",
+      "competition": "toppserien_2026",
+      "round": 1,
+      "leg": 1,
+      "home": "molde_w",
+      "away": "brann_w",
+      "venue": "aker_stadion"
+    },
+    {
+      "date": "2026-03-21",
+      "competition": "toppserien_2026",
+      "round": 2,
+      "leg": 1,
+      "home": "lsk_kvinner_w",
+      "away": "roa_w",
+      "venue": "araasen_stadion"
+    },
+    {
+      "date": "2026-03-21",
+      "competition": "toppserien_2026",
+      "round": 2,
+      "leg": 1,
+      "home": "rosenborg_w",
+      "away": "haugesund_w",
+      "venue": "lerkendal_stadion"
+    },
+    {
+      "date": "2026-03-21",
+      "competition": "toppserien_2026",
+      "round": 2,
+      "leg": 1,
+      "home": "stabak_w",
+      "away": "lyn_w",
+      "venue": "nadderud_stadion"
+    },
+    {
+      "date": "2026-03-21",
+      "competition": "toppserien_2026",
+      "round": 2,
+      "leg": 1,
+      "home": "valerenga_w",
+      "away": "aalesund_w",
+      "venue": "intility_arena"
+    }
+  ]
+}

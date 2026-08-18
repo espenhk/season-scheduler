@@ -6,11 +6,12 @@ service, not the kind of provider you'd want backing a paying product, but
 it covers the Norwegian Eliteserien and Toppserien and needs no account,
 which matches this project's "everything runs offline by default, network
 access is opt-in" posture: `validate`, `generate` and `score` never call
-this; only `cli.py refresh-reference-data` does.
+this; only `cli.py refresh-reference-data` and `scripts/fetch_real_schedule.py`
+do.
 
 Deliberately a thin wrapper over `urllib.request` rather than a new
 `requests`/`httpx` dependency — this is the only place in the project that
-makes an HTTP call, and stdlib is enough for one GET-JSON endpoint.
+makes an HTTP call, and stdlib is enough for a handful of GET-JSON endpoints.
 """
 
 from __future__ import annotations
@@ -33,6 +34,29 @@ class FetchError(Exception):
     """
 
 
+def fetch_json(url: str) -> dict:
+    """GET a URL and parse the body as JSON. The one place any HTTP call happens.
+
+    Raises `FetchError` uniformly for a network failure, a non-2xx response,
+    or an unparseable body, so every caller handles "the API didn't work"
+    exactly one way.
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=TIMEOUT_S) as response:
+            body = response.read()
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise FetchError(f"could not reach {url}: {exc}") from exc
+
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise FetchError(f"response from {url} was not valid JSON: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise FetchError(f"response from {url} was not a JSON object")
+    return payload
+
+
 @dataclass(frozen=True)
 class TeamRecord:
     """What the API told us about one team. `None` means "field not given" —
@@ -51,17 +75,7 @@ def fetch_teams(league_name: str) -> list[TeamRecord]:
     returns a partial or best-guess result silently.
     """
     url = f"{API_BASE}/search_all_teams.php?l={urllib.parse.quote(league_name)}"
-    try:
-        with urllib.request.urlopen(url, timeout=TIMEOUT_S) as response:
-            body = response.read()
-    except (urllib.error.URLError, TimeoutError) as exc:
-        raise FetchError(f"could not reach {API_BASE}: {exc}") from exc
-
-    try:
-        payload = json.loads(body)
-    except json.JSONDecodeError as exc:
-        raise FetchError(f"response from {url} was not valid JSON: {exc}") from exc
-
+    payload = fetch_json(url)
     teams = payload.get("teams") or []
     return [_parse_team(t) for t in teams]
 
