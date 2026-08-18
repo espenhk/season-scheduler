@@ -1,0 +1,44 @@
+name: publish football-scheduler report
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-scheduler/**"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: snok/install-poetry@v1
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Install dependencies
+        run: poetry install --only football-scheduler
+
+      - name: Regenerate season schedule report
+        run: poetry run python football-scheduler/scripts/publish_web.py
+
+      - name: Commit and push report if changed
+        run: |
+          if git diff --quiet -- docs/football-scheduler; then
+            echo "Report unchanged, nothing to publish."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/football-scheduler
+          git commit -m "Regenerate football-scheduler season report"
+          git push
