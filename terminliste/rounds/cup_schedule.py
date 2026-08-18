@@ -27,10 +27,11 @@ Two rules are enforced here, matching how the season's own round-robin
 guarantees things by construction rather than leaving them to be discovered
 as violations later:
 
-- Hard: round N is fully placed before round N+1's first placement, honouring
-  `min_rest_days` as the required gap between them. Enforced by construction
-  — each round's earliest possible placement is bumped past the previous
-  round's latest actual one, plus the gap — and `CupSchedulingError` is
+- Hard: round N is fully placed before round N+1's first placement, leaving
+  `min_rest_days` full rest days between them (a `min_gap_days` calendar
+  gap). Enforced by construction — each round's earliest possible placement
+  is bumped past the previous round's latest actual one, plus the gap — and
+  `CupSchedulingError` is
   raised if a round's own window (or, for a forced round, the confirmed date
   itself) leaves no room left to satisfy it. A forced round never moves to
   make room; if it's too close to the previous round, that is the data's
@@ -120,7 +121,7 @@ def schedule_cup(competition: Competition, blackouts: set[date]) -> tuple[CupSch
     if not competition.cup_rounds:
         raise CupSchedulingError(f"cup competition {competition.id!r} declares no cup_rounds")
 
-    gap = max(competition.min_rest_days, 1)
+    gap = max(competition.min_gap_days, 1)
     spread = max(competition.match_window_days, 0)
 
     placements: list[CupRoundPlacement] = []
@@ -308,7 +309,8 @@ def cup_conflict(cup_windows: dict[str, list[tuple[date, int]]], team_id: str, d
     which can still relocate the whole round.
     """
     return any(
-        abs((day - cup_date).days) < minimum for cup_date, minimum in cup_windows.get(team_id, ())
+        abs((day - cup_date).days) - 1 < minimum
+        for cup_date, minimum in cup_windows.get(team_id, ())
     )
 
 

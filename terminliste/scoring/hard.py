@@ -17,11 +17,13 @@ from .base import Constraint, ConstraintResult, EvalContext, Event, ScheduleInde
 
 @dataclass
 class MinRestDays:
-    """At least N days between any team's matches.
+    """At least N full days off between any team's matches.
 
-    A gap of exactly N is fine: Saturday to Tuesday is three days and legal at
-    the default setting. Only gaps strictly below the minimum count — including
-    a gap of zero, which is a team playing twice in one day.
+    N counts only the days strictly between the two matchdays, not either
+    matchday itself: Thursday to Sunday is two full rest days and legal at
+    the default setting. Only a rest count strictly below the minimum counts
+    as a violation — including a team playing twice in one day, which counts
+    as -1 rest days.
     """
 
     competitions: list[Competition]
@@ -50,21 +52,21 @@ class MinRestDays:
             if minimum is None:
                 continue
             for earlier, later in zip(matches, matches[1:]):
-                gap = (later.date - earlier.date).days
-                if gap >= minimum:
+                rest_days = (later.date - earlier.date).days - 1
+                if rest_days >= minimum:
                     continue
                 count += 1
                 # Deeper shortfalls hurt more, so the annealer prefers fixing a
                 # same-day double-booking before a one-day-short gap.
-                shortfall = minimum - gap
+                shortfall = minimum - rest_days
                 penalty -= self.weight * shortfall
                 if ctx.detail:
                     events.append(
                         Event(
                             delta=-self.weight * shortfall,
                             detail=(
-                                f"{ctx.world.team_label(team_id)} has {gap} day(s) between "
-                                f"{earlier.date} and {later.date} — needs {minimum}"
+                                f"{ctx.world.team_label(team_id)} has {rest_days} rest day(s) "
+                                f"between {earlier.date} and {later.date} — needs {minimum}"
                             ),
                             match_keys=(earlier.key, later.key),
                         )
@@ -406,11 +408,11 @@ class CupRoundConflict:
         for team_id, windows in self._windows_by_team.items():
             for match in index.by_team.get(team_id, ()):
                 for round_date, minimum, cup_name in windows:
-                    gap = abs((match.date - round_date).days)
-                    if gap >= minimum:
+                    rest_days = abs((match.date - round_date).days) - 1
+                    if rest_days >= minimum:
                         continue
                     count += 1
-                    shortfall = minimum - gap
+                    shortfall = minimum - rest_days
                     penalty -= self.weight * shortfall
                     if ctx.detail:
                         events.append(
@@ -418,8 +420,8 @@ class CupRoundConflict:
                                 delta=-self.weight * shortfall,
                                 detail=(
                                     f"{ctx.world.team_label(team_id)} plays {match.date} in "
-                                    f"{match.competition_id}, {gap} day(s) from {cup_name} on "
-                                    f"{round_date} — needs {minimum}"
+                                    f"{match.competition_id}, {rest_days} rest day(s) from "
+                                    f"{cup_name} on {round_date} — needs {minimum}"
                                 ),
                                 match_keys=(match.key,),
                             )

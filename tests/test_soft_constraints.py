@@ -211,10 +211,10 @@ def test_rest_comfort_penalises_gaps_between_minimum_and_comfortable():
     season = f.season(competitions=["comp"])
     constraint = RestComfort(competitions=[comp])
 
-    # Exactly at the minimum (3 days): comfortable shortfall of 3.
+    # Exactly at the minimum (3 rest days): comfortable shortfall of 3.
     tight = [
         f.match("comp", "t1", "t2", date(2026, 6, 1), "v1", round_index=0),
-        f.match("comp", "t2", "t1", date(2026, 6, 4), "v1", round_index=1),
+        f.match("comp", "t2", "t1", date(2026, 6, 5), "v1", round_index=1),
     ]
     result = evaluate(tight, [constraint], _ctx(world, season))
     # Charged once per team whose own sequence has the gap — both teams see
@@ -224,7 +224,7 @@ def test_rest_comfort_penalises_gaps_between_minimum_and_comfortable():
     # At the comfortable target: no penalty.
     comfortable = [
         f.match("comp", "t1", "t2", date(2026, 6, 1), "v1", round_index=0),
-        f.match("comp", "t2", "t1", date(2026, 6, 7), "v1", round_index=1),
+        f.match("comp", "t2", "t1", date(2026, 6, 8), "v1", round_index=1),
     ]
     result = evaluate(comfortable, [constraint], _ctx(world, season))
     assert result.result("rest_comfort").total == 0.0

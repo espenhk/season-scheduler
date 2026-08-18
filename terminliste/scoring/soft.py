@@ -357,10 +357,11 @@ class HomeAwayBalance:
 
 @dataclass
 class RestComfort:
-    """Penalise gaps that clear the hard minimum but are still short.
+    """Penalise rest counts that clear the hard minimum but are still short.
 
-    Three days is legal; six is comfortable. This is what pushes the solver
-    towards a humane calendar once feasibility is no longer in question.
+    Two rest days is legal; five is comfortable. This is what pushes the
+    solver towards a humane calendar once feasibility is no longer in
+    question.
     """
 
     competitions: list[Competition]
@@ -390,11 +391,11 @@ class RestComfort:
                 continue
             minimum, comfortable, weight = config
             for earlier, later in zip(matches, matches[1:]):
-                gap = (later.date - earlier.date).days
+                rest_days = (later.date - earlier.date).days - 1
                 # Below the minimum is min_rest_days' business, not ours.
-                if gap < minimum or gap >= comfortable:
+                if rest_days < minimum or rest_days >= comfortable:
                     continue
-                shortfall = comfortable - gap
+                shortfall = comfortable - rest_days
                 total -= weight * shortfall
                 count += 1
                 if ctx.detail:
@@ -402,8 +403,8 @@ class RestComfort:
                         Event(
                             delta=-weight * shortfall,
                             detail=(
-                                f"{ctx.world.team_label(team_id)} gets {gap} days' rest before "
-                                f"{later.date} (comfortable is {comfortable})"
+                                f"{ctx.world.team_label(team_id)} gets {rest_days} days' rest "
+                                f"before {later.date} (comfortable is {comfortable})"
                             ),
                             match_keys=(earlier.key, later.key),
                             team_ids=(team_id,),

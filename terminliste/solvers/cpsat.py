@@ -282,13 +282,14 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins):
             model.Add(sum(vars_) <= 1).OnlyEnforceIf(venue_literal)
 
     # H1 minimum rest, and by implication one match per team per day: within
-    # any window of `min_rest_days` consecutive days a team plays at most once.
+    # any window of `min_gap_days` (`min_rest_days` full rest days plus both
+    # matchdays) consecutive days a team plays at most once.
     rest_literal = assume("min_rest_days")
     minimum_by_team: dict[str, int] = {}
     for plan in planned:
         for team_id in plan.competition.teams:
             minimum_by_team[team_id] = max(
-                minimum_by_team.get(team_id, 0), plan.competition.min_rest_days
+                minimum_by_team.get(team_id, 0), plan.competition.min_gap_days
             )
 
     dates_by_team: dict[str, list[date]] = defaultdict(list)
@@ -396,16 +397,21 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins):
                         model.Add(sum(vars_b) >= 1).OnlyEnforceIf(pair)
                         objective_terms.append((sign * _scaled(weight), pair))
 
-    # S6 rest comfort. The scorer charges `weight * (comfortable - gap)` for a
-    # gap between the legal minimum and the comfortable target — a graduated
-    # penalty, not a threshold. Transcribing it faithfully matters: rewarding
-    # only fully-clear windows made CP-SAT trade away rest wholesale to buy
-    # back-to-back home days, and score worse on the real scorer while
-    # believing it had improved.
+    # S6 rest comfort. The scorer charges `weight * (comfortable - rest_days)`
+    # for a rest count between the legal minimum and the comfortable target —
+    # a graduated penalty, not a threshold. Transcribing it faithfully
+    # matters: rewarding only fully-clear windows made CP-SAT trade away rest
+    # wholesale to buy back-to-back home days, and score worse on the real
+    # scorer while believing it had improved.
     #
-    # Summing a bonus over every window length from minimum+1 to comfortable
-    # gives `weight * (gap - minimum)`, which differs from the scorer's penalty
-    # by a constant — the same objective, in the direction CP-SAT maximises.
+    # `minimum` and `comfortable` here are calendar-day window lengths
+    # (`min_gap_days`/`comfortable_gap_days`), not the full-rest-day counts
+    # the scorer works in — a window of L consecutive days with at most one
+    # match is the calendar-day analogue of L-1 full rest days. Summing a
+    # bonus over every window length from minimum+1 to comfortable gives
+    # `weight * (rest_days - min_rest_days)`, which differs from the scorer's
+    # penalty by a constant — the same objective, in the direction CP-SAT
+    # maximises.
     for team_id, days in dates_by_team.items():
         comfortable = _comfort_for(planned, team_id)
         minimum = minimum_by_team.get(team_id, 1)
@@ -533,7 +539,7 @@ def _dual_weight(planned, team_ids: list[str], key: str, default: float) -> floa
 def _comfort_for(planned, team_id: str) -> int:
     for plan in planned:
         if team_id in plan.competition.teams:
-            return plan.competition.comfortable_rest_days
+            return plan.competition.comfortable_gap_days
     return 0
 
 

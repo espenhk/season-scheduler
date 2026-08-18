@@ -99,7 +99,7 @@ def plan_competitions(
             by_competition[competition.id],
             competition.preferred_weekday,
             count=len(round_indexes),
-            min_gap_days=competition.min_rest_days,
+            min_gap_days=competition.min_gap_days,
         )
         if len(dates) < len(round_indexes):
             raise ValueError(
@@ -539,7 +539,7 @@ def _placement_cost(
     if not calendar.is_allowed(day, venue):
         cost += _BLOCKED
 
-    minimum = competition.min_rest_days
+    minimum = competition.min_gap_days
     if state.rest_conflict(fixture.home_team, day, minimum):
         cost += _REST_VIOLATION
     if state.rest_conflict(fixture.away_team, day, minimum):

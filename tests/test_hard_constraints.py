@@ -38,7 +38,7 @@ def _ctx(world, season):
 # -- min_rest_days -----------------------------------------------------------
 
 
-def test_min_rest_fires_at_a_two_day_gap_but_not_three():
+def test_min_rest_fires_at_two_rest_days_but_not_three():
     v = f.venue("v1")
     t1 = f.team("t1", "c1", "v1")
     t2 = f.team("t2", "c2", "v2")
@@ -50,18 +50,18 @@ def test_min_rest_fires_at_a_two_day_gap_but_not_three():
 
     constraint = MinRestDays(competitions=[comp])
 
-    # Exactly the minimum: 3 days apart -> no violation.
+    # Exactly the minimum: 3 full rest days (2-4 Jun) apart -> no violation.
     ok_matches = [
         f.match("comp", "t1", "t2", date(2026, 6, 1), "v1", round_index=0),
-        f.match("comp", "t2", "t1", date(2026, 6, 4), "v2", round_index=1),
+        f.match("comp", "t2", "t1", date(2026, 6, 5), "v2", round_index=1),
     ]
     result = evaluate(ok_matches, [constraint], _ctx(world, season))
     assert result.hard_violations == 0
 
-    # One day short: 2 days apart -> violation.
+    # One day short: 2 full rest days apart -> violation.
     bad_matches = [
         f.match("comp", "t1", "t2", date(2026, 6, 1), "v1", round_index=0),
-        f.match("comp", "t2", "t1", date(2026, 6, 3), "v2", round_index=1),
+        f.match("comp", "t2", "t1", date(2026, 6, 4), "v2", round_index=1),
     ]
     result = evaluate(bad_matches, [constraint], _ctx(world, season))
     # Counted once per team whose own sequence has the short gap — both teams'
@@ -319,14 +319,16 @@ def _cup_world():
     return world, season, schedule
 
 
-def test_cup_round_conflict_fires_at_a_two_day_gap_but_not_three():
+def test_cup_round_conflict_fires_at_two_rest_days_but_not_three():
     world, season, schedule = _cup_world()
     constraint = CupRoundConflict(cup_schedules=[schedule])
 
-    ok = [f.match("league", "t1", "t2", date(2026, 8, 25), "v1")]
+    # 3 full rest days from the 22 Aug cup round -> no violation.
+    ok = [f.match("league", "t1", "t2", date(2026, 8, 26), "v1")]
     assert evaluate(ok, [constraint], _ctx(world, season)).hard_violations == 0
 
-    bad = [f.match("league", "t1", "t2", date(2026, 8, 24), "v1")]
+    # 2 full rest days -> violation.
+    bad = [f.match("league", "t1", "t2", date(2026, 8, 25), "v1")]
     result = evaluate(bad, [constraint], _ctx(world, season))
     # Both teams are entered in the cup, so both sides of the league match see
     # the same shortfall.

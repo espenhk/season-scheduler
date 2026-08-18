@@ -151,8 +151,8 @@ ground (Ullevål stadion) — see `_venue_type` in `cup_schedule.py`. A season l
 kind it holds under `competitions` (leagues) and `cup_competitions` (cups)
 respectively; the two are kept separate because only the former is fed to
 the round-robin/solver pipeline — a cup is resolved once, up front, and the
-league solver treats the result as fixed input. `CupRoundConflict` then keeps league fixtures a `min_rest_days`-wide window
-clear of each team's own resolved cup dates; CP-SAT additionally excludes a
+league solver treats the result as fixed input. `CupRoundConflict` then keeps league fixtures at least `min_rest_days` full
+rest days clear of each team's own resolved cup dates; CP-SAT additionally excludes a
 conflicting date from a fixture's candidate set outright, rather than
 modelling it as a constraint to satisfy after the fact, since its fixtures
 each have a small, fixed candidate window around a round anchor chosen

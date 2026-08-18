@@ -97,9 +97,9 @@ def test_windowed_round_starts_at_the_earliest_point_the_gap_allows():
         ],
     )
     schedule, warnings = schedule_cup(cup, blackouts=set())
-    # Round 1 lands on 22 Aug; with a 5-day gap round 2 cannot start before 27
-    # Aug, even though its own window opens on the 24th.
-    assert schedule.rounds[1].earliest_date == date(2026, 8, 27)
+    # Round 1 lands on 22 Aug; 5 full rest days (23-27 Aug) means round 2
+    # cannot start before 28 Aug, even though its own window opens on the 24th.
+    assert schedule.rounds[1].earliest_date == date(2026, 8, 28)
     assert warnings == []
 
 
