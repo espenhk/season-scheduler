@@ -309,19 +309,37 @@ over-approximation, not just a documented simplification.
 
 Narrowing `reachable_from` to what the qualifying cascade already
 corroborates (above) measurably helps — the best candidate at 180s goes from
-3-6 hard violations down to 2 — but does not reach full feasibility either:
-Tromsø IL alone is still reachable for both `europa_league_main_2026` and
-`conference_league_main_2026` (the one real wired cascade hop), so it still
-blocks its own dates across two whole main-tournament calendars at once, and
-that alone is enough that no seed tried so far finds a fully feasible
-schedule within 180s. This is the same shape of tightness the "European
-qualifying cascade" section above already documents for qualifying-only
-seasons (some seeds need the full 180s, implying others might not make it
-either) — main tournaments make it measurably worse, not qualitatively new.
-Closing the remaining gap is a real follow-up, not attempted here: either a
-higher default `--time-budget` for a season with main tournaments in play,
-or the round-aware `reachable_from` tightening `Competition.reachable_from`'s
-docstring already describes.
+3-6 hard violations down to 2 — but used to fall short of full feasibility
+for a further reason: Tromsø IL is reachable for both
+`europa_league_main_2026` and `conference_league_main_2026` (the one real
+wired cascade hop), and until issue #93 both blocks were unconditional hard
+exclusions, as if Tromsø were certain to reach *both* main tournaments —
+when winning Europa League Q3 (reaching the first) and losing it (the only
+way to reach the second, via the Conference League drop) are mutually
+exclusive outcomes.
+
+Issue #93 fixes that: `resolve_team_cascade` now tags every commitment
+`EuropeanCommitmentDate.certain` — true only for the entry round and
+anything reached without ever passing through a fork (a round offering both
+win-progression and a `drop_to_competition`/`drop_to_round`), false for
+everything reachable only via one side of a fork, including all of it
+transitively once a branch has forked. `resolve_main_tournament_commitments`
+reads the same flag to decide each reachable team's block: certain only if
+at least one named `reachable_from` source is fully certain for that team.
+Tromsø's route to each main tournament runs through the Q3 fork, so both
+blocks are now soft (`EuropeanCommitmentSoftConflict`, `scoring/soft.py`)
+rather than hard — still steering the solver away from the date when a
+cheaper alternative exists, but no longer able to rule out an otherwise
+workable schedule over a branch that never materializes. The same certain/
+uncertain split applies to `EuropeanCommitmentConflict` itself for the
+qualifying cascade, and to `solvers/cpsat.py`'s candidate-domain pruning
+(`_european_clear` now only excludes a date over a *certain* commitment) —
+which is what let a 120s `cli.py generate --solver cpsat` run stop naming
+`european_commitment_conflict` among its infeasibility culprits at all,
+where it used to dominate. Closing the *remaining* gap on the real 2026 data
+(Bodø/Glimt's and Viking's dense, non-branching Champions League qualifying
+calendar — see the companion issue) is unrelated to cascade branching and
+not attempted here.
 
 `resolve_main_tournament_commitments` (`rounds/european_schedule.py`)
 resolves each main tournament's own dates once — no branching to walk, since

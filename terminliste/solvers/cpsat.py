@@ -161,7 +161,16 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins):
     model = cp_model.CpModel()
     by_competition = calendars_by_competition(calendar, request.competitions)
     cup_windows = resolved_cup_windows(request.cup_schedules)
-    european_commitments = request.european_commitments
+    # Only `certain` commitments narrow the candidate domain — a commitment
+    # reachable only via one of several mutually-exclusive cascade branches
+    # (issue #93) isn't a guaranteed fixture, so excluding a date over it
+    # here would re-introduce the same over-constraining `_european_clear`
+    # is meant to avoid; `EuropeanCommitmentSoftConflict` (scoring/soft.py)
+    # is where an uncertain commitment's date gets discouraged instead.
+    european_commitments = {
+        team_id: [c for c in commitments if c.certain]
+        for team_id, commitments in request.european_commitments.items()
+    }
 
     # -- decision variables: one boolean per (fixture, candidate date) --------
     fixtures: list[tuple[object, object, str]] = []  # (fixture, competition, venue)

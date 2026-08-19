@@ -14,6 +14,7 @@ from terminliste.rounds.european_schedule import (
     resolve_leg_date,
     resolve_main_tournament_commitments,
     resolve_main_tournament_dates,
+    resolve_qualifying_commitments,
     resolve_team_cascade,
 )
 
@@ -234,13 +235,62 @@ def test_drop_to_cascades_into_the_named_round_of_another_competition():
     ]
     assert commitments[0].label == "el: q3 (first leg)"
     assert commitments[2].label == "uecl: playoff (first leg)"
+    # q3 has no win-progression round to fork against — dropping is the
+    # only live continuation, so it stays certain the whole way down.
+    assert all(c.certain for c in commitments)
+    assert all(c.competition_id == "el" for c in commitments[:2])
+    assert all(c.competition_id == "uecl" for c in commitments[2:])
+
+
+def test_a_fork_keeps_uncertainty_for_every_round_further_down_that_branch():
+    """Once a branch is only reachable via a fork, everything further down
+    that same branch stays uncertain too — not knowing you're even on the
+    branch makes anything beyond the fork just as conditional, even a round
+    reached by a plain, non-forking win-progression from there."""
+    el = f.competition(
+        "el",
+        ["tromso"],
+        format="european",
+        european_rounds=[
+            f.european_round(
+                "q3",
+                entrants=["tromso"],
+                forced_date=date(2026, 8, 6),
+                drop_to_competition="uecl",
+                drop_to_round="playoff",
+            ),
+            f.european_round("playoff", entrants=["tromso"], forced_date=date(2026, 8, 22)),
+        ],
+    )
+    uecl = f.competition(
+        "uecl",
+        ["tromso"],
+        format="european",
+        european_rounds=[
+            f.european_round("playoff", entrants=["tromso"], forced_date=date(2026, 8, 18)),
+            # Reached from uecl's playoff by plain win-progression alone —
+            # no fork here — but the branch it's on is already uncertain.
+            f.european_round("final", entrants=["tromso"], forced_date=date(2026, 8, 25)),
+        ],
+    )
+    commitments = resolve_team_cascade("tromso", el, {"el": el, "uecl": uecl}, _legs(el, uecl))
+    by_label = {c.label: c for c in commitments}
+    assert by_label["el: q3 (first leg)"].certain is True
+    assert by_label["el: playoff (first leg)"].certain is False
+    assert by_label["uecl: playoff (first leg)"].certain is False
+    assert by_label["uecl: final (first leg)"].certain is False
 
 
 def test_win_and_drop_branches_at_the_same_depth_both_produce_commitments():
     """A team that could either advance within its own competition or drop
     into another one's equivalent round has both branches open until a
     result narrows it down — the resolver must block dates from both, not
-    pick one arbitrarily."""
+    pick one arbitrarily.
+
+    Since issue #93, only the pre-fork commitment (q3, played whatever
+    happens next) is `certain`; both post-fork branches are mutually
+    exclusive — a team either wins q3 and advances, or loses it and drops,
+    never both — so neither counts as a guaranteed fixture on its own."""
     el = f.competition(
         "el",
         ["tromso"],
@@ -270,9 +320,14 @@ def test_win_and_drop_branches_at_the_same_depth_both_produce_commitments():
     # depth 0 (q3): 2 commitments. depth 1: both branches' play-off legs, 4
     # commitments (2 from el's own playoff, 2 from uecl's).
     assert len(commitments) == 6
-    depth1_dates = {c.date for c in commitments[2:]}
+    depth0, depth1 = commitments[:2], commitments[2:]
+
+    assert all(c.certain for c in depth0), "the pre-fork q3 commitment is certain"
+    assert not any(c.certain for c in depth1), "neither post-fork branch is certain on its own"
+
+    depth1_dates = {c.date for c in depth1}
     assert depth1_dates == {date(2026, 8, 22), date(2026, 8, 18)}
-    depth1_labels = {c.label for c in commitments[2:]}
+    depth1_labels = {c.label for c in depth1}
     assert depth1_labels == {
         "el: playoff (first leg)",
         "el: playoff (second leg)",
@@ -638,11 +693,18 @@ def test_resolve_main_tournament_commitments_blocks_every_reachable_team():
             f.main_tournament_round("final", forced_date=date(2027, 6, 5), venue_name="Wembley")
         ],
     )
-    result, warnings = resolve_main_tournament_commitments([qualifying, main], f.season())
+    qualifying_commitments, _ = resolve_qualifying_commitments([qualifying], f.season())
+    result, warnings = resolve_main_tournament_commitments(
+        [qualifying, main], f.season(), qualifying_commitments
+    )
     assert set(result) == {"glimt", "viking"}
     for team in ("glimt", "viking"):
         assert {c.date for c in result[team]} == {date(2026, 9, 10), date(2027, 6, 5)}
         assert all(c.min_rest_days == main.min_rest_days for c in result[team])
+        # Neither team's route to cl_main forks (glimt's q1 -> playoff is a
+        # single continuation; viking enters playoff directly), so both
+        # blocks stay certain (hard).
+        assert all(c.certain for c in result[team])
     assert warnings == []
 
 
@@ -664,8 +726,74 @@ def test_resolve_main_tournament_commitments_skips_a_team_not_in_reachable_from(
         reachable_from=["cl_q"],
         league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
     )
-    result, _ = resolve_main_tournament_commitments([cl_qualifying, el_qualifying, main], f.season())
+    qualifying_commitments, _ = resolve_qualifying_commitments(
+        [cl_qualifying, el_qualifying], f.season()
+    )
+    result, _ = resolve_main_tournament_commitments(
+        [cl_qualifying, el_qualifying, main], f.season(), qualifying_commitments
+    )
     assert set(result) == {"glimt"}
+
+
+def test_resolve_main_tournament_commitments_softens_a_team_forked_between_two_main_tournaments():
+    """Tromsø-shaped case (issue #93): a team one drop hop from a second
+    competition's qualifying is reachable for *two* main tournaments — its
+    own (by winning through) and the drop target's (by losing and winning
+    from there) — but never both, since winning q3 and dropping from q3 are
+    mutually exclusive. Neither block should be a hard exclusion on its
+    own; both are still blocked, just as soft, conditional commitments."""
+    el = f.competition(
+        "el",
+        ["tromso"],
+        format="european",
+        european_rounds=[
+            f.european_round("q2", entrants=["tromso"], forced_date=date(2026, 7, 23)),
+            f.european_round(
+                "q3",
+                entrants=["tromso"],
+                forced_date=date(2026, 8, 6),
+                drop_to_competition="uecl",
+                drop_to_round="playoff",
+            ),
+            # Win branch: stays in the Europa League.
+            f.european_round("playoff", entrants=["tromso"], forced_date=date(2026, 8, 20)),
+        ],
+    )
+    uecl = f.competition(
+        "uecl",
+        ["tromso"],
+        format="european",
+        european_rounds=[
+            # Drop branch: Tromsø's landing spot if eliminated from el's q3.
+            f.european_round("playoff", entrants=["tromso"], forced_date=date(2026, 8, 20)),
+        ],
+    )
+    el_main = f.competition(
+        "el_main",
+        [],
+        format="european",
+        is_main_tournament=True,
+        reachable_from=["el"],
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 10, 15))],
+    )
+    uecl_main = f.competition(
+        "uecl_main",
+        [],
+        format="european",
+        is_main_tournament=True,
+        reachable_from=["uecl"],
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 10, 15))],
+    )
+    competitions = [el, uecl, el_main, uecl_main]
+    qualifying_commitments, _ = resolve_qualifying_commitments(competitions, f.season())
+    result, _ = resolve_main_tournament_commitments(competitions, f.season(), qualifying_commitments)
+
+    assert set(result) == {"tromso"}
+    assert len(result["tromso"]) == 2, "blocked against both main tournaments, not deduplicated"
+    assert not any(c.certain for c in result["tromso"]), (
+        "el's q3 forks into win-progression and the uecl drop, so neither main "
+        "tournament is a guaranteed destination on its own"
+    )
 
 
 def test_resolve_european_commitments_merges_qualifying_cascade_and_main_tournament():

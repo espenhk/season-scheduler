@@ -16,6 +16,7 @@ from datetime import date, timedelta
 
 from ..model.schema import WEEKDAYS, Competition, Match, RivalryFixture
 from ..model.schema import TvTimeSpread as TvTimeSpreadConfig
+from ..rounds.european_schedule import EuropeanCommitmentDate
 from .base import ConstraintResult, EvalContext, Event, ScheduleIndex
 
 
@@ -763,9 +764,67 @@ def _weights_by_team(
     return weights
 
 
+@dataclass
+class EuropeanCommitmentSoftConflict:
+    """Discourage a league match too close to a team's *conditional*
+    European qualifying leg date — a commitment reachable only via one of
+    several mutually-exclusive cascade branches (issue #93).
+
+    `EuropeanCommitmentConflict`'s (`scoring/hard.py`) soft counterpart,
+    same point-date-plus-rest arithmetic, but reading only the commitments
+    that constraint skips (`commitment.certain is False`): a team either
+    wins a round and advances, or loses it and drops — never both — so
+    blocking a domestic date against every branch at once as a hard
+    exclusion over-constrains the calendar for an outcome that's still a
+    coin flip. Keeping it as a soft penalty still steers the solver away
+    from the date when a cheaper alternative exists, without making an
+    otherwise-feasible schedule infeasible over a branch that never
+    materializes.
+    """
+
+    commitments_by_team: dict[str, list[EuropeanCommitmentDate]]
+    id: str = "european_commitment_soft_conflict"
+    kind: str = "soft"
+    weight: float = 3.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        total = 0.0
+        count = 0
+        events: list[Event] = []
+
+        for team_id, commitments in self.commitments_by_team.items():
+            for match in index.by_team.get(team_id, ()):
+                for commitment in commitments:
+                    if commitment.certain:
+                        continue
+                    rest_days = abs((match.date - commitment.date).days) - 1
+                    if rest_days >= commitment.min_rest_days:
+                        continue
+                    shortfall = commitment.min_rest_days - rest_days
+                    total -= self.weight * shortfall
+                    count += 1
+                    if ctx.detail:
+                        events.append(
+                            Event(
+                                delta=-self.weight * shortfall,
+                                detail=(
+                                    f"{ctx.world.team_label(team_id)} plays {match.date} in "
+                                    f"{match.competition_id}, {rest_days} rest day(s) from "
+                                    f"conditional commitment {commitment.label} on "
+                                    f"{commitment.date} — needs {commitment.min_rest_days}"
+                                ),
+                                match_keys=(match.key,),
+                                team_ids=(team_id,),
+                            )
+                        )
+
+        return ConstraintResult(self.id, "soft", total, count, events)
+
+
 __all__ = [
     "ConsecutiveAwayDays",
     "ConsecutiveHomeDays",
+    "EuropeanCommitmentSoftConflict",
     "GrassAwayRoundOne",
     "HomeAwayBalance",
     "HomeAwayBreaks",

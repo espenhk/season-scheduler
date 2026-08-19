@@ -452,6 +452,7 @@ def _european_world():
         date=date(2026, 8, 4),
         min_rest_days=3,
         label="cl: q3 (first leg)",
+        competition_id="cl",
     )
     return world, season, commitment
 
@@ -498,6 +499,28 @@ def test_european_commitment_conflict_is_silent_for_a_team_with_no_commitments()
     # commitment); t2 has no commitments of its own, so it contributes
     # nothing beyond that.
     assert result.hard_violations == 1
+
+
+def test_european_commitment_conflict_ignores_an_uncertain_commitment():
+    """A commitment reachable only via one of several mutually-exclusive
+    cascade branches (`certain=False`, issue #93) isn't a guaranteed
+    fixture, so it must not gate a hard exclusion —
+    `EuropeanCommitmentSoftConflict` (scoring/soft.py) is where it shows up
+    instead."""
+    world, season, commitment = _european_world()
+    uncertain = EuropeanCommitmentDate(
+        team_id="t1",
+        date=date(2026, 8, 4),
+        min_rest_days=3,
+        label="uecl: playoff (first leg)",
+        competition_id="uecl",
+        certain=False,
+    )
+    constraint = EuropeanCommitmentConflict(commitments_by_team={"t1": [uncertain]})
+
+    on_date = [f.match("league", "t1", "t2", date(2026, 8, 4), "v1")]
+    result = evaluate(on_date, [constraint], _ctx(world, season))
+    assert result.hard_violations == 0
 
 
 # -- clean schedule: every hard constraint reports zero ----------------------

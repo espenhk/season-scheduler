@@ -29,6 +29,7 @@ from .hard import (
 from .soft import (
     ConsecutiveAwayDays,
     ConsecutiveHomeDays,
+    EuropeanCommitmentSoftConflict,
     GrassAwayRoundOne,
     HomeAwayBalance,
     HomeAwayBreaks,
@@ -55,7 +56,9 @@ def build_constraints(
     `rounds/cup_schedule.py`) that share teams with them — not scheduled
     themselves, but kept clear of via `CupRoundConflict`. `european_commitments`
     is the same idea for UEFA qualifying leg dates — see
-    `rounds/european_schedule.py` and `EuropeanCommitmentConflict`.
+    `rounds/european_schedule.py` and `EuropeanCommitmentConflict` (its
+    `certain` dates) plus `EuropeanCommitmentSoftConflict` (issue #93 — the
+    same dict's `certain=False` ones, reachable only via a cascade fork).
     """
     hard_requirements = [r for r in season.fixed_requirements if r.hard]
 
@@ -94,6 +97,10 @@ def build_constraints(
             TvTimeSpread(competitions=competitions),
         ]
     )
+    if european_commitments:
+        constraints.append(
+            EuropeanCommitmentSoftConflict(commitments_by_team=european_commitments)
+        )
 
     # Soft fixed requirements ride on the same constraint as hard ones, scored
     # rather than enforced.
@@ -125,6 +132,7 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
     "fixed_requirement": "A named team must be at home on a named date.",
     "cup_round_conflict": "A team's league matches stay clear of its cup round dates.",
     "european_commitment_conflict": "A team's league matches stay clear of its European qualifying leg dates.",
+    "european_commitment_soft_conflict": "A team's league matches prefer to stay clear of a European leg date it only reaches via one of several cascade branches.",
     "fixed_requirement_preferred": "A named team should be at home on a named date.",
     "preferred_weekday": "Matches on the league's preferred weekday.",
     "consecutive_home_days": "A club's two teams at home on back-to-back days.",

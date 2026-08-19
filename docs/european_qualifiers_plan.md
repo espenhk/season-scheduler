@@ -234,6 +234,20 @@ UEFA's real rule — is exactly the kind of round-to-round wiring
 follow-up once a reliable source for the exact drop rules per round is
 reachable from this sandbox (see README's "Sourcing" notes).
 
+Issue #93 narrows a different, non-UEFA-specific corner of that same
+coarseness: the union in `_reachable_teams` still doesn't know which
+qualifying rounds are mutually exclusive, but `resolve_main_tournament_commitments`
+no longer *hard*-blocks a team against every main tournament its qualifying
+entrants reach — it reads `resolve_team_cascade`'s per-commitment `certain`
+flag (true only for a commitment reached without crossing a cascade fork)
+and blocks a team's dates as hard only where at least one named
+`reachable_from` source is fully certain for that team; everywhere else the
+block is soft (`EuropeanCommitmentSoftConflict`, `scoring/soft.py`). A team
+one drop hop from a second main tournament — reachable for both, but never
+both at once — no longer has to be treated as certainly in both at the same
+time just because the model doesn't track which round it was eliminated
+from.
+
 **Desired matchday.** `Competition.preferred_weekday` already existed (the
 league soft-preference `PreferredWeekday` in `scoring/soft.py` reads it) but
 had never been wired into window resolution. `resolve_leg_date` now takes an

@@ -459,6 +459,12 @@ class EuropeanCommitmentConflict:
     whole tie, which is what let a normal Thu-Sun-Thu European week (a leg,
     a league match, the next leg) look like a conflict when this used to
     block the entire span between two legs instead of each leg on its own.
+
+    Only `commitment.certain` dates count here (issue #93): a commitment
+    reachable only via one of several mutually-exclusive cascade branches
+    isn't a guaranteed fixture yet, so it can't be a hard exclusion on the
+    domestic calendar — `EuropeanCommitmentSoftConflict` in `scoring/soft.py`
+    is where those show up instead, as a penalty rather than a violation.
     """
 
     commitments_by_team: dict[str, list[EuropeanCommitmentDate]]
@@ -474,6 +480,8 @@ class EuropeanCommitmentConflict:
         for team_id, commitments in self.commitments_by_team.items():
             for match in index.by_team.get(team_id, ()):
                 for commitment in commitments:
+                    if not commitment.certain:
+                        continue
                     rest_days = abs((match.date - commitment.date).days) - 1
                     if rest_days >= commitment.min_rest_days:
                         continue

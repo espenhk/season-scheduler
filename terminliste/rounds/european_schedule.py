@@ -61,13 +61,30 @@ class EuropeanCommitmentDate:
     """One specific date a team is committed to — one leg of one round
     reachable from its entry point, across however many cascade branches are
     still open. `label` names the round and leg, for readable conflict
-    events; `min_rest_days` is the owning competition's own value.
+    events; `min_rest_days` is the owning competition's own value;
+    `competition_id` is the owning competition's id, for matching against a
+    main tournament's `reachable_from` without depending on `label`'s
+    free-text competition name.
+
+    `certain` (issue #93) is False for a commitment reachable only via one
+    of several mutually-exclusive cascade branches — the entry round is
+    always certain (a team definitely plays it, whatever happens next), and
+    certainty carries forward unchanged down a branch that never forks, but
+    the moment a round offers more than one live continuation (both
+    win-progression and a `drop_to_competition`/`drop_to_round`), every
+    commitment reachable only through one of those alternatives is no
+    longer certain — and, once uncertain, stays that way for the rest of
+    that branch, since not knowing you're even on it makes anything further
+    down it just as conditional. `EuropeanCommitmentConflict` (hard) and its
+    soft counterpart in `scoring/soft.py` split on this flag.
     """
 
     team_id: str
     date: date
     min_rest_days: int
     label: str
+    competition_id: str
+    certain: bool = True
 
 
 ResolvedLegs = dict[tuple[str, str], tuple[date, date]]
@@ -162,6 +179,14 @@ def resolve_team_cascade(
     (`drop_to_competition`/`drop_to_round`, when set). Both are followed at
     once — the walk does not know, and does not need to know, which one is
     real — collecting both legs' resolved dates from every round reached.
+
+    A round that offers only one live continuation (win-progression alone,
+    or a drop alone) keeps the walk's current certainty going into it. A
+    round that offers both is a genuine fork — the two outcomes are
+    mutually exclusive, so everything reached only via one of them
+    (`EuropeanCommitmentDate.certain=False`) stops counting as a guaranteed
+    commitment; the entry round itself, reached before any fork, is always
+    certain (issue #93).
     """
     entry = _entry_round(team_id, home_competition)
     if entry is None:
@@ -170,16 +195,16 @@ def resolve_team_cascade(
         )
 
     commitments: list[EuropeanCommitmentDate] = []
-    frontier: list[tuple[Competition, EuropeanRound]] = [(home_competition, entry)]
+    frontier: list[tuple[Competition, EuropeanRound, bool]] = [(home_competition, entry, True)]
     seen: set[tuple[str, str]] = set()
 
     while frontier:
-        frontier = [(c, r) for c, r in frontier if (c.id, r.id) not in seen]
+        frontier = [(c, r, certain) for c, r, certain in frontier if (c.id, r.id) not in seen]
         if not frontier:
             break
-        seen.update((c.id, r.id) for c, r in frontier)
+        seen.update((c.id, r.id) for c, r, _ in frontier)
 
-        for competition, round_ in frontier:
+        for competition, round_, certain in frontier:
             first_date, second_date = resolved_legs[(competition.id, round_.id)]
             commitments.append(
                 EuropeanCommitmentDate(
@@ -187,6 +212,8 @@ def resolve_team_cascade(
                     date=first_date,
                     min_rest_days=competition.min_rest_days,
                     label=f"{competition.name}: {round_.name} (first leg)",
+                    competition_id=competition.id,
+                    certain=certain,
                 )
             )
             commitments.append(
@@ -195,14 +222,18 @@ def resolve_team_cascade(
                     date=second_date,
                     min_rest_days=competition.min_rest_days,
                     label=f"{competition.name}: {round_.name} (second leg)",
+                    competition_id=competition.id,
+                    certain=certain,
                 )
             )
 
-        next_frontier: list[tuple[Competition, EuropeanRound]] = []
-        for competition, round_ in frontier:
+        next_frontier: list[tuple[Competition, EuropeanRound, bool]] = []
+        for competition, round_, certain in frontier:
+            branches: list[tuple[Competition, EuropeanRound]] = []
+
             win_next = _next_round_for_team(team_id, competition, round_)
             if win_next is not None:
-                next_frontier.append((competition, win_next))
+                branches.append((competition, win_next))
             if round_.drop_to_competition is not None:
                 drop_competition = competitions_by_id.get(round_.drop_to_competition)
                 if drop_competition is None:
@@ -217,7 +248,13 @@ def resolve_team_cascade(
                         f"{round_.drop_to_competition!r} round {round_.drop_to_round!r}, "
                         f"which does not exist there"
                     )
-                next_frontier.append((drop_competition, drop_round))
+                branches.append((drop_competition, drop_round))
+
+            forked = len(branches) > 1
+            next_frontier.extend(
+                (next_competition, next_round, certain and not forked)
+                for next_competition, next_round in branches
+            )
         frontier = next_frontier
 
     return commitments
@@ -324,8 +361,37 @@ def _reachable_teams(competition: Competition, by_id: dict[str, Competition]) ->
     return reachable
 
 
+def _reachable_with_certainty(
+    team_id: str,
+    competition: Competition,
+    qualifying_commitments_by_team: dict[str, list[EuropeanCommitmentDate]],
+) -> bool:
+    """Whether `team_id` is guaranteed to reach `competition` (a main
+    tournament), rather than only via one of several mutually-exclusive
+    qualifying branches (issue #93).
+
+    `qualifying_commitments_by_team` is `resolve_qualifying_commitments`'s
+    result — each of a team's qualifying commitments already carries the
+    id of the competition it belongs to and whether the cascade branch that
+    reached it was certain (see `EuropeanCommitmentDate.certain`). A source
+    competition named in `reachable_from` counts as a guaranteed route in
+    if the team has at least one commitment there and every one of them is
+    certain; a source the team only reaches via a fork (or doesn't reach at
+    all) doesn't. One guaranteed route among several named sources is
+    enough — a team can't be *more* than certain to arrive.
+    """
+    commitments = qualifying_commitments_by_team.get(team_id, ())
+    for source_id in competition.reachable_from:
+        source_commitments = [c for c in commitments if c.competition_id == source_id]
+        if source_commitments and all(c.certain for c in source_commitments):
+            return True
+    return False
+
+
 def resolve_main_tournament_commitments(
-    competitions: list[Competition], season: Season
+    competitions: list[Competition],
+    season: Season,
+    qualifying_commitments_by_team: dict[str, list[EuropeanCommitmentDate]],
 ) -> tuple[dict[str, list[EuropeanCommitmentDate]], list[str]]:
     """Block every reachable team's dates for every main tournament (issue
     #79) among `competitions`.
@@ -336,6 +402,15 @@ def resolve_main_tournament_commitments(
     all the way" simplification this makes. `competitions` should be every
     `format == "european"` competition in the season, qualifying and main
     tournament alike, the same as `resolve_european_commitments` expects.
+
+    `qualifying_commitments_by_team` — `resolve_qualifying_commitments`'s
+    result for the same `competitions` — decides whether each reachable
+    team's block is certain (hard) or only reachable via a cascade fork
+    (soft, issue #93): a team reachable from more than one main tournament
+    only via mutually-exclusive branches (e.g. Tromsø IL, one hop from
+    Europa League qualifying into the Conference League play-off) no longer
+    blocks its whole domestic calendar against both tournaments' full
+    season as if both were certain.
     """
     blackouts = set(season.blacked_out_dates)
     by_id = {c.id: c for c in competitions}
@@ -350,12 +425,15 @@ def resolve_main_tournament_commitments(
         warnings.extend(competition_warnings)
 
         for team_id in sorted(_reachable_teams(competition, by_id)):
+            certain = _reachable_with_certainty(team_id, competition, qualifying_commitments_by_team)
             commitments_by_team.setdefault(team_id, []).extend(
                 EuropeanCommitmentDate(
                     team_id=team_id,
                     date=resolved,
                     min_rest_days=competition.min_rest_days,
                     label=label,
+                    competition_id=competition.id,
+                    certain=certain,
                 )
                 for label, resolved in dated
             )
@@ -435,10 +513,14 @@ def build_main_tournament_rounds_for_display(
     return rounds, resolved_legs
 
 
-def resolve_european_commitments(
+def resolve_qualifying_commitments(
     competitions: list[Competition], season: Season
 ) -> tuple[dict[str, list[EuropeanCommitmentDate]], list[str]]:
-    """Resolve every team's cascade across every European competition given.
+    """Resolve every team's qualifying cascade across every European
+    competition given — `resolve_european_commitments` minus the main
+    tournament merge, split out so `resolve_main_tournament_commitments`
+    can consult each team's qualifying-cascade certainty (issue #93)
+    without recomputing it.
 
     `competitions` should be every `format == "european"` competition in
     the season, so a `drop_to_competition` pointer always has somewhere to
@@ -461,11 +543,7 @@ def resolve_european_commitments(
 
     Main tournament competitions (issue #79 — `Competition.is_main_tournament`)
     have no `european_rounds` of their own, so they never contribute an entry
-    point here; their commitments are resolved separately by
-    `resolve_main_tournament_commitments` and merged in below, keyed by the
-    same team ids this cascade walk already produced entries for (every team
-    reachable for a main tournament necessarily entered some qualifying
-    competition's rounds, or it wouldn't be reachable at all).
+    point here.
     """
     blackouts = set(season.blacked_out_dates)
     resolved_legs, warnings = resolve_all_legs(competitions, blackouts)
@@ -491,7 +569,27 @@ def resolve_european_commitments(
                 team_id, competition, by_id, resolved_legs
             )
 
-    main_commitments, main_warnings = resolve_main_tournament_commitments(competitions, season)
+    return commitments_by_team, warnings
+
+
+def resolve_european_commitments(
+    competitions: list[Competition], season: Season
+) -> tuple[dict[str, list[EuropeanCommitmentDate]], list[str]]:
+    """Resolve every team's cascade across every European competition given,
+    qualifying and main tournament alike.
+
+    `resolve_qualifying_commitments` does the qualifying-cascade walk;
+    `resolve_main_tournament_commitments` resolves each main tournament's
+    own dates and merges them in below, keyed by the same team ids the
+    qualifying walk already produced entries for (every team reachable for
+    a main tournament necessarily entered some qualifying competition's
+    rounds, or it wouldn't be reachable at all).
+    """
+    commitments_by_team, warnings = resolve_qualifying_commitments(competitions, season)
+
+    main_commitments, main_warnings = resolve_main_tournament_commitments(
+        competitions, season, commitments_by_team
+    )
     for team_id, commitments in main_commitments.items():
         commitments_by_team.setdefault(team_id, []).extend(commitments)
     warnings.extend(main_warnings)
@@ -529,5 +627,6 @@ __all__ = [
     "resolve_leg_date",
     "resolve_main_tournament_commitments",
     "resolve_main_tournament_dates",
+    "resolve_qualifying_commitments",
     "resolve_team_cascade",
 ]
