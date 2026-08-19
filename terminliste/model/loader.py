@@ -272,6 +272,7 @@ def validate_world(world: World) -> list[str]:
 
     errors.extend(_validate_european_cascade(world))
     errors.extend(_validate_competition_colors(world))
+    errors.extend(_validate_competition_short_names(world))
 
     for season in world.seasons.values():
         if season.end <= season.start:
@@ -480,6 +481,27 @@ def _validate_competition_colors(world: World) -> list[str]:
             errors.append(
                 f"competitions {', '.join(sorted(competition_ids))} all use color {color!r} — "
                 f"give each competition its own color"
+            )
+    return errors
+
+
+def _validate_competition_short_names(world: World) -> list[str]:
+    """Every competition must declare its own short label — the season
+    report's month calendar and every other cramped spot fall back to it
+    instead of the (often much longer) full name, so a missing one would
+    leave a cramped spot with nothing to show."""
+    errors: list[str] = []
+    by_short_name: dict[str, list[str]] = defaultdict(list)
+    for competition in world.competitions.values():
+        if competition.short_name is None:
+            errors.append(f"competition {competition.id!r} has no short_name set")
+            continue
+        by_short_name[competition.short_name].append(competition.id)
+    for short_name, competition_ids in sorted(by_short_name.items()):
+        if len(competition_ids) > 1:
+            errors.append(
+                f"competitions {', '.join(sorted(competition_ids))} all use short_name "
+                f"{short_name!r} — give each competition its own short_name"
             )
     return errors
 

@@ -105,6 +105,7 @@ class CupSchedule:
 
     competition_id: str
     competition_name: str
+    competition_short_name: str | None
     min_rest_days: int
     rounds: list[CupRoundPlacement] = field(default_factory=list)
 
@@ -155,6 +156,7 @@ def schedule_cup(competition: Competition, blackouts: set[date]) -> tuple[CupSch
         CupSchedule(
             competition_id=competition.id,
             competition_name=competition.name,
+            competition_short_name=competition.short_name,
             min_rest_days=competition.min_rest_days,
             rounds=placements,
         ),

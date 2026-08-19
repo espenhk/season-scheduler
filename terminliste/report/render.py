@@ -344,7 +344,11 @@ def _calendar_legend(world: World, competition_colors: dict[str, dict]) -> list[
     and reading the tags."""
     return sorted(
         (
-            {"name": competition.name, "color": competition_colors[competition.id]["fg"]}
+            {
+                "name": competition.name,
+                "short": competition.short_name,
+                "color": competition_colors[competition.id]["fg"],
+            }
             for competition in world.competitions.values()
             if competition.id in competition_colors
         ),
@@ -483,6 +487,7 @@ def _match_entries(
                 "round_index": match.round_index,
                 "competition_id": match.competition_id,
                 "competition_name": competition.name,
+                "competition_short": competition.short_name,
                 "comp_fg": comp_color["fg"],
                 "comp_bg": comp_color["bg"],
                 "home_club": home_club,
@@ -598,8 +603,16 @@ def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
         {
             "date_iso": day.isoformat(),
             "label": day.strftime("%A %d %B %Y"),
+            # Earliest kickoff first; an entry with no kickoff time at all
+            # (every cup/European entry, and a league match not yet assigned
+            # one) sorts after every timed one rather than arbitrarily first.
             "matches": sorted(
-                day_entries, key=lambda e: (e["competition_name"], e.get("home", e.get("team", "")))
+                day_entries,
+                key=lambda e: (
+                    e.get("kickoff_time") or "99:99",
+                    e["competition_name"],
+                    e.get("home", e.get("team", "")),
+                ),
             ),
         }
         for day, day_entries in sorted(by_day.items())
@@ -751,6 +764,7 @@ def _cup_entries(
                         "weekday": team_date.strftime("%a"),
                         "competition_id": schedule.competition_id,
                         "competition_name": schedule.competition_name,
+                        "competition_short": schedule.competition_short_name,
                         "comp_fg": comp_color["fg"],
                         "comp_bg": comp_color["bg"],
                         "round_name": placement.round_name,
@@ -889,6 +903,7 @@ def _european_entries(
                             "weekday": leg_date.strftime("%a"),
                             "competition_id": competition.id,
                             "competition_name": competition.name,
+                            "competition_short": competition.short_name,
                             "comp_fg": comp_color["fg"],
                             "comp_bg": comp_color["bg"],
                             "round_name": f"{round_.name} ({leg_label} leg)",

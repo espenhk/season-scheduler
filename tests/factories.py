@@ -34,6 +34,9 @@ from terminliste.rounds.cup_schedule import CupRoundPlacement, CupSchedule
 # comment for why `None` can't double as "derive one automatically".
 _AUTO_COLOR = object()
 
+# Same idea as `_AUTO_COLOR`, for `competition(short_name=...)`.
+_AUTO_SHORT_NAME = object()
+
 
 def venue(
     id: str,
@@ -89,10 +92,12 @@ def competition(
     final_round_kickoff_time: str = "18:00",
     kickoff_slots: list[str] | None = None,
     color: str | None = _AUTO_COLOR,  # type: ignore[assignment]
+    short_name: str | None = _AUTO_SHORT_NAME,  # type: ignore[assignment]
 ) -> Competition:
     return Competition(
         id=id,
         name=id,
+        short_name=(id[:3].upper() if short_name is _AUTO_SHORT_NAME else short_name),
         season=2026,
         gender=gender,
         format=format,
@@ -216,10 +221,12 @@ def cup_schedule(
     rounds: list[CupRoundPlacement],
     min_rest_days: int = 3,
     competition_name: str | None = None,
+    competition_short_name: str | None = None,
 ) -> CupSchedule:
     return CupSchedule(
         competition_id=competition_id,
         competition_name=competition_name or competition_id,
+        competition_short_name=competition_short_name or competition_name or competition_id,
         min_rest_days=min_rest_days,
         rounds=rounds,
     )

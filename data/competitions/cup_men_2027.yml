@@ -21,6 +21,7 @@
 #   - "en.wikipedia.org: 2026-27 Norwegian Football Cup (tournament starts 21-22 Aug 2026, final end of May 2027)"
 id: cup_men_2027
 name: NM Cupen (menn)
+short_name: "NM(m)"
 season: 2027
 gender: men
 format: cup

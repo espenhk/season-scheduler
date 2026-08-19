@@ -215,8 +215,11 @@
   .fx .vs { color: var(--muted); }
   .fx.paired { border-color: var(--good); background: #f1f9f4; }
   .comp-tag {
+    /* Short names (e.g. "NM(m)") carry their own deliberate case, so no
+       text-transform here — unlike a full competition name, which would
+       read fine either way. */
     font-size: 10px; padding: 1px 6px; border-radius: 10px;
-    background: #eeeee9; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em;
+    background: #eeeee9; color: var(--muted); letter-spacing: 0.03em;
   }
   /* Home = square, away = diamond, both filled with the club's own colour
      (data/clubs.yml). Fixed pixel sizes rather than a text glyph — a
@@ -360,7 +363,7 @@
       title="{{ match.venue }}">
   <span class="d">{{ match.weekday }} {{ match.date.strftime('%d/%m') }}{% if match.kickoff_time %} {{ match.kickoff_time }}{% endif %}</span>
   {% if show_competition %}
-  <span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}">{{ match.competition_name }}</span>
+  <span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span>
   {% endif %}
   <span class="swatch" style="background:{{ match.color }}" aria-hidden="true"></span>
   <span class="h" title="{{ match.home }}">{{ match.home_short }}</span>
@@ -377,7 +380,7 @@
 <span class="fx" data-clubs="{{ fixture.club_id }}" title="{{ fixture.venue_label }}">
   <span class="d">{{ fixture.weekday }} {{ fixture.date.strftime('%d/%m') }}</span>
   {% if show_competition %}
-  <span class="comp-tag" style="background:{{ fixture.comp_bg }};color:{{ fixture.comp_fg }}">{{ fixture.competition_name }}</span>
+  <span class="comp-tag" style="background:{{ fixture.comp_bg }};color:{{ fixture.comp_fg }}" title="{{ fixture.competition_name }}">{{ fixture.competition_short }}</span>
   {% endif %}
   {% if fixture.venue_type == 'home' %}
   <span class="swatch" style="background:{{ fixture.color }}" aria-hidden="true"></span>
@@ -395,7 +398,7 @@
 <span class="fx" data-clubs="{{ fixture.club_id }}" title="{{ fixture.venue_label }}">
   <span class="d">{{ fixture.weekday }} {{ fixture.date.strftime('%d/%m') }}</span>
   {% if show_competition %}
-  <span class="comp-tag" style="background:{{ fixture.comp_bg }};color:{{ fixture.comp_fg }}">{{ fixture.competition_name }}</span>
+  <span class="comp-tag" style="background:{{ fixture.comp_bg }};color:{{ fixture.comp_fg }}" title="{{ fixture.competition_name }}">{{ fixture.competition_short }}</span>
   {% endif %}
   {% if fixture.venue_type == 'home' %}
   <span class="swatch" style="background:{{ fixture.color }}" aria-hidden="true"></span>
@@ -417,7 +420,7 @@
    candidate option) from bloating the page. #}
 <div class="day-row"
      data-clubs="{{ (match.home_club ~ ' ' ~ match.away_club) if match.home_club is defined else match.club_id }}">
-  <span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}">{{ match.competition_name }}</span>
+  <span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span>
   {% if match.is_cup %}
   <span class="swatch{{ '-diamond' if match.venue_type == 'away' else ('-neutral' if match.venue_type == 'neutral' else '') }}"
         style="background:{{ match.color }}" aria-hidden="true"></span>
@@ -706,7 +709,7 @@
     {% if option.calendar_legend %}
     <div class="legend">
       {% for comp in option.calendar_legend %}
-      <span><span class="cal-dot" style="background:{{ comp.color }}" aria-hidden="true"></span>{{ comp.name }}</span>
+      <span><span class="cal-dot" style="background:{{ comp.color }}" aria-hidden="true"></span><b>{{ comp.short }}</b> {{ comp.name }}</span>
       {% endfor %}
     </div>
     {% endif %}
@@ -787,7 +790,7 @@
       {% if match.is_cup %}
       <tr class="fx-row" data-clubs="{{ match.club_id }}" data-competition="{{ match.competition_id }}">
         <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}</td>
-        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}">{{ match.competition_name }}</span></td>
+        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span></td>
         <td>
           {% if match.venue_type == 'home' %}
           <span class="swatch" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
@@ -805,7 +808,7 @@
       {% elif match.is_european %}
       <tr class="fx-row" data-clubs="{{ match.club_id }}" data-competition="{{ match.competition_id }}">
         <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}</td>
-        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}">{{ match.competition_name }}</span></td>
+        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span></td>
         <td>
           {% if match.venue_type == 'home' %}
           <span class="swatch" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
@@ -823,7 +826,7 @@
       {% else %}
       <tr class="fx-row" data-clubs="{{ match.home_club }} {{ match.away_club }}" data-competition="{{ match.competition_id }}">
         <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}{% if match.kickoff_time %} {{ match.kickoff_time }}{% endif %}</td>
-        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}">{{ match.competition_name }}</span></td>
+        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span></td>
         <td>
           <span class="swatch" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
           <span title="{{ match.home }}">{{ match.home_short }}</span>

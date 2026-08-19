@@ -16,6 +16,7 @@
 #   - "vg.no: NFF tar grep — flytter også kvinnens NM-finale til våren (women's final also moved to spring)"
 id: cup_women_2027
 name: NM Cupen (kvinner)
+short_name: "NM(k)"
 season: 2027
 gender: women
 format: cup

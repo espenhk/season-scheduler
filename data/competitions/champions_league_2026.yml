@@ -42,6 +42,7 @@
 # play-off), a hop that does land on another qualifying round.
 id: champions_league_2026
 name: UEFA Champions League qualifying
+short_name: "CL(q)"
 season: 2026
 gender: men
 format: european

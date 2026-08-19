@@ -575,6 +575,41 @@ def test_two_competitions_sharing_a_color_are_caught():
     assert any("comp_a" in e and "comp_b" in e and "#123456" in e for e in errors)
 
 
+def test_every_shipped_competition_has_a_distinct_short_name(world):
+    """The season report's month calendar and every other cramped spot show
+    a competition's short_name instead of its (often much longer) full
+    name."""
+    short_names = [c.short_name for c in world.competitions.values()]
+    assert all(short_name is not None for short_name in short_names)
+    assert len(short_names) == len(set(short_names))
+
+
+def test_competition_with_no_short_name_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    comp = f.competition("comp", ["t1"], short_name=None)
+    bad_world = f.world(clubs, [v], [comp])
+    errors = validate_world(bad_world)
+    assert any("comp" in e and "no short_name set" in e for e in errors)
+
+
+def test_two_competitions_sharing_a_short_name_are_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp_a = f.competition("comp_a", ["t1"], short_name="X")
+    comp_b = f.competition("comp_b", ["t2"], short_name="X")
+    bad_world = f.world(clubs, [v], [comp_a, comp_b])
+    errors = validate_world(bad_world)
+    assert any("comp_a" in e and "comp_b" in e and "'X'" in e for e in errors)
+
+
 def test_capacity_check_uses_a_tight_lower_bound_not_rounds_times_rest():
     """A season with just enough room for `(rounds - 1) * min_gap_days + 1`
     days should validate clean — the first round needs no rest before it, so

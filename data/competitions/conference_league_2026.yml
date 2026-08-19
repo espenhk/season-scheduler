@@ -21,6 +21,7 @@
 # and forced dates within one round.
 id: conference_league_2026
 name: UEFA Conference League qualifying
+short_name: "UECL(q)"
 season: 2026
 gender: men
 format: european

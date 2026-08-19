@@ -285,6 +285,14 @@ class Competition(BaseModel):
     gender: Gender
     format: CompetitionFormat = "league"
 
+    # This competition's short label — the season report falls back to
+    # `name` in the by-competition heading and the calendar legend, but
+    # every cramped spot (the month calendar's day detail, a fixture card's
+    # competition tag, the combined-list table) uses this instead. `None`
+    # for a competition that hasn't set one yet; `_validate_competition_short_names`
+    # in loader.py requires the shipped data to set one.
+    short_name: str | None = None
+
     # Issue #77: this competition's own colour for the season report's dots
     # and tags — a report-relevant fact declared in the data, not inferred or
     # cycled through a fixed palette, so the mapping from colour to

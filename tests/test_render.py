@@ -307,6 +307,7 @@ def test_match_entries_carry_short_names_and_club_ids_for_filtering():
     assert entry["away_club"] == "opp1"
     assert entry["color"] == "#112233"
     assert entry["away_color"] == "#778899"
+    assert entry["competition_short"] == comp_m.short_name
 
 
 def test_combined_calendar_interleaves_both_competitions_in_the_same_week():
@@ -349,6 +350,7 @@ def test_cup_entries_flatten_one_row_per_entered_team_per_round():
             )
         ],
         competition_name="NM Cup",
+        competition_short_name="NM",
     )
 
     entries = _cup_entries(world, [schedule], club_colors, competition_colors)
@@ -358,6 +360,7 @@ def test_cup_entries_flatten_one_row_per_entered_team_per_round():
     assert entry["is_cup"] is True
     assert entry["competition_id"] == "cup1"
     assert entry["competition_name"] == "NM Cup"
+    assert entry["competition_short"] == "NM"
     assert entry["round_name"] == "Round 1"
     assert entry["club_id"] == "club_a"
     assert entry["venue_type"] == "away"
@@ -421,6 +424,7 @@ def test_european_entries_flatten_one_row_per_entered_team_per_leg():
     # home_leg="second" -> the first leg is away for this team.
     assert first_leg_entry["venue_type"] == "away"
     assert first_leg_entry["comp_fg"] == "#111111"
+    assert first_leg_entry["competition_short"] == comp.short_name
 
     second_leg_entry = next(e for e in entries if e["date"] == date(2026, 8, 11))
     assert second_leg_entry["venue_type"] == "home"
@@ -575,6 +579,32 @@ def test_month_calendar_view_is_empty_for_no_entries():
     assert _month_calendar_view([]) == ([], [])
 
 
+def test_month_calendar_view_sorts_a_day_detail_by_kickoff_time():
+    """Tapping a day should show its games earliest kickoff first, not
+    grouped by competition name — a league match's `kickoff_time` is the
+    sort key; an entry with none (a cup/European entry, or a league match
+    not yet assigned one) sorts after every timed entry."""
+    entries = [
+        {
+            "date": date(2026, 3, 1), "competition_id": "topp", "competition_name": "Toppserien",
+            "comp_fg": "#8e44ad", "home": "C", "away": "D", "home_club": "club_c", "away_club": "club_d",
+            "kickoff_time": "18:00",
+        },
+        {
+            "date": date(2026, 3, 1), "competition_id": "elite", "competition_name": "Eliteserien",
+            "comp_fg": "#ca6f1e", "home": "A", "away": "B", "home_club": "club_a", "away_club": "club_b",
+            "kickoff_time": "14:00",
+        },
+        {
+            "date": date(2026, 3, 1), "competition_id": "cup", "competition_name": "NM Cup",
+            "comp_fg": "#c0392b", "club_id": "club_e", "team": "E",
+        },
+    ]
+    _, day_details = _month_calendar_view(entries)
+    assert [m["home"] for m in day_details[0]["matches"][:2]] == ["A", "C"]
+    assert day_details[0]["matches"][2]["competition_id"] == "cup"
+
+
 def test_render_report_includes_month_calendar_with_a_dot_and_tappable_day():
     world, season, comp_m, comp_w = _two_dual_clubs_world()
     matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
@@ -619,6 +649,26 @@ def test_render_report_month_calendar_carries_club_ids_and_a_color_legend():
     calendar_pane = rendered.split('class="cal-wrap view-pane" data-view="month-calendar"')[1].split("<h4>")[0]
     assert "elite" in calendar_pane
     assert '<span class="cal-dot" style="background:' in calendar_pane
+
+
+def test_render_report_month_calendar_day_detail_uses_the_competition_short_name():
+    """The month calendar's day-detail rows are the cramped spot this exists
+    for: the comp-tag shows the short name, with the full name still
+    reachable via a title tooltip."""
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    candidate = _candidate(world, season, matches, [])
+    result = SolverResult(candidates=[candidate], solver="test")
+
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = render_report(world, season, result, Path(tmp) / "out.html")
+        rendered = out.read_text(encoding="utf-8")
+
+    day_detail = rendered.split('data-date="2026-06-06" hidden>')[1].split("</div>\n    </div>")[0]
+    assert f'title="{comp_m.name}">{comp_m.short_name}<' in day_detail
 
 
 # -- search stats (issue #34) -------------------------------------------------

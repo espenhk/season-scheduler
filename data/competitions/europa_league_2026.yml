@@ -33,6 +33,7 @@
 # this project's scope the same way it is in champions_league_2026.yml.
 id: europa_league_2026
 name: UEFA Europa League qualifying
+short_name: "EL(q)"
 season: 2026
 gender: men
 format: european
