@@ -47,6 +47,15 @@ gender: men
 format: european
 movable: false
 
+# Season report colour (issue #77) — the three UEFA competitions share one
+# blue hue family (darkest here, lightest for conference_league_2026) so a
+# reader immediately reads all three as "European". Pushed noticeably
+# darker than a simple three-way split of the hue would give (review:
+# #154360 sat too close to europa_league_2026's #1f618d to tell apart as a
+# 7px calendar dot) so all three stay individually identifiable at that size,
+# not just as a family.
+color: "#0b2c40"
+
 team_count: 2
 teams:
   - bodo_glimt_m

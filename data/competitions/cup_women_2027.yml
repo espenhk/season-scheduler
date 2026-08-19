@@ -20,6 +20,9 @@ season: 2027
 gender: women
 format: cup
 
+# Season report colour (issue #77) — see cup_men_2027.yml's comment.
+color: "#ad1457"
+
 # NFF-fixed, not scheduler-controlled — see cup_men_2027.yml and issue #31.
 movable: false
 

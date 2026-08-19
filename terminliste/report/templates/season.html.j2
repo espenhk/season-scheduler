@@ -245,10 +245,42 @@
   .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin: 14px 0 0; align-items: center; }
   footer { margin-top: 40px; color: var(--muted); font-size: 12.5px; }
 
+  /* -- month calendar (issue #77) -- */
+  .month { margin-top: 26px; }
+  .month h4 { margin: 0 0 8px; font-size: 15px; }
+  .month-grid { display: flex; flex-direction: column; gap: 3px; min-width: 420px; }
+  .month-grid-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+  .month-grid-head {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
+    text-align: center; padding-bottom: 2px;
+  }
+  .cal-day {
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    gap: 4px; min-height: 52px; padding: 6px 2px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--panel); color: var(--ink); font: inherit; cursor: pointer;
+  }
+  .cal-day:hover, .cal-day:focus-visible { border-color: var(--accent); outline: none; }
+  .cal-day.selected { border-color: var(--accent); background: #eaf2f8; }
+  .cal-day.out-month { color: var(--muted); background: #fbfbfa; }
+  .cal-daynum { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .cal-dots { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; min-height: 8px; }
+  .cal-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
+  .day-details { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .day-detail-empty { color: var(--muted); font-size: 13.5px; }
+  .day-detail .rlabel { margin-bottom: 8px; }
+  .day-detail .rlabel b { display: block; color: var(--ink); font-size: 14px; }
+  .day-detail .fixtures { display: flex; flex-direction: column; }
+  .day-row { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .day-row:last-child { border-bottom: none; }
+  .day-row .vs { color: var(--muted); margin: 0 1px; }
+  .day-row .d { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
   @media (max-width: 480px) {
     .round { grid-template-columns: 1fr; gap: 4px; }
     .fx { white-space: normal; }
     .fairness-bar { grid-template-columns: 110px 1fr 24px; }
+    .month-grid { min-width: 0; }
+    .cal-day { min-height: 40px; padding: 4px 1px; }
   }
 </style>
 </head>
@@ -375,6 +407,33 @@
   <span class="h" title="{{ fixture.team_full }}">{{ fixture.team }}</span>
   <span class="vs">v {{ fixture.opponent }}</span>
 </span>
+{% endmacro %}
+
+{% macro day_row(match) %}
+{# Compact one-line row for the month calendar's day-detail blocks (issue
+   #77) — a drill-down list, not the primary view, so it skips the full
+   fx_card/cup_fx_card/european_fx_card markup (date text, venue tooltip) to
+   keep the per-day blocks the report duplicates three times over (once per
+   candidate option) from bloating the page. #}
+<div class="day-row"
+     data-clubs="{{ (match.home_club ~ ' ' ~ match.away_club) if match.home_club is defined else match.club_id }}">
+  <span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}">{{ match.competition_name }}</span>
+  {% if match.is_cup %}
+  <span class="swatch{{ '-diamond' if match.venue_type == 'away' else ('-neutral' if match.venue_type == 'neutral' else '') }}"
+        style="background:{{ match.color }}" aria-hidden="true"></span>
+  <span>{{ match.team }}</span><span class="vs">v TBD</span>
+  {% elif match.is_european %}
+  <span class="swatch{{ '-diamond' if match.venue_type == 'away' else '' }}"
+        style="background:{{ match.color }}{{ ';opacity:0.4' if match.venue_type == 'unknown' else '' }}" aria-hidden="true"></span>
+  <span>{{ match.team }}</span><span class="vs">v {{ match.opponent }}</span>
+  {% else %}
+  <span class="swatch" style="background:{{ match.color }}" aria-hidden="true"></span>
+  <span>{{ match.home_short }}</span><span class="vs">v</span>
+  <span class="swatch-diamond" style="background:{{ match.away_color }}" aria-hidden="true"></span>
+  <span>{{ match.away_short }}</span>
+  {% endif %}
+  {% if match.kickoff_time %}<span class="d">{{ match.kickoff_time }}</span>{% endif %}
+</div>
 {% endmacro %}
 
 {% for option in options %}
@@ -557,6 +616,7 @@
   <div class="controls">
     <div class="view-toggle">
       <button type="button" class="view-btn" data-view="by-competition">By competition</button>
+      <button type="button" class="view-btn" data-view="month-calendar">Month calendar</button>
       <button type="button" class="view-btn" data-view="combined-calendar">Combined · calendar</button>
       <button type="button" class="view-btn" data-view="combined-list">Combined · list</button>
     </div>
@@ -635,6 +695,62 @@
       {% endif %}
     </div>
   {% endfor %}
+  </div>
+
+  <div class="cal-wrap view-pane" data-view="month-calendar" hidden>
+    <div class="desc" style="margin-top:8px">
+      One dot per competition with something on that day (a match, cup round, or European leg) —
+      tap a day to see its games below.
+    </div>
+    {% if option.month_calendar %}
+    {% if option.calendar_legend %}
+    <div class="legend">
+      {% for comp in option.calendar_legend %}
+      <span><span class="cal-dot" style="background:{{ comp.color }}" aria-hidden="true"></span>{{ comp.name }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% for month in option.month_calendar %}
+    <div class="month">
+      <h4>{{ month.label }}</h4>
+      <div class="month-grid">
+        <div class="month-grid-row month-grid-head">
+          <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+        </div>
+        {% for week in month.weeks %}
+        <div class="month-grid-row">
+          {% for day in week %}
+          <button type="button" class="cal-day {{ '' if day.in_month else 'out-month' }}"
+                  data-date="{{ day.date_iso }}" aria-pressed="false"
+                  aria-label="{{ day.date_iso }}{% if day.dots %}: {{ day.dots | map(attribute='name') | join(', ') }}{% endif %}">
+            <span class="cal-daynum">{{ day.day_num }}</span>
+            <span class="cal-dots">
+              {% for dot in day.dots %}
+              <span class="cal-dot" data-clubs="{{ dot.club_ids | join(' ') }}"
+                    style="background:{{ dot.color }}" title="{{ dot.name }}" aria-hidden="true"></span>
+              {% endfor %}
+            </span>
+          </button>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+    <div class="day-details">
+      <div class="day-detail-empty">Tap a day above to see its games here.</div>
+      {% for day in option.month_calendar_details %}
+      <div class="day-detail" data-date="{{ day.date_iso }}" hidden>
+        <div class="rlabel"><b>{{ day.label }}</b></div>
+        <div class="fixtures">
+          {% for match in day.matches %}{{ day_row(match) }}{% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="desc">Nothing scheduled yet.</div>
+    {% endif %}
   </div>
 
   <div class="cal-wrap view-pane" data-view="combined-calendar" hidden>
@@ -808,6 +924,11 @@
         var anyVisible = comp.querySelector('.round:not(.club-hidden)');
         comp.classList.toggle('club-hidden', !anyVisible);
       });
+      // Same rollup for the month calendar's day-detail blocks — a club's
+      // dots and rows carry `data-clubs` too (via the generic sweep above),
+      // so a day with nothing for the selected club collapses rather than
+      // showing an empty heading (issue #77 review).
+      updateDayDetailEmptyState();
       if (value && clubHeadlines[value]) {
         renderHeadlines(clubHeadlines[value]);
         if (headlineScope) {
@@ -837,6 +958,66 @@
     if (clubSelect) {
       clubSelect.addEventListener('change', applyClubFilter);
     }
+
+    // Month calendar: tapping a day cell shows that day's games in the
+    // per-day detail blocks rendered below the grid (issue #77) — every
+    // block starts hidden, and a tap shows the one matching the clicked
+    // date while re-hiding whichever was shown before.
+    var calDays = panel.querySelectorAll('.cal-day[data-date]');
+    var dayDetails = panel.querySelectorAll('.day-detail[data-date]');
+    var dayDetailEmpty = panel.querySelector('.day-detail-empty');
+
+    // Re-derives whether the currently *selected* day still has anything to
+    // show once the club filter (which hides individual `.day-row`s, same
+    // as it hides `.fx` cards elsewhere) has run — a day with nothing left
+    // for the chosen club collapses to the empty-state message instead of
+    // showing a bare date heading. Shared between the day-tap handler and
+    // `applyClubFilter` since either one can change what's visible.
+    function updateDayDetailEmptyState() {
+      var visibleDetail = null;
+      dayDetails.forEach(function (detail) {
+        var rows = detail.querySelectorAll('.day-row[data-clubs]');
+        if (rows.length) {
+          var anyRowVisible = detail.querySelector('.day-row[data-clubs]:not(.club-hidden)');
+          detail.classList.toggle('club-hidden', !anyRowVisible);
+        }
+        if (!detail.hidden && !detail.classList.contains('club-hidden')) {
+          visibleDetail = detail;
+        }
+      });
+      if (!dayDetailEmpty) return visibleDetail;
+      var daySelected = panel.querySelector('.cal-day.selected');
+      if (!daySelected) {
+        dayDetailEmpty.hidden = false;
+        dayDetailEmpty.textContent = 'Tap a day above to see its games here.';
+      } else if (visibleDetail) {
+        dayDetailEmpty.hidden = true;
+      } else {
+        dayDetailEmpty.hidden = false;
+        dayDetailEmpty.textContent = 'No games on this day.';
+      }
+      return visibleDetail;
+    }
+
+    calDays.forEach(function (dayBtn) {
+      dayBtn.addEventListener('click', function () {
+        var chosenDate = dayBtn.dataset.date;
+        calDays.forEach(function (other) {
+          var isSelected = other.dataset.date === chosenDate;
+          other.classList.toggle('selected', isSelected);
+          other.setAttribute('aria-pressed', String(isSelected));
+        });
+        dayDetails.forEach(function (detail) {
+          detail.hidden = detail.dataset.date !== chosenDate;
+        });
+        var shownDetail = updateDayDetailEmptyState();
+        // The calendar can span well over a year (cup rounds run into next
+        // spring), so the shared detail block sits far below a day tapped in
+        // an early month — scroll it into view rather than leaving the
+        // reader to hunt for it themselves.
+        (shownDetail || dayDetailEmpty).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+    });
 
     setView(viewButtons[0].dataset.view);
     applyClubFilter();

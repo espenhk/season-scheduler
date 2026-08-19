@@ -4,6 +4,12 @@ season: 2026
 gender: men
 format: league
 
+# Season report colour (issue #77) — the men's top flight's own dot/tag on
+# the calendar and combined views, kept distinct from every other
+# competition (terminliste/model/loader.py::_validate_competition_colors
+# enforces that).
+color: "#ca6f1e"
+
 # This project generates and dates Eliteserien's fixtures — issue #31's
 # "scheduler-controlled" case, as opposed to a cup or European competition,
 # whose real-world dates the solver only schedules around (movable: false —

@@ -14,12 +14,15 @@ import pytest
 from terminliste.report.render import (
     _club_headlines,
     _cup_entries,
+    _day_dots,
     _entity_counts,
     _european_entries,
     _fairness_rows,
     _json_attr,
     _match_entries,
+    _month_calendar_view,
     _search_stats_view,
+    _tint,
     render_report,
 )
 from terminliste.scoring.base import ConstraintResult, EvalContext, Event, evaluate
@@ -476,6 +479,146 @@ def test_combined_views_include_european_rounds_alongside_league_matches():
 
     assert "Union Saint-Gilloise" in calendar_section
     assert "Union Saint-Gilloise" in list_section
+
+
+# -- month calendar (issue #77) -------------------------------------------
+
+
+def test_tint_lightens_a_hex_color_toward_white():
+    assert _tint("#000000", factor=0.5) == "#808080"
+    assert _tint("#000000", factor=1.0) == "#ffffff"
+
+
+def test_day_dots_deduplicates_multiple_entries_from_the_same_competition():
+    """Two Eliteserien matches on the same day still show one dot — issue
+    #77 asks for "only one dot per league per day" — but the dot still
+    collects every club that played, for the club filter (issue #77
+    review)."""
+    entries = [
+        {"competition_id": "elite", "competition_name": "Eliteserien", "comp_fg": "#ca6f1e",
+         "home_club": "club_a", "away_club": "club_b"},
+        {"competition_id": "elite", "competition_name": "Eliteserien", "comp_fg": "#ca6f1e",
+         "home_club": "club_c", "away_club": "club_d"},
+        {"competition_id": "topp", "competition_name": "Toppserien", "comp_fg": "#8e44ad",
+         "home_club": "club_a", "away_club": "club_e"},
+    ]
+    assert _day_dots(entries) == [
+        {"name": "Eliteserien", "color": "#ca6f1e", "club_ids": ["club_a", "club_b", "club_c", "club_d"]},
+        {"name": "Toppserien", "color": "#8e44ad", "club_ids": ["club_a", "club_e"]},
+    ]
+
+
+def test_day_dots_reads_club_id_off_cup_and_european_entries():
+    """The other two combined-view entry shapes (cup, European) carry
+    `club_id` rather than `home_club`/`away_club` — `_day_dots` must read
+    whichever one an entry actually has."""
+    entries = [
+        {"competition_id": "cup", "competition_name": "NM Cup", "comp_fg": "#c0392b", "club_id": "club_a"},
+        {"competition_id": "cl", "competition_name": "Champions League", "comp_fg": "#0b2c40", "club_id": "club_b"},
+    ]
+    dots = {d["name"]: d["club_ids"] for d in _day_dots(entries)}
+    assert dots == {"NM Cup": ["club_a"], "Champions League": ["club_b"]}
+
+
+def test_month_calendar_view_builds_a_full_month_grid_and_day_details():
+    entries = [
+        {
+            "date": date(2026, 3, 1),  # a Sunday
+            "competition_id": "elite",
+            "competition_name": "Eliteserien",
+            "comp_fg": "#ca6f1e",
+            "home": "A",
+            "away": "B",
+            "home_club": "club_a",
+            "away_club": "club_b",
+        },
+    ]
+    months, day_details = _month_calendar_view(entries)
+
+    assert len(months) == 1
+    month = months[0]
+    assert month["label"] == "March 2026"
+    assert all(len(week) == 7 for week in month["weeks"])  # Monday-first, full rows
+    matched = [day for week in month["weeks"] for day in week if day["date_iso"] == "2026-03-01"]
+    assert len(matched) == 1
+    assert matched[0]["in_month"] is True
+    assert matched[0]["dots"] == [{"name": "Eliteserien", "color": "#ca6f1e", "club_ids": ["club_a", "club_b"]}]
+
+    assert len(day_details) == 1
+    assert day_details[0]["date_iso"] == "2026-03-01"
+    assert day_details[0]["matches"] == entries
+
+
+def test_month_calendar_view_spans_multiple_months_and_pads_out_month_days():
+    entries = [
+        {"date": date(2026, 3, 31), "competition_id": "elite", "competition_name": "Eliteserien",
+         "comp_fg": "#ca6f1e", "home": "A", "away": "B", "home_club": "club_a", "away_club": "club_b"},
+        {"date": date(2026, 4, 1), "competition_id": "topp", "competition_name": "Toppserien",
+         "comp_fg": "#8e44ad", "home": "C", "away": "D", "home_club": "club_c", "away_club": "club_d"},
+    ]
+    months, day_details = _month_calendar_view(entries)
+
+    assert [m["label"] for m in months] == ["March 2026", "April 2026"]
+    assert len(day_details) == 2
+    # 1 April also shows up as an out-of-month padding cell at the tail of
+    # March's grid, carrying the same dot — but only one day_details entry.
+    march_padding = [
+        day for week in months[0]["weeks"] for day in week if day["date_iso"] == "2026-04-01"
+    ]
+    assert march_padding and march_padding[0]["in_month"] is False
+    assert march_padding[0]["dots"] == [
+        {"name": "Toppserien", "color": "#8e44ad", "club_ids": ["club_c", "club_d"]}
+    ]
+
+
+def test_month_calendar_view_is_empty_for_no_entries():
+    assert _month_calendar_view([]) == ([], [])
+
+
+def test_render_report_includes_month_calendar_with_a_dot_and_tappable_day():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    candidate = _candidate(world, season, matches, [])
+    result = SolverResult(candidates=[candidate], solver="test")
+
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = render_report(world, season, result, Path(tmp) / "out.html")
+        rendered = out.read_text(encoding="utf-8")
+
+    assert "Month calendar" in rendered
+    assert 'data-view="month-calendar"' in rendered
+    assert 'data-date="2026-06-06"' in rendered
+    assert 'class="cal-dot"' in rendered
+
+
+def test_render_report_month_calendar_carries_club_ids_and_a_color_legend():
+    """Issue #77 review: the club filter (`applyClubFilter` in
+    season.html.j2) sweeps every `[data-clubs]` element in the panel, so the
+    calendar's dots and day-detail rows need that attribute too, or
+    filtering by club would leave the calendar showing everyone's games."""
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    candidate = _candidate(world, season, matches, [])
+    result = SolverResult(candidates=[candidate], solver="test")
+
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = render_report(world, season, result, Path(tmp) / "out.html")
+        rendered = out.read_text(encoding="utf-8")
+
+    assert 'class="cal-dot" data-clubs="club_a opp1"' in rendered
+    assert 'class="day-row"' in rendered
+    assert 'data-clubs="club_a opp1"' in rendered
+    # The colour legend names the competition next to a swatch of its colour
+    # (factories.competition() sets `name=id`, so "elite" is the real name here).
+    calendar_pane = rendered.split('class="cal-wrap view-pane" data-view="month-calendar"')[1].split("<h4>")[0]
+    assert "elite" in calendar_pane
+    assert '<span class="cal-dot" style="background:' in calendar_pane
 
 
 # -- search stats (issue #34) -------------------------------------------------

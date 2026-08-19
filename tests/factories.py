@@ -30,6 +30,10 @@ from terminliste.model.schema import (
 )
 from terminliste.rounds.cup_schedule import CupRoundPlacement, CupSchedule
 
+# Sentinel default for `competition(color=...)` — see that function's own
+# comment for why `None` can't double as "derive one automatically".
+_AUTO_COLOR = object()
+
 
 def venue(
     id: str,
@@ -84,6 +88,7 @@ def competition(
     end: date | None = None,
     final_round_kickoff_time: str = "18:00",
     kickoff_slots: list[str] | None = None,
+    color: str | None = _AUTO_COLOR,  # type: ignore[assignment]
 ) -> Competition:
     return Competition(
         id=id,
@@ -106,6 +111,13 @@ def competition(
         end=end,
         final_round_kickoff_time=final_round_kickoff_time,
         kickoff_slots=kickoff_slots or ["14:00", "18:00", "20:00"],
+        # `color=None` must stay meaningful (a test can deliberately build a
+        # colorless competition), so the "derive a default" case needs its
+        # own sentinel rather than overloading None — derived from `id` so
+        # two different competitions built with no explicit color still get
+        # different ones, and a test world with several of them stays valid
+        # under `_validate_competition_colors` (issue #77 review).
+        color=(f"#{abs(hash(id)) % 0xFFFFFF:06x}" if color is _AUTO_COLOR else color),
     )
 
 

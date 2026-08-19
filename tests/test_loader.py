@@ -521,6 +521,60 @@ def test_calendar_capacity_uses_the_competitions_own_narrower_window():
     assert errors
 
 
+def test_every_shipped_competition_has_a_distinct_color(world):
+    """Issue #77: the season report's calendar dots need one colour per
+    competition, distinct enough to tell competitions apart at a glance."""
+    colors = [c.color for c in world.competitions.values()]
+    assert all(color is not None for color in colors)
+    assert len(colors) == len(set(colors))
+
+
+def test_competition_color_rejects_non_hex_values():
+    from terminliste.model.schema import Competition
+
+    with pytest.raises(ValueError, match="hex code"):
+        Competition(
+            id="comp", name="comp", season=2026, gender="men",
+            team_count=1, teams=["t1"], color="orange",
+        )
+
+
+def test_competition_color_is_lowercased():
+    from terminliste.model.schema import Competition
+
+    comp = Competition(
+        id="comp", name="comp", season=2026, gender="men",
+        team_count=1, teams=["t1"], color="#ABCDEF",
+    )
+    assert comp.color == "#abcdef"
+
+
+def test_competition_with_no_color_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    comp = f.competition("comp", ["t1"], color=None)
+    bad_world = f.world(clubs, [v], [comp])
+    errors = validate_world(bad_world)
+    assert any("comp" in e and "no color set" in e for e in errors)
+
+
+def test_two_competitions_sharing_a_color_are_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp_a = f.competition("comp_a", ["t1"], color="#123456")
+    comp_b = f.competition("comp_b", ["t2"], color="#123456")
+    bad_world = f.world(clubs, [v], [comp_a, comp_b])
+    errors = validate_world(bad_world)
+    assert any("comp_a" in e and "comp_b" in e and "#123456" in e for e in errors)
+
+
 def test_capacity_check_uses_a_tight_lower_bound_not_rounds_times_rest():
     """A season with just enough room for `(rounds - 1) * min_gap_days + 1`
     days should validate clean — the first round needs no rest before it, so

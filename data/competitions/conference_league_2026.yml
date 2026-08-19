@@ -26,6 +26,10 @@ gender: men
 format: european
 movable: false
 
+# Season report colour (issue #77) — see champions_league_2026.yml's
+# comment: same blue family, lightest shade.
+color: "#3498db"
+
 team_count: 2
 teams:
   - brann_m

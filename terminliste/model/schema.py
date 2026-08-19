@@ -285,6 +285,24 @@ class Competition(BaseModel):
     gender: Gender
     format: CompetitionFormat = "league"
 
+    # Issue #77: this competition's own colour for the season report's dots
+    # and tags — a report-relevant fact declared in the data, not inferred or
+    # cycled through a fixed palette, so the mapping from colour to
+    # competition is stable across renders and the loader can catch two
+    # competitions accidentally sharing one (see `_validate_competition_colors`
+    # in loader.py). `None` for a competition that hasn't set one yet; the
+    # report falls back to a neutral grey until it does.
+    color: str | None = None
+
+    @field_validator("color")
+    @classmethod
+    def _color_is_hex(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", v):
+            raise ValueError(f"competition color {v!r} must be a 6-digit hex code, e.g. '#c0392b'")
+        return v.lower()
+
     # Issue #31: whether the solver is free to place this competition's
     # fixtures (`True`, the league default) or must treat its dates as a
     # given to schedule *around* (`False` — every cup and european

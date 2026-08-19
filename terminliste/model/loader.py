@@ -10,6 +10,7 @@ venue id surfaces as one clear message from `cli.py validate` instead of a
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -270,6 +271,7 @@ def validate_world(world: World) -> list[str]:
         errors.extend(_validate_european_rounds(competition))
 
     errors.extend(_validate_european_cascade(world))
+    errors.extend(_validate_competition_colors(world))
 
     for season in world.seasons.values():
         if season.end <= season.start:
@@ -458,6 +460,27 @@ def _validate_european_cascade(world: World) -> list[str]:
                     f"{round_.drop_to_competition!r} round {round_.drop_to_round!r}, which does "
                     f"not exist there"
                 )
+    return errors
+
+
+def _validate_competition_colors(world: World) -> list[str]:
+    """Issue #77: every competition must declare its own report colour, and
+    no two competitions may share exactly the same one — two competitions
+    with the same colour would be indistinguishable as dots on the season
+    report's month calendar."""
+    errors: list[str] = []
+    by_color: dict[str, list[str]] = defaultdict(list)
+    for competition in world.competitions.values():
+        if competition.color is None:
+            errors.append(f"competition {competition.id!r} has no color set")
+            continue
+        by_color[competition.color].append(competition.id)
+    for color, competition_ids in sorted(by_color.items()):
+        if len(competition_ids) > 1:
+            errors.append(
+                f"competitions {', '.join(sorted(competition_ids))} all use color {color!r} — "
+                f"give each competition its own color"
+            )
     return errors
 
 

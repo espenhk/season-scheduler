@@ -10,6 +10,7 @@ losing, then the calendar itself.
 
 from __future__ import annotations
 
+import calendar
 import html
 import json
 from collections import defaultdict
@@ -28,20 +29,22 @@ from ..solvers.base import Candidate, SearchStats, SolverResult
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
-# One (text, background) pair per competition, cycled in sorted-id order so
-# the assignment is stable within a render — used to colour-code the league
-# tag in the combined calendar/list views (issue #61) so a reader can tell
-# Eliteserien, Toppserien and each cup apart at a glance. Kept out of the
-# data files: it's a report-presentation detail, not something a competition
-# needs to declare about itself.
-_COMPETITION_PALETTE = [
-    {"fg": "#2471a3", "bg": "#eaf2f8"},  # blue
-    {"fg": "#8e44ad", "bg": "#f5eef8"},  # purple
-    {"fg": "#b9770e", "bg": "#fdf6ea"},  # amber
-    {"fg": "#117864", "bg": "#e8f6f3"},  # teal
-    {"fg": "#a04000", "bg": "#fdf2e9"},  # rust
-]
+# Fallback (text, background) pair for a competition that hasn't declared its
+# own `color` (data/competitions/*.yml — issue #77; `_validate_competition_colors`
+# in model/loader.py catches this for the shipped data, but test factories and
+# ad-hoc `World`s built without going through the loader can still lack one).
 _DEFAULT_COMP_COLOR = {"fg": "var(--muted)", "bg": "var(--line)"}
+
+
+def _tint(hex_color: str, factor: float = 0.85) -> str:
+    """Lighten a hex colour by blending it toward white, so a competition's
+    own report colour (`Competition.color`) can double as both the dot/text
+    foreground and a matching light tag background, without the data file
+    having to declare both."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b = (int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+    r, g, b = (round(c + (255 - c) * factor) for c in (r, g, b))
+    return f"#{r:02x}{g:02x}{b:02x}"
 
 
 def _json_attr(value: object) -> str:
@@ -159,6 +162,8 @@ def _build_option(
     combined_entries = entries + cup_entries + european_entries
     headlines = _headlines(world, candidate)
     club_headlines = _club_headlines(world, candidate, dual_club_ids)
+    month_calendar, month_calendar_details = _month_calendar_view(combined_entries)
+    calendar_legend = _calendar_legend(world, competition_colors)
     return {
         "label": candidate.label,
         "seed": candidate.seed,
@@ -190,6 +195,9 @@ def _build_option(
         ),
         "combined_calendar": _combined_calendar_view(combined_entries),
         "combined_list": _combined_list_view(combined_entries),
+        "month_calendar": month_calendar,
+        "month_calendar_details": month_calendar_details,
+        "calendar_legend": calendar_legend,
     }
 
 
@@ -315,12 +323,33 @@ def _entity_counts(world: World, result: ConstraintResult) -> list[dict]:
 
 
 def _competition_colors(world: World) -> dict[str, dict]:
-    """One (text, background) colour pair per competition id, stable within a
-    render — see `_COMPETITION_PALETTE` above."""
+    """One (text, background) colour pair per competition id, derived from
+    each competition's own `color` (issue #77) rather than a cycled palette —
+    the background is a light tint of the same hue (`_tint`) so a
+    competition's calendar dot and its combined-view tag read as the same
+    colour. Omits a competition with no `color` set; callers fall back to
+    `_DEFAULT_COMP_COLOR`."""
     return {
-        competition_id: _COMPETITION_PALETTE[i % len(_COMPETITION_PALETTE)]
-        for i, competition_id in enumerate(sorted(world.competitions))
+        competition.id: {"fg": competition.color, "bg": _tint(competition.color)}
+        for competition in world.competitions.values()
+        if competition.color
     }
+
+
+def _calendar_legend(world: World, competition_colors: dict[str, dict]) -> list[dict]:
+    """Competition name -> dot colour, for the month calendar's colour key
+    (issue #77 review) — `title` on the dots themselves only surfaces on
+    desktop hover, no help on the phone this view targets, so the legend is
+    the only way a reader learns what a colour means without tapping a day
+    and reading the tags."""
+    return sorted(
+        (
+            {"name": competition.name, "color": competition_colors[competition.id]["fg"]}
+            for competition in world.competitions.values()
+            if competition.id in competition_colors
+        ),
+        key=lambda row: row["name"],
+    )
 
 
 def _headlines(world: World, candidate: Candidate) -> list[dict]:
@@ -535,6 +564,101 @@ def _combined_list_view(entries: list[dict]) -> list[dict]:
         entries,
         key=lambda e: (e["date"], e["competition_id"], e.get("home", e.get("team", ""))),
     )
+
+
+def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
+    """A month-grid calendar (issue #77): one cell per day, showing at most
+    one dot per competition that has something on that day (a match, cup
+    round placement, or European leg), plus that day's full entry list —
+    rendered once per date and referenced from the grid by date so the same
+    markup isn't duplicated for a day that appears as both an in-month cell
+    in one month and a padding cell in the next.
+
+    Returns `(months, day_details)`: `months` is the grid itself (one entry
+    per calendar month spanned by `entries`, each a list of Monday-first
+    weeks); `day_details` is every date that has at least one entry, sorted
+    chronologically, for the template to render as hidden per-day blocks
+    that a tap on the matching cell reveals.
+    """
+    if not entries:
+        return [], []
+
+    by_day: dict[date, list[dict]] = defaultdict(list)
+    for entry in entries:
+        by_day[entry["date"]].append(entry)
+
+    months: list[dict] = []
+    cursor = date(min(by_day).year, min(by_day).month, 1)
+    last = date(max(by_day).year, max(by_day).month, 1)
+    while cursor <= last:
+        months.append(_month_grid(cursor, by_day))
+        cursor = date(cursor.year + 1, 1, 1) if cursor.month == 12 else date(cursor.year, cursor.month + 1, 1)
+
+    day_details = [
+        {
+            "date_iso": day.isoformat(),
+            "label": day.strftime("%A %d %B %Y"),
+            "matches": sorted(
+                day_entries, key=lambda e: (e["competition_name"], e.get("home", e.get("team", "")))
+            ),
+        }
+        for day, day_entries in sorted(by_day.items())
+    ]
+    return months, day_details
+
+
+def _month_grid(month_start: date, by_day: dict[date, list[dict]]) -> dict:
+    """One calendar month's Monday-first weeks, each day carrying its own
+    deduped competition dots (`_day_dots`) — padding days from the
+    neighbouring month are included (`in_month=False`) so every week is a
+    full row, but their dots still resolve from the same `by_day` map."""
+    weeks = []
+    for week in calendar.Calendar(firstweekday=0).monthdatescalendar(month_start.year, month_start.month):
+        weeks.append(
+            [
+                {
+                    "date_iso": day.isoformat(),
+                    "day_num": day.day,
+                    "in_month": day.month == month_start.month,
+                    "dots": _day_dots(by_day.get(day, [])),
+                }
+                for day in week
+            ]
+        )
+    return {"label": month_start.strftime("%B %Y"), "weeks": weeks}
+
+
+def _day_dots(day_entries: list[dict]) -> list[dict]:
+    """One dot per competition present on the day — name/colour come from the
+    first entry seen, since every entry for the same competition on the same
+    day carries the same `comp_fg`/`competition_name` anyway (issue #77:
+    "only one dot per league per day" even when several of that
+    competition's matches fall on it). `club_ids` is the union of every club
+    touching that competition that day, so the template can put it on the
+    dot's own `data-clubs` — without it, the season report's club filter
+    (`applyClubFilter` in season.html.j2) would have no way to reach the
+    calendar's dots the way it already reaches every other view's cards."""
+    names: dict[str, str] = {}
+    colors: dict[str, str] = {}
+    club_ids: dict[str, set[str]] = defaultdict(set)
+    for entry in day_entries:
+        competition_id = entry["competition_id"]
+        names.setdefault(competition_id, entry["competition_name"])
+        colors.setdefault(competition_id, entry["comp_fg"])
+        club_ids[competition_id].update(_entry_club_ids(entry))
+    return [
+        {"name": names[cid], "color": colors[cid], "club_ids": sorted(club_ids[cid])}
+        for cid in sorted(names, key=lambda cid: names[cid])
+    ]
+
+
+def _entry_club_ids(entry: dict) -> set[str]:
+    """The club id(s) a combined-view entry belongs to, regardless of which
+    of the three entry shapes it is: a league match carries `home_club`/
+    `away_club`, a cup or European entry carries `club_id`."""
+    if "home_club" in entry:
+        return {entry["home_club"], entry["away_club"]}
+    return {entry["club_id"]}
 
 
 def _cup_views(

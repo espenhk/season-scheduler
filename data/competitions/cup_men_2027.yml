@@ -25,6 +25,11 @@ season: 2027
 gender: men
 format: cup
 
+# Season report colour (issue #77) — its own colour, distinct from both
+# leagues and from cup_women_2027's, so the cup calendar dot is
+# unmistakably its own competition rather than reusing Eliteserien's.
+color: "#c0392b"
+
 # NFF fixes these rounds' dates (forced or windowed) — issue #31 — never
 # something this project's solver proposes moving.
 movable: false
