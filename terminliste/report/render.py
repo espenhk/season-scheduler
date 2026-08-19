@@ -134,6 +134,7 @@ def render_report(
         all_clubs=sorted(world.clubs.values(), key=lambda c: c.name),
         dual_clubs=sorted(world.dual_clubs(), key=lambda c: c.name),
         warnings=warnings or [],
+        season_exclusions=_season_exclusions(world, season),
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")
@@ -199,6 +200,56 @@ def _build_option(
         "month_calendar_details": month_calendar_details,
         "calendar_legend": calendar_legend,
     }
+
+
+def _season_exclusions(world: World, season: Season) -> list[dict]:
+    """Every date this season blacks out — global and venue-scoped, single
+    dates and ranges alike — as one list sorted by start date, for the
+    report's "Season exclusions" overview (issue #33's reason/label ask,
+    extended to cover `venue_blackouts`'s pre-existing gap too). Built here
+    rather than left to the template so the four source lists can be merged
+    and sorted once, instead of rendering as separately-sorted blocks that
+    would put every range after every single date regardless of when it
+    falls.
+    """
+    entries: list[dict] = []
+    for blackout in season.global_blackouts:
+        entries.append(
+            {"start": blackout.date, "end": blackout.date, "reason": blackout.reason, "venue_label": None}
+        )
+    for blackout_range in season.global_blackout_ranges:
+        entries.append(
+            {
+                "start": blackout_range.start,
+                "end": blackout_range.end,
+                "reason": blackout_range.reason,
+                "venue_label": None,
+            }
+        )
+    for blackout in season.venue_blackouts:
+        entries.append(
+            {
+                "start": blackout.date,
+                "end": blackout.date,
+                "reason": blackout.reason,
+                "venue_label": world.venues[blackout.venue].name
+                if blackout.venue in world.venues
+                else blackout.venue,
+            }
+        )
+    for blackout_range in season.venue_blackout_ranges:
+        entries.append(
+            {
+                "start": blackout_range.start,
+                "end": blackout_range.end,
+                "reason": blackout_range.reason,
+                "venue_label": world.venues[blackout_range.venue].name
+                if blackout_range.venue in world.venues
+                else blackout_range.venue,
+            }
+        )
+    entries.sort(key=lambda e: (e["start"], e["end"]))
+    return entries
 
 
 _DIFFICULTY_COPY = {

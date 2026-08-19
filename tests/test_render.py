@@ -735,3 +735,108 @@ def test_render_report_omits_search_difficulty_section_when_no_stats():
         rendered = out.read_text(encoding="utf-8")
 
     assert "How hard was this to schedule?" not in rendered
+
+
+def test_render_report_shows_season_exclusions_with_their_reasons():
+    from terminliste.model.schema import DatedNote, GlobalBlackoutRange
+
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    season = f.season(
+        competitions=["elite", "topp"],
+        global_blackouts=[DatedNote(date=date(2026, 5, 17), reason="national day")],
+        global_blackout_ranges=[
+            GlobalBlackoutRange(
+                start=date(2026, 6, 1), end=date(2026, 6, 14), reason="international break"
+            )
+        ],
+    )
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 3, 1), "va")]
+    candidate = _candidate(world, season, matches, [])
+    result = SolverResult(candidates=[candidate], solver="test")
+
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = render_report(world, season, result, Path(tmp) / "out.html")
+        rendered = out.read_text(encoding="utf-8")
+
+    assert "Season exclusions" in rendered
+    assert "national day" in rendered
+    assert "international break" in rendered
+    assert "01 Jun 2026" in rendered and "14 Jun 2026" in rendered
+
+
+def test_render_report_omits_season_exclusions_section_when_none_configured():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 3, 1), "va")]
+    candidate = _candidate(world, season, matches, [])
+    result = SolverResult(candidates=[candidate], solver="test")
+
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = render_report(world, season, result, Path(tmp) / "out.html")
+        rendered = out.read_text(encoding="utf-8")
+
+    assert "Season exclusions" not in rendered
+
+
+def test_render_report_shows_venue_scoped_exclusions_with_the_venue_name():
+    from terminliste.model.schema import VenueBlackout, VenueBlackoutRange
+
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    season = f.season(
+        competitions=["elite", "topp"],
+        venue_blackouts=[VenueBlackout(venue="va", date=date(2026, 6, 13), reason="Concert")],
+        venue_blackout_ranges=[
+            VenueBlackoutRange(
+                venue="vb", start=date(2026, 7, 1), end=date(2026, 7, 3), reason="Ground works"
+            )
+        ],
+    )
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 3, 1), "va")]
+    candidate = _candidate(world, season, matches, [])
+    result = SolverResult(candidates=[candidate], solver="test")
+
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = render_report(world, season, result, Path(tmp) / "out.html")
+        rendered = out.read_text(encoding="utf-8")
+
+    assert "Season exclusions" in rendered
+    assert "(Va)" in rendered and "Concert" in rendered
+    assert "(Vb)" in rendered and "Ground works" in rendered
+
+
+def test_render_report_sorts_season_exclusions_by_start_date_across_all_four_sources():
+    """Regression: the section used to render global dates, then global
+    ranges, then (once venue entries existed) venue dates, then venue
+    ranges, as four independently-sorted blocks — so a range starting in
+    March would land below a single date in December. Building one list and
+    sorting it once (see `_season_exclusions`) fixes that."""
+    from terminliste.model.schema import DatedNote, GlobalBlackoutRange
+
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    season = f.season(
+        competitions=["elite", "topp"],
+        global_blackouts=[DatedNote(date=date(2026, 12, 24), reason="Christmas Eve")],
+        global_blackout_ranges=[
+            GlobalBlackoutRange(start=date(2026, 3, 1), end=date(2026, 3, 3), reason="March break")
+        ],
+    )
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 4, 1), "va")]
+    candidate = _candidate(world, season, matches, [])
+    result = SolverResult(candidates=[candidate], solver="test")
+
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = render_report(world, season, result, Path(tmp) / "out.html")
+        rendered = out.read_text(encoding="utf-8")
+
+    assert rendered.index("March break") < rendered.index("Christmas Eve")

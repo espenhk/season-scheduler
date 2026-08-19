@@ -233,9 +233,11 @@ def resolve_european_commitments(
 
     `competitions` should be every `format == "european"` competition in
     the season, so a `drop_to_competition` pointer always has somewhere to
-    resolve to. `season.global_blackouts` is the only blackout source
-    consulted — European qualifiers don't book venues, so venue-specific
-    blackouts don't apply, same as `rounds/cup_schedule.py::schedule_cups`.
+    resolve to. `season.blacked_out_dates` (global blackouts plus
+    `global_blackout_ranges`) is the only blackout source consulted —
+    European qualifiers don't book venues, so venue-specific blackouts
+    (`venue_blackouts`/`venue_blackout_ranges`) don't apply, same as
+    `rounds/cup_schedule.py::schedule_cups`.
 
     Only a team's *true* entry competition is walked from: a round that is
     itself the target of some other round's `drop_to_competition`/
@@ -248,7 +250,7 @@ def resolve_european_commitments(
     spot, and keying on the round alone would incorrectly skip the direct
     entrant too.
     """
-    blackouts = {b.date for b in season.global_blackouts}
+    blackouts = set(season.blacked_out_dates)
     resolved_legs, warnings = resolve_all_legs(competitions, blackouts)
 
     drop_targets = {

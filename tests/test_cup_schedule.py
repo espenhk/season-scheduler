@@ -332,6 +332,56 @@ def test_schedule_cups_pools_warnings_across_competitions():
     assert any("tight" in w or "Round 1" in w for w in warnings)
 
 
+def test_schedule_cups_avoids_a_global_blackout_range():
+    from terminliste.model.schema import GlobalBlackoutRange
+
+    comp = f.competition(
+        "cup1",
+        ["t1", "t2"],
+        format="cup",
+        cup_rounds=[
+            f.cup_round("r1", window_start=date(2026, 9, 1), window_end=date(2026, 9, 10), name="Round 1")
+        ],
+    )
+    season = f.season(
+        cup_competitions=["cup1"],
+        global_blackout_ranges=[
+            GlobalBlackoutRange(start=date(2026, 9, 1), end=date(2026, 9, 3), reason="break")
+        ],
+    )
+    schedules, warnings = schedule_cups([comp], season)
+    placement = schedules[0].rounds[0]
+    assert placement.earliest_date == date(2026, 9, 4)
+
+
+def test_schedule_cups_ignores_venue_blackout_ranges():
+    """Cups don't book venues — a `venue_blackout_ranges` entry must not
+    influence cup round resolution, the same as `venue_blackouts` already
+    doesn't (see `schedule_cups`'s docstring)."""
+    from terminliste.model.schema import VenueBlackoutRange
+
+    comp = f.competition(
+        "cup1",
+        ["t1", "t2"],
+        format="cup",
+        cup_rounds=[
+            f.cup_round("r1", window_start=date(2026, 9, 1), window_end=date(2026, 9, 10), name="Round 1")
+        ],
+    )
+    season = f.season(
+        cup_competitions=["cup1"],
+        venue_blackout_ranges=[
+            VenueBlackoutRange(
+                venue="v1", start=date(2026, 9, 1), end=date(2026, 9, 3), reason="ground works"
+            )
+        ],
+    )
+    schedules, warnings = schedule_cups([comp], season)
+    placement = schedules[0].rounds[0]
+    assert placement.earliest_date == date(2026, 9, 1)
+    assert warnings == []
+
+
 def test_resolved_cup_windows_reads_each_teams_own_date():
     schedule = f.cup_schedule(
         "cup",

@@ -109,6 +109,70 @@ def test_hard_requirement_on_a_blackout_date_is_caught():
     assert any("blackout" in e for e in errors)
 
 
+def test_hard_requirement_inside_a_global_blackout_range_is_caught():
+    from terminliste.model.loader import _validate_fixed_requirements
+    import factories as f
+    from terminliste.model.schema import GlobalBlackoutRange
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp = f.competition("comp", ["t1", "t2"])
+    bad_world = f.world(clubs, [v], [comp])
+
+    clash_date = date(2026, 5, 20)
+    requirement = FixedRequirement(
+        id="req", date=clash_date, home_team="t1", competition="comp", hard=True
+    )
+    season = f.season(
+        competitions=["comp"],
+        global_blackout_ranges=[
+            GlobalBlackoutRange(start=date(2026, 5, 15), end=date(2026, 5, 25), reason="break")
+        ],
+        fixed_requirements=[requirement],
+    )
+    errors = _validate_fixed_requirements(bad_world, season)
+    assert any("global blackout range" in e for e in errors)
+
+
+def test_global_blackout_range_end_before_start_is_rejected_by_the_schema():
+    from terminliste.model.schema import GlobalBlackoutRange
+
+    with pytest.raises(Exception):
+        GlobalBlackoutRange(start=date(2026, 5, 25), end=date(2026, 5, 15))
+
+
+def test_venue_blackout_range_end_before_start_is_rejected_by_the_schema():
+    from terminliste.model.schema import VenueBlackoutRange
+
+    with pytest.raises(Exception):
+        VenueBlackoutRange(venue="v1", start=date(2026, 5, 25), end=date(2026, 5, 15))
+
+
+def test_venue_blackout_range_referencing_unknown_venue_is_caught():
+    from terminliste.model.loader import validate_world
+    import factories as f
+    from terminliste.model.schema import VenueBlackoutRange
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp = f.competition("comp", ["t1", "t2"])
+    bad_world = f.world(clubs, [v], [comp])
+    bad_world.seasons["test"] = f.season(
+        competitions=["comp"],
+        venue_blackout_ranges=[
+            VenueBlackoutRange(
+                venue="no_such_venue", start=date(2026, 5, 15), end=date(2026, 5, 25)
+            )
+        ],
+    )
+    errors = validate_world(bad_world)
+    assert any("unknown venue" in e and "no_such_venue" in e for e in errors)
+
+
 def test_season_shorter_than_required_rounds_is_caught():
     from terminliste.model.loader import _validate_calendar_capacity
     import factories as f

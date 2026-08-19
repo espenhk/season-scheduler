@@ -87,7 +87,8 @@ class MinRestDays:
 
 @dataclass
 class BlackoutDates:
-    """No match on a globally blacked-out date, or at a blacked-out venue."""
+    """No match on a globally blacked-out date (a single one, or any day
+    inside an excluded date range), or at a blacked-out venue."""
 
     id: str = "blackout_dates"
     kind: str = "hard"
@@ -97,10 +98,14 @@ class BlackoutDates:
         season = ctx.season
         required_dates = {r.date for r in season.fixed_requirements if r.hard}
         global_blackouts = {
-            b.date: b.reason for b in season.global_blackouts if b.date not in required_dates
+            day: reason
+            for day, reason in season.blacked_out_dates.items()
+            if day not in required_dates
         }
         venue_blackouts: dict[tuple[str, date], str] = {
-            (b.venue, b.date): b.reason for b in season.venue_blackouts
+            (venue_id, day): reason
+            for venue_id, dated in season.venue_blacked_out_dates.items()
+            for day, reason in dated.items()
         }
 
         count = 0

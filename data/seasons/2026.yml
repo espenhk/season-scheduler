@@ -49,10 +49,13 @@ discouraged_dates:
   - {date: 2026-07-11, reason: "Peak summer holiday — low attendance"}
   - {date: 2026-07-18, reason: "Peak summer holiday — low attendance"}
 
-# Per-venue unavailability: concerts, athletics meets, ground works.
+# Per-venue unavailability spanning more than one consecutive day — issue
+# #33's venue-scoped counterpart to `global_blackout_ranges` below.
+venue_blackout_ranges:
+  - {venue: intility_arena, start: 2026-06-13, end: 2026-06-14, reason: "Concert and teardown"}
+
+# Per-venue unavailability on a single day: concerts, athletics meets, ground works.
 venue_blackouts:
-  - {venue: intility_arena, date: 2026-06-13, reason: "Concert"}
-  - {venue: intility_arena, date: 2026-06-14, reason: "Concert (teardown)"}
   - {venue: lerkendal_stadion, date: 2026-07-25, reason: "Concert"}
   - {venue: brann_stadion, date: 2026-08-15, reason: "Concert"}
   - {venue: araasen_stadion, date: 2026-05-30, reason: "Ground works"}

@@ -269,10 +269,12 @@ def schedule_cups(
 ) -> tuple[list[CupSchedule], list[str]]:
     """Resolve every cup competition, pooling their warnings.
 
-    `season.global_blackouts` is the only blackout source consulted — cups
-    don't book venues, so venue-specific blackouts don't apply to them.
+    `season.blacked_out_dates` (global blackouts plus `global_blackout_ranges`)
+    is the only blackout source consulted — cups don't book venues, so
+    venue-specific blackouts (`venue_blackouts`/`venue_blackout_ranges`)
+    don't apply to them.
     """
-    blackouts = {b.date for b in season.global_blackouts}
+    blackouts = set(season.blacked_out_dates)
     schedules: list[CupSchedule] = []
     warnings: list[str] = []
     for competition in competitions:

@@ -13,7 +13,8 @@ without disturbing the league path.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, timedelta
+from functools import cached_property
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -464,6 +465,50 @@ class VenueBlackout(BaseModel):
     reason: str = ""
 
 
+class _DateRangeNote(BaseModel):
+    """Shared start/end/reason mechanics for a closed span of blackout dates
+    — `GlobalBlackoutRange`'s and `VenueBlackoutRange`'s common shape (issue
+    #33), the multi-day counterpart to `DatedNote`'s single date.
+    """
+
+    start: date
+    end: date
+    reason: str = ""
+
+    @model_validator(mode="after")
+    def _end_not_before_start(self) -> "_DateRangeNote":
+        if self.end < self.start:
+            raise ValueError(f"date range end ({self.end}) is before start ({self.start})")
+        return self
+
+    @property
+    def dates(self) -> list[date]:
+        return [self.start + timedelta(days=i) for i in range((self.end - self.start).days + 1)]
+
+
+class GlobalBlackoutRange(_DateRangeNote):
+    """A closed span of dates off-limits for scheduling season-wide, with a
+    reason label for the overview — holiday periods, FIFA international
+    breaks. A labelled, multi-day generalisation of `global_blackouts`'s
+    single dates: `Season.blacked_out_dates` expands it day by day and folds
+    it into the same date->reason mapping every global-blackout consumer
+    reads.
+    """
+
+
+class VenueBlackoutRange(_DateRangeNote):
+    """A closed span of dates one venue is unavailable, with a reason label
+    — a multi-day generalisation of `venue_blackouts`'s single dates (a
+    multi-day concert run, ground works spanning a week). Unlike
+    `GlobalBlackoutRange`, this only ever reaches venue-scoped consumers
+    (the candidate calendar's per-venue blocks, `BlackoutDates`'s
+    venue-blackout check) — cup and European round resolution don't book
+    venues at all, so they never consult it, same as `venue_blackouts`.
+    """
+
+    venue: str
+
+
 class FullRoundRequirement(BaseModel):
     """Every team in a competition must have a match on this date.
 
@@ -555,9 +600,51 @@ class Season(BaseModel):
     global_blackouts: list[DatedNote] = Field(default_factory=list)
     discouraged_dates: list[DatedNote] = Field(default_factory=list)
     venue_blackouts: list[VenueBlackout] = Field(default_factory=list)
+    global_blackout_ranges: list[GlobalBlackoutRange] = Field(default_factory=list)
+    venue_blackout_ranges: list[VenueBlackoutRange] = Field(default_factory=list)
     fixed_requirements: list[FixedRequirement] = Field(default_factory=list)
     full_round_requirements: list[FullRoundRequirement] = Field(default_factory=list)
     rivalry_fixtures: list[RivalryFixture] = Field(default_factory=list)
+
+    @cached_property
+    def blacked_out_dates(self) -> dict[date, str]:
+        """Every individual date this season blacks out season-wide, mapped
+        to a reason — `global_blackouts`'s single dates plus every day
+        inside `global_blackout_ranges`, expanded. The one place every
+        global-blackout consumer (the candidate calendar, `BlackoutDates`
+        scoring, cup/European round resolution) reads from, so a multi-day
+        exclusion behaves exactly like a run of single-day ones everywhere
+        blackouts matter.
+
+        Cached rather than recomputed: `BlackoutDates.evaluate` runs inside
+        the annealer's inner loop, once per candidate move, and a season is
+        loaded once and never mutated, so expanding every range (potentially
+        tens of dates each) on every call would be pure waste.
+        """
+        result: dict[date, str] = {}
+        for excluded in self.global_blackout_ranges:
+            for day in excluded.dates:
+                result[day] = excluded.reason
+        for blackout in self.global_blackouts:
+            result[blackout.date] = blackout.reason
+        return result
+
+    @cached_property
+    def venue_blacked_out_dates(self) -> dict[str, dict[date, str]]:
+        """Every (venue, date) this season blacks out, keyed by venue then
+        mapped to a reason — `venue_blackouts`'s single dates plus every day
+        inside `venue_blackout_ranges`, expanded. Mirrors `blacked_out_dates`
+        but stays venue-scoped throughout: unlike a global blackout, a venue
+        one never reaches cup or European round resolution, which don't book
+        venues at all. Cached for the same reason `blacked_out_dates` is.
+        """
+        result: dict[str, dict[date, str]] = {}
+        for excluded in self.venue_blackout_ranges:
+            for day in excluded.dates:
+                result.setdefault(excluded.venue, {})[day] = excluded.reason
+        for blackout in self.venue_blackouts:
+            result.setdefault(blackout.venue, {})[blackout.date] = blackout.reason
+        return result
 
 
 class TravelOverride(BaseModel):

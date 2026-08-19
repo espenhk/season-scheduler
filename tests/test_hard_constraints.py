@@ -116,6 +116,61 @@ def test_blackout_dates_fires_only_on_the_blacked_out_date():
     assert result.hard_violations == 0
 
 
+def test_blackout_dates_fires_anywhere_inside_a_global_blackout_range():
+    from terminliste.model.schema import GlobalBlackoutRange
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp = f.competition("comp", ["t1", "t2"])
+    world = f.world(clubs, [v], [comp])
+    season = f.season(
+        competitions=["comp"],
+        global_blackout_ranges=[
+            GlobalBlackoutRange(
+                start=date(2026, 6, 1), end=date(2026, 6, 14), reason="international break"
+            )
+        ],
+    )
+
+    mid_range = [f.match("comp", "t1", "t2", date(2026, 6, 7), "v1")]
+    result = evaluate(mid_range, [BlackoutDates()], _ctx(world, season))
+    assert result.hard_violations == 1
+
+    outside_range = [f.match("comp", "t1", "t2", date(2026, 6, 15), "v1")]
+    result = evaluate(outside_range, [BlackoutDates()], _ctx(world, season))
+    assert result.hard_violations == 0
+
+
+def test_blackout_dates_fires_only_at_the_venue_a_blackout_range_covers():
+    from terminliste.model.schema import VenueBlackoutRange
+
+    v1 = f.venue("v1")
+    v2 = f.venue("v2")
+    t1 = f.team("t1", "c1", "v1")
+    t2 = f.team("t2", "c2", "v2")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp = f.competition("comp", ["t1", "t2"])
+    world = f.world(clubs, [v1, v2], [comp])
+    season = f.season(
+        competitions=["comp"],
+        venue_blackout_ranges=[
+            VenueBlackoutRange(
+                venue="v1", start=date(2026, 6, 1), end=date(2026, 6, 3), reason="ground works"
+            )
+        ],
+    )
+
+    at_blacked_out_venue = [f.match("comp", "t1", "t2", date(2026, 6, 2), "v1")]
+    result = evaluate(at_blacked_out_venue, [BlackoutDates()], _ctx(world, season))
+    assert result.hard_violations == 1
+
+    same_day_other_venue = [f.match("comp", "t2", "t1", date(2026, 6, 2), "v2")]
+    result = evaluate(same_day_other_venue, [BlackoutDates()], _ctx(world, season))
+    assert result.hard_violations == 0
+
+
 # -- venue_double_booking -------------------------------------------------
 
 

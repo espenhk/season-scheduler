@@ -314,6 +314,26 @@
 </div>
 {% endif %}
 
+{% if season_exclusions %}
+<details>
+  <summary>
+    Season exclusions
+    <span style="font-weight:400;color:var(--muted)">
+      · {{ season_exclusions|length }} entr{{ 'y' if season_exclusions|length == 1 else 'ies' }}
+    </span>
+  </summary>
+  <div class="item-body">
+    {% for entry in season_exclusions %}
+    <div class="desc">
+      {{ entry.start.strftime('%d %b %Y') }}{% if entry.end != entry.start %} – {{ entry.end.strftime('%d %b %Y') }}{% endif %}
+      {%- if entry.venue_label %} ({{ entry.venue_label }}){% endif %}
+      {%- if entry.reason %} — {{ entry.reason }}{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
+
 {% if search_stats %}
 <details class="search-stats">
   <summary>

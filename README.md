@@ -111,7 +111,8 @@ Competition  id, season, gender, format (league|cup|european), movable, teams[],
                                                  # forced_date/window), ties[],
                                                  # drop_to_competition/_round
 Season    id, year, window, competitions[], cup_competitions[], european_competitions[],
-          global_blackouts[], venue_blackouts[], fixed_requirements[]
+          global_blackouts[], venue_blackouts[], global_blackout_ranges[],
+          venue_blackout_ranges[], fixed_requirements[]
 Fixture   an unscheduled pairing (home, away, leg, round)         # league only
 Match     a Fixture placed on a date at a venue                    # league only
 CupSchedule  a cup's rounds resolved to dates (see below)
@@ -133,7 +134,28 @@ finishes almost a month before Eliteserien), so `toppserien_2026.yml` sets
 its own, narrower window rather than letting the solver believe it has a
 month it doesn't. `Season.start`/`.end` become the outer envelope across
 every competition sharing that calendar — global blackouts, discouraged
-dates and venue blackouts still apply season-wide.
+dates, venue blackouts and both range flavours below still apply
+season-wide (global) or at the one named venue (venue-scoped).
+
+`global_blackout_ranges` and `venue_blackout_ranges` (issue #33) are
+labelled, multi-day generalisations of `global_blackouts` and
+`venue_blackouts` respectively: a `start`/`end` span — a holiday period, a
+FIFA international break, a multi-day concert teardown — with a `reason`
+for the overview, rather than one entry per date. `Season.blacked_out_dates`
+and `Season.venue_blacked_out_dates` (both cached, since `BlackoutDates`
+evaluates inside the annealer's inner loop) expand every range day by day
+and fold the result into the same date→reason mappings the single-date
+fields feed, so a range is honoured everywhere its single-day counterpart
+already is. The two stay strictly separate the way `global_blackouts` and
+`venue_blackouts` already do: a global entry reaches every consumer — the
+candidate calendar (`build_calendar`), the `BlackoutDates` hard constraint,
+and cup/European round resolution — while a venue-scoped one only reaches
+the venue-aware ones (`build_calendar`'s per-venue blocks, `BlackoutDates`'s
+venue check); cups and European qualifiers don't book venues, so
+`venue_blackout_ranges` never reaches `schedule_cups` or
+`resolve_european_commitments`. Both range models share an `end < start`
+schema guard. The season report's "Season exclusions" section lists all
+four sources together, sorted by start date.
 
 `Team.level` is wider than today's use needs on purpose — a reserve side is a
 data edit (`level: second`), not a rewrite.

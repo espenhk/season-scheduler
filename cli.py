@@ -445,7 +445,7 @@ def _european_report_data(world, season):
     `_resolve_european_or_exit`'s flattened, cascade-walked commitment list,
     which is shaped for conflict-checking rather than display."""
     european_competitions = [world.competition(c) for c in season.european_competitions]
-    blackouts = {b.date for b in season.global_blackouts}
+    blackouts = set(season.blacked_out_dates)
     resolved_legs, _ = resolve_all_legs(european_competitions, blackouts)
     return european_competitions, resolved_legs
 
