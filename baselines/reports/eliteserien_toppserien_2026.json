@@ -136,6 +136,12 @@
       "count": 0
     },
     {
+      "constraint": "tv_time_spread",
+      "kind": "soft",
+      "total": 0.0,
+      "count": 0
+    },
+    {
       "constraint": "venue_double_booking",
       "kind": "hard",
       "total": 0.0,

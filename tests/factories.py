@@ -26,6 +26,7 @@ from terminliste.model.schema import (
     RivalryFixture,
     Season,
     Team,
+    TvTimeSpread,
     Venue,
 )
 from terminliste.rounds.cup_schedule import CupRoundPlacement, CupSchedule
@@ -91,6 +92,7 @@ def competition(
     end: date | None = None,
     final_round_kickoff_time: str = "18:00",
     kickoff_slots: list[str] | None = None,
+    tv_time_spread: TvTimeSpread | None = None,
     color: str | None = _AUTO_COLOR,  # type: ignore[assignment]
     short_name: str | None = _AUTO_SHORT_NAME,  # type: ignore[assignment]
 ) -> Competition:
@@ -116,6 +118,7 @@ def competition(
         end=end,
         final_round_kickoff_time=final_round_kickoff_time,
         kickoff_slots=kickoff_slots or ["14:00", "18:00", "20:00"],
+        tv_time_spread=tv_time_spread,
         # `color=None` must stay meaningful (a test can deliberately build a
         # colorless competition), so the "derive a default" case needs its
         # own sentinel rather than overloading None — derived from `id` so

@@ -37,6 +37,7 @@ from .soft import (
     RestComfort,
     RivalryFixtureOnDate,
     SoftVenuePreference,
+    TvTimeSpread,
 )
 
 
@@ -90,6 +91,7 @@ def build_constraints(
             SoftVenuePreference(competitions=competitions),
             GrassAwayRoundOne(competitions=competitions),
             LateKickoffLongTravel(competitions=competitions),
+            TvTimeSpread(competitions=competitions),
         ]
     )
 
@@ -136,6 +138,7 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
     "grass_away_round_one": "Grass-pitch clubs play away in round 1.",
     "late_kickoff_long_travel": "Away teams with a long trip avoid late Sunday kickoffs.",
     "rivalry_fixture_on_date": "A fixed annual pairing lands on its date, home side alternating by year.",
+    "tv_time_spread": "A round's preferred-weekday matches spread across an early, primary, and late kickoff time, clear of other competitions' kickoffs.",
 }
 
 

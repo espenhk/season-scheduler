@@ -14,7 +14,8 @@ import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from ..model.schema import WEEKDAYS, Competition, RivalryFixture
+from ..model.schema import WEEKDAYS, Competition, Match, RivalryFixture
+from ..model.schema import TvTimeSpread as TvTimeSpreadConfig
 from .base import ConstraintResult, EvalContext, Event, ScheduleIndex
 
 
@@ -627,6 +628,121 @@ class RivalryFixtureOnDate:
         return ConstraintResult(self.id, "soft", total, count, events)
 
 
+@dataclass
+class TvTimeSpread:
+    """Reward a round following the TV-broadcast kickoff shape configured by
+    `Competition.tv_time_spread` — most matches on the preferred weekday at
+    the primary kickoff time, one early, one late — and penalise a match
+    colliding, at the same date and kickoff time, with a match from a
+    different competition.
+
+    Kickoff time is assigned once per schedule, after dates are fixed
+    (`rounds/kickoff.py::assign_kickoff_times`), rather than searched, so
+    every match here with `kickoff_time is None` is skipped: that is every
+    match during annealing, and this rule only has anything to say about the
+    finished schedule a candidate's dates produce.
+    """
+
+    competitions: list[Competition]
+    id: str = "tv_time_spread"
+    kind: str = "soft"
+    weight: float = 3.0
+    collision_weight: float = 2.0
+    _spread_by_competition: dict[str, TvTimeSpreadConfig] = field(default_factory=dict, init=False)
+    _weight_by_competition: dict[str, float] = field(default_factory=dict, init=False)
+    _collision_weight_by_competition: dict[str, float] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        for competition in self.competitions:
+            if competition.tv_time_spread is None:
+                continue
+            self._spread_by_competition[competition.id] = competition.tv_time_spread
+            self._weight_by_competition[competition.id] = competition.weights.get(
+                "tv_time_spread", self.weight
+            )
+            self._collision_weight_by_competition[competition.id] = competition.weights.get(
+                "tv_time_spread_collision", self.collision_weight
+            )
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        if not self._spread_by_competition:
+            return ConstraintResult(self.id, "soft", 0.0, 0, [])
+
+        total = 0.0
+        count = 0
+        events: list[Event] = []
+
+        rounds: dict[tuple[str, int], list[Match]] = {}
+        for match in index.matches:
+            if match.kickoff_time is None or match.competition_id not in self._spread_by_competition:
+                continue
+            rounds.setdefault((match.competition_id, match.round_index), []).append(match)
+
+        for (competition_id, round_index), round_matches in rounds.items():
+            spread = self._spread_by_competition[competition_id]
+            weight = self._weight_by_competition[competition_id]
+            competition = ctx.world.competition(competition_id)
+            preferred = WEEKDAYS.index(competition.preferred_weekday)
+            on_day = [m for m in round_matches if m.date.weekday() == preferred]
+            if not on_day:
+                continue
+
+            has_early = any(m.kickoff_time == spread.early_kickoff_time for m in on_day)
+            has_late = any(m.kickoff_time == spread.late_kickoff_time for m in on_day)
+            primary_count = sum(1 for m in on_day if m.kickoff_time == spread.primary_kickoff_time)
+            expected_primary = len(on_day) if len(on_day) < 2 else len(on_day) - 2
+            shaped = primary_count == expected_primary and (len(on_day) < 2 or (has_early and has_late))
+            if not shaped:
+                continue
+
+            total += weight
+            count += 1
+            if ctx.detail:
+                events.append(
+                    Event(
+                        delta=weight,
+                        detail=(
+                            f"{competition.name} round {round_index + 1}: {primary_count} at "
+                            f"{spread.primary_kickoff_time}, 1 at {spread.early_kickoff_time}, "
+                            f"1 at {spread.late_kickoff_time}"
+                            if len(on_day) >= 2
+                            else f"{competition.name} round {round_index + 1}: "
+                            f"{len(on_day)} match on {competition.preferred_weekday.capitalize()}"
+                        ),
+                        match_keys=tuple(m.key for m in on_day),
+                    )
+                )
+
+        for day, matches_on_date in index.by_date.items():
+            by_slot: dict[str, list[Match]] = {}
+            for m in matches_on_date:
+                if m.kickoff_time is not None:
+                    by_slot.setdefault(m.kickoff_time, []).append(m)
+            for kickoff_time, slot_matches in by_slot.items():
+                competitions_in_slot = {m.competition_id for m in slot_matches}
+                if len(competitions_in_slot) < 2:
+                    continue
+                configured = [
+                    cid for cid in competitions_in_slot if cid in self._collision_weight_by_competition
+                ]
+                if not configured:
+                    continue
+                weight = max(self._collision_weight_by_competition[cid] for cid in configured)
+                total -= weight
+                count += 1
+                if ctx.detail:
+                    names = sorted(ctx.world.competition(cid).name for cid in competitions_in_slot)
+                    events.append(
+                        Event(
+                            delta=-weight,
+                            detail=f"{' / '.join(names)} both kick off at {kickoff_time} on {day}",
+                            match_keys=tuple(m.key for m in slot_matches),
+                        )
+                    )
+
+        return ConstraintResult(self.id, "soft", total, count, events)
+
+
 _ONE_DAY = timedelta(days=1)
 
 
@@ -658,4 +774,5 @@ __all__ = [
     "RestComfort",
     "RivalryFixtureOnDate",
     "SoftVenuePreference",
+    "TvTimeSpread",
 ]

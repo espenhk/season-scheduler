@@ -284,18 +284,24 @@ by travel time, capped at an 8h default), `home_away_breaks`,
 `home_away_balance`, `rest_comfort`, `soft_venue_preference`,
 `grass_away_round_one` (grass-pitch clubs reward playing away in round 1),
 `late_kickoff_long_travel` (penalises a late Sunday kickoff for an away team
-with a long trip home — tunable `late_from`/`long_travel_hours`), and
+with a long trip home — tunable `late_from`/`long_travel_hours`),
 `rivalry_fixture_on_date` (a fixed annual pairing, home side alternating by
-year — `Season.rivalry_fixtures`; Bodø/Glimt vs Tromsø IL on May 16).
+year — `Season.rivalry_fixtures`; Bodø/Glimt vs Tromsø IL on May 16), and
+`tv_time_spread` (issue #76: a round's matches on the preferred weekday
+following a TV-broadcast shape — most at a primary kickoff time, one shifted
+early, one shifted late — plus a penalty for colliding, at the same date and
+kickoff time, with a match from a different competition).
 
 Kickoff time itself isn't a search variable the way date and venue are —
 `rounds/kickoff.py::assign_kickoff_times` fills in `Match.kickoff_time` once
 a schedule's dates are fixed: the final round gets its competition's forced
 slot, a match an explicit `FixedRequirement.kickoff_time` names (Tromsø's
-Midnight Sun Match) gets that, and everything else gets one of
-`Competition.kickoff_slots` chosen deterministically per fixture. Nothing in
-either solver backend currently searches over kickoff choice to *improve*
-`late_kickoff_long_travel`'s score — same kind of known gap as CP-SAT's
+Midnight Sun Match) gets that, a competition opted into
+`Competition.tv_time_spread` gets its preferred-weekday round matches shaped
+as described above, and everything else gets one of `Competition.kickoff_slots`
+chosen deterministically per fixture. Nothing in either solver backend
+currently searches over kickoff choice to *improve* `late_kickoff_long_travel`'s
+or `tv_time_spread`'s score — same kind of known gap as CP-SAT's
 `home_away_breaks` handling below, not something to be surprised by in a
 generated schedule.
 

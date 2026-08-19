@@ -62,6 +62,7 @@ Some of those hard violations are expected, and are artefacts of this baseline's
 | `rest_comfort` | 0.0 | 0 |
 | `soft_venue_preference` | 0.0 | 0 |
 | `late_kickoff_long_travel` | 0.0 | 0 |
+| `tv_time_spread` | 0.0 | 0 |
 | `rivalry_fixture_on_date` | 0.0 | 0 |
 | `grass_away_round_one` | 12.0 | 3 |
 | `preferred_weekday` | 40.0 | 10 |

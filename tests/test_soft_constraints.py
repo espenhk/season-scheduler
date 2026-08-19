@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 import factories as f
+from terminliste.model.schema import TvTimeSpread as TvTimeSpreadConfig
 from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.soft import (
     ConsecutiveAwayDays,
@@ -17,6 +18,7 @@ from terminliste.scoring.soft import (
     RestComfort,
     RivalryFixtureOnDate,
     SoftVenuePreference,
+    TvTimeSpread,
 )
 
 
@@ -377,3 +379,129 @@ def test_rivalry_fixture_on_date_rewards_the_right_pairing_and_home_side():
 
     # No match at all on the date: no reward.
     assert evaluate([], [constraint], _ctx(world, even_season)).result("rivalry_fixture_on_date").total == 0.0
+
+
+# -- tv_time_spread (issue #76) ----------------------------------------------
+
+
+def _tv_spread_world():
+    v = f.venue("v1")
+    teams = [f.team(f"t{i}", f"c{i}", "v1") for i in range(1, 9)]
+    clubs = [f.club(f"c{i}", [teams[i - 1]]) for i in range(1, 9)]
+    spread = TvTimeSpreadConfig(
+        primary_kickoff_time="17:00", early_kickoff_time="14:30", late_kickoff_time="19:15"
+    )
+    comp = f.competition(
+        "comp", [t.id for t in teams], preferred_weekday="sunday",
+        tv_time_spread=spread, weights={"tv_time_spread": 3.0},
+    )
+    world = f.world(clubs, [v], [comp])
+    season = f.season(competitions=["comp"])
+    return world, season, comp
+
+
+def test_tv_time_spread_rewards_a_correctly_shaped_round():
+    world, season, comp = _tv_spread_world()
+    constraint = TvTimeSpread(competitions=[comp])
+    sunday = date(2026, 6, 7)
+    matches = [
+        f.match("comp", "t1", "t2", sunday, "v1", kickoff_time="14:30"),
+        f.match("comp", "t3", "t4", sunday, "v1", kickoff_time="19:15"),
+        f.match("comp", "t5", "t6", sunday, "v1", kickoff_time="17:00"),
+        f.match("comp", "t7", "t8", sunday, "v1", kickoff_time="17:00"),
+    ]
+    result = evaluate(matches, [constraint], _ctx(world, season))
+    assert result.result("tv_time_spread").total == 3.0
+    assert result.result("tv_time_spread").count == 1
+
+
+def test_tv_time_spread_does_not_reward_a_round_missing_the_early_or_late_slot():
+    world, season, comp = _tv_spread_world()
+    constraint = TvTimeSpread(competitions=[comp])
+    sunday = date(2026, 6, 7)
+    # A fixed requirement or similar override could bump the early match to
+    # primary instead — no early slot left, so the round is not shaped.
+    matches = [
+        f.match("comp", "t1", "t2", sunday, "v1", kickoff_time="17:00"),
+        f.match("comp", "t3", "t4", sunday, "v1", kickoff_time="19:15"),
+        f.match("comp", "t5", "t6", sunday, "v1", kickoff_time="17:00"),
+        f.match("comp", "t7", "t8", sunday, "v1", kickoff_time="17:00"),
+    ]
+    result = evaluate(matches, [constraint], _ctx(world, season))
+    assert result.result("tv_time_spread").total == 0.0
+
+
+def test_tv_time_spread_rewards_a_single_on_day_match_at_the_primary_time():
+    world, season, comp = _tv_spread_world()
+    constraint = TvTimeSpread(competitions=[comp])
+    sunday = date(2026, 6, 7)
+    # `kickoff.py::_tv_time_spread_assignments` gives a round's lone
+    # preferred-weekday match the primary time — no room for an early/late
+    # split — and this is the shaped state, not a miss.
+    matches = [f.match("comp", "t1", "t2", sunday, "v1", kickoff_time="17:00")]
+    result = evaluate(matches, [constraint], _ctx(world, season))
+    assert result.result("tv_time_spread").total == 3.0
+    assert result.result("tv_time_spread").count == 1
+
+
+def test_tv_time_spread_is_silent_when_not_configured():
+    v = f.venue("v1")
+    t1, t2 = f.team("t1", "c1", "v1"), f.team("t2", "c2", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
+    comp = f.competition("comp", ["t1", "t2"], preferred_weekday="sunday")
+    world = f.world(clubs, [v], [comp])
+    season = f.season(competitions=["comp"])
+    constraint = TvTimeSpread(competitions=[comp])
+
+    matches = [f.match("comp", "t1", "t2", date(2026, 6, 7), "v1", kickoff_time="17:00")]
+    result = evaluate(matches, [constraint], _ctx(world, season))
+    assert result.result("tv_time_spread").total == 0.0
+    assert result.result("tv_time_spread").count == 0
+
+
+def test_tv_time_spread_is_silent_before_kickoff_times_are_assigned():
+    world, season, comp = _tv_spread_world()
+    constraint = TvTimeSpread(competitions=[comp])
+    sunday = date(2026, 6, 7)
+    matches = [
+        f.match("comp", "t1", "t2", sunday, "v1"),
+        f.match("comp", "t3", "t4", sunday, "v1"),
+    ]
+    result = evaluate(matches, [constraint], _ctx(world, season))
+    assert result.result("tv_time_spread").total == 0.0
+    assert result.result("tv_time_spread").count == 0
+
+
+def test_tv_time_spread_penalises_a_collision_with_another_competition():
+    v = f.venue("v1")
+    t1, t2 = f.team("t1", "c1", "v1"), f.team("t2", "c2", "v1")
+    t3, t4 = f.team("t3", "c3", "v1"), f.team("t4", "c4", "v1")
+    clubs = [f.club("c1", [t1]), f.club("c2", [t2]), f.club("c3", [t3]), f.club("c4", [t4])]
+    spread = TvTimeSpreadConfig(primary_kickoff_time="17:00")
+    elite = f.competition(
+        "elite", ["t1", "t2"], preferred_weekday="sunday",
+        tv_time_spread=spread,
+        # Zero out the shape reward so this test isolates the collision
+        # penalty — elite's lone match is otherwise correctly shaped
+        # (primary time) and would earn its own reward too.
+        weights={"tv_time_spread": 0.0, "tv_time_spread_collision": 2.0},
+    )
+    topp = f.competition("topp", ["t3", "t4"], preferred_weekday="sunday")
+    world = f.world(clubs, [v], [elite, topp])
+    season = f.season(competitions=["elite", "topp"])
+    constraint = TvTimeSpread(competitions=[elite, topp])
+
+    sunday = date(2026, 6, 7)
+    matches = [
+        f.match("elite", "t1", "t2", sunday, "v1", kickoff_time="17:00"),
+        f.match("topp", "t3", "t4", sunday, "v1", kickoff_time="17:00"),
+    ]
+    result = evaluate(matches, [constraint], _ctx(world, season))
+    assert result.result("tv_time_spread").total == -2.0
+
+    clear = [
+        f.match("elite", "t1", "t2", sunday, "v1", kickoff_time="17:00"),
+        f.match("topp", "t3", "t4", sunday, "v1", kickoff_time="18:00"),
+    ]
+    result = evaluate(clear, [constraint], _ctx(world, season))
+    assert result.result("tv_time_spread").total == 0.0

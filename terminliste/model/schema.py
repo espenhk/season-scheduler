@@ -271,6 +271,28 @@ class EuropeanRound(BaseModel):
         return max(self.first_leg.latest, self.second_leg.latest)
 
 
+class TvTimeSpread(BaseModel):
+    """Desired TV-broadcast kickoff shape for a competition's round (issue
+    #76): on the preferred weekday, most matches sit at `primary_kickoff_time`,
+    with one shifted to `early_kickoff_time` and one to `late_kickoff_time`.
+
+    Opt-in via `Competition.tv_time_spread` — `None` there leaves every match's
+    kickoff time to `Competition.kickoff_slots` as before. Applied by
+    `rounds/kickoff.py::assign_kickoff_times` and scored by
+    `scoring/soft.py::TvTimeSpread`.
+    """
+
+    primary_kickoff_time: str = "17:00"
+    early_kickoff_time: str = "14:30"
+    late_kickoff_time: str = "19:15"
+
+    @field_validator("primary_kickoff_time", "early_kickoff_time", "late_kickoff_time")
+    @classmethod
+    def _times_are_hh_mm(cls, v: str) -> str:
+        _validate_hh_mm(v)
+        return v
+
+
 class Competition(BaseModel):
     """A league or a cup. `format` discriminates the two.
 
@@ -369,6 +391,11 @@ class Competition(BaseModel):
         for slot in v:
             _validate_hh_mm(slot)
         return v
+
+    # Issue #76: opt-in TV-broadcast kickoff pattern for a round's matches on
+    # the preferred weekday — see `TvTimeSpread` above. `None` (the default)
+    # leaves kickoff assignment to `kickoff_slots`.
+    tv_time_spread: TvTimeSpread | None = None
 
     # Cup-only: the real-world rounds this competition's teams are entered
     # into, in the order they are played. Empty for a league.
