@@ -870,6 +870,7 @@ def _european_views(
                 "id": competition.id,
                 "name": competition.name,
                 "is_european": True,
+                "is_main_tournament": competition.is_main_tournament,
                 "match_count": len(competition.european_rounds),
                 "rounds": [
                     {
@@ -893,6 +894,25 @@ def _european_views(
     return views
 
 
+def _round_legs(first_date: date, second_date: date) -> list[tuple[str | None, date]]:
+    """The real matches a resolved round's two leg dates represent: two
+    (`"first"`/`"second"`, own date) entries for a genuine two-legged tie,
+    or one (`None`, shared date) entry when both legs share a date — a
+    single real match, not a tie, the same date-equality
+    `_european_round_date_label` already collapses to one displayed date
+    for. A qualifying round's two legs are never scheduled on the same UEFA
+    date, so this only ever collapses a main tournament's adapted
+    single-date rounds (`build_main_tournament_rounds_for_display` — a
+    league-phase matchday, or a final whose `second_leg` was folded onto
+    `first_leg`'s date) — without this, `_european_fixtures`/
+    `_european_entries` would otherwise emit two rows ("first leg" and
+    "second leg") for what is really just one match.
+    """
+    if first_date == second_date:
+        return [(None, first_date)]
+    return [("first", first_date), ("second", second_date)]
+
+
 def _european_fixtures(
     world: World,
     round_: EuropeanRound,
@@ -906,7 +926,7 @@ def _european_fixtures(
     fixtures: list[dict] = []
     for tie in round_.ties:
         club_id = world.team(tie.team).club_id
-        for leg_label, leg_date in (("first", first_date), ("second", second_date)):
+        for leg_label, leg_date in _round_legs(first_date, second_date):
             venue_type = _european_venue_type(tie.home_leg, leg_label)
             fixtures.append(
                 {
@@ -917,7 +937,7 @@ def _european_fixtures(
                     "date": leg_date,
                     "weekday": leg_date.strftime("%a"),
                     "opponent": tie.opponent,
-                    "leg_label": f"{leg_label} leg",
+                    "leg_label": f"{leg_label} leg" if leg_label else "",
                     "venue_type": venue_type,
                     "venue_label": _european_venue_label(world, tie.team, venue_type),
                 }
@@ -945,8 +965,9 @@ def _european_entries(
             first_date, second_date = resolved_legs[(competition.id, round_.id)]
             for tie in round_.ties:
                 club_id = world.team(tie.team).club_id
-                for leg_label, leg_date in (("first", first_date), ("second", second_date)):
+                for leg_label, leg_date in _round_legs(first_date, second_date):
                     venue_type = _european_venue_type(tie.home_leg, leg_label)
+                    round_name = f"{round_.name} ({leg_label} leg)" if leg_label else round_.name
                     entries.append(
                         {
                             "is_european": True,
@@ -957,7 +978,7 @@ def _european_entries(
                             "competition_short": competition.short_name,
                             "comp_fg": comp_color["fg"],
                             "comp_bg": comp_color["bg"],
-                            "round_name": f"{round_.name} ({leg_label} leg)",
+                            "round_name": round_name,
                             "team": world.team_short_label(tie.team),
                             "team_full": world.team_label(tie.team),
                             "club_id": club_id,
@@ -970,7 +991,7 @@ def _european_entries(
     return entries
 
 
-def _european_venue_type(home_leg: str | None, leg_label: str) -> str:
+def _european_venue_type(home_leg: str | None, leg_label: str | None) -> str:
     """`"home"`/`"away"` read straight from `EuropeanTie.home_leg`, or
     `"unknown"` when even that isn't settled yet — distinct from a cup
     round's `"neutral"`, which means something different (a final at a

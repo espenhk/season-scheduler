@@ -388,15 +388,41 @@ def test_european_competitions_are_present_and_shaped_correctly(world):
         comp = world.competition(comp_id)
         assert comp.format == "european"
         assert comp.movable is False
+        assert comp.is_main_tournament is False
         assert len(comp.european_rounds) > 0
         earliest_bounds = [r.earliest for r in comp.european_rounds]
         assert earliest_bounds == sorted(earliest_bounds), f"{comp_id} rounds are not in order"
+
+    # issue #79: each qualifying competition above has a corresponding main
+    # tournament, using league_phase_matchdays/knockout_rounds instead.
+    for comp_id in (
+        "champions_league_main_2026",
+        "europa_league_main_2026",
+        "conference_league_main_2026",
+    ):
+        comp = world.competition(comp_id)
+        assert comp.format == "european"
+        assert comp.movable is False
+        assert comp.is_main_tournament is True
+        assert not comp.european_rounds
+        assert comp.league_phase_matchdays
+        assert comp.knockout_rounds
+        assert comp.reachable_from
+        all_bounds = [r.earliest for r in (*comp.league_phase_matchdays, *comp.knockout_rounds)]
+        assert all_bounds == sorted(all_bounds), f"{comp_id} matchdays/rounds are not in order"
+        # The final is the last knockout round, a single match at a named venue.
+        final = comp.knockout_rounds[-1]
+        assert final.second_leg is None
+        assert final.venue_name
 
     season = world.season("2026")
     assert set(season.european_competitions) == {
         "champions_league_2026",
         "europa_league_2026",
         "conference_league_2026",
+        "champions_league_main_2026",
+        "europa_league_main_2026",
+        "conference_league_main_2026",
     }
 
 
@@ -415,10 +441,18 @@ def test_european_commitments_resolve_cleanly_from_the_shipped_data(world):
     # conference_league_2026 at Q3 -> playoff: Q2 and Q3 (2 legs each), then
     # *both* branches still open at the play-off depth — Europa League's own
     # play-off (win) and Conference League's (drop) — 4 more leg dates, for
-    # 8 in total. Brann's own run (Q2 -> Q3 -> play-off, no cascade) is a
-    # plain 3 rounds x 2 legs = 6.
-    assert len(commitments_by_team["tromso_m"]) == 8
-    assert len(commitments_by_team["brann_m"]) == 6
+    # 8 in total from qualifying alone. Brann's own qualifying run (Q2 ->
+    # Q3 -> play-off, no cascade) is a plain 3 rounds x 2 legs = 6.
+    #
+    # issue #79's main tournaments add to both, on top of the qualifying
+    # cascade above: Tromsø is a europa_league_2026 entrant (reachable for
+    # both europa_league_main_2026 and conference_league_main_2026 — 17 +
+    # 15 = 32 more commitment dates, see those files' league_phase_matchdays
+    # + knockout_rounds counts), while Brann is only a
+    # conference_league_2026 entrant (reachable for
+    # conference_league_main_2026 alone — 15 more).
+    assert len(commitments_by_team["tromso_m"]) == 8 + 32
+    assert len(commitments_by_team["brann_m"]) == 6 + 15
     assert warnings == []
 
 
@@ -543,6 +577,154 @@ def test_european_cascade_into_an_unknown_round_is_caught():
     bad_world = f.world(clubs, [v], [source, target])
     errors = validate_world(bad_world)
     assert any("does not exist there" in e for e in errors)
+
+
+def test_main_tournament_with_no_matchdays_or_rounds_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    comp = f.competition("cl_main", [], format="european", is_main_tournament=True)
+    bad_world = f.world(clubs, [v], [comp])
+    errors = validate_world(bad_world)
+    assert any("declares neither league_phase_matchdays nor knockout_rounds" in e for e in errors)
+
+
+def test_main_tournament_declaring_european_rounds_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    comp = f.competition(
+        "cl_main",
+        ["t1"],
+        format="european",
+        is_main_tournament=True,
+        european_rounds=[f.european_round("q1", entrants=["t1"], forced_date=date(2026, 8, 1))],
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
+    )
+    bad_world = f.world(clubs, [v], [comp])
+    errors = validate_world(bad_world)
+    assert any("declares european_rounds" in e for e in errors)
+
+
+def test_qualifying_competition_declaring_main_tournament_fields_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    comp = f.competition(
+        "cl",
+        ["t1"],
+        format="european",
+        european_rounds=[f.european_round("q1", entrants=["t1"], forced_date=date(2026, 8, 1))],
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
+    )
+    bad_world = f.world(clubs, [v], [comp])
+    errors = validate_world(bad_world)
+    assert any("declares league_phase_matchdays or knockout_rounds" in e for e in errors)
+
+
+def test_main_tournament_duplicate_matchday_id_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    comp = f.competition(
+        "cl_main",
+        [],
+        format="european",
+        is_main_tournament=True,
+        league_phase_matchdays=[
+            f.european_matchday("md1", forced_date=date(2026, 9, 10)),
+            f.european_matchday("md1", forced_date=date(2026, 10, 1)),
+        ],
+    )
+    bad_world = f.world(clubs, [v], [comp])
+    errors = validate_world(bad_world)
+    assert any("duplicate league phase matchday id" in e for e in errors)
+
+
+def test_main_tournament_reachable_from_unknown_competition_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    comp = f.competition(
+        "cl_main",
+        [],
+        format="european",
+        is_main_tournament=True,
+        reachable_from=["ghost_competition"],
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
+    )
+    bad_world = f.world(clubs, [v], [comp])
+    errors = validate_world(bad_world)
+    assert any("reachable_from unknown competition" in e for e in errors)
+
+
+def test_main_tournament_reachable_from_a_non_european_competition_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    league = f.competition("league", ["t1"])
+    comp = f.competition(
+        "cl_main",
+        [],
+        format="european",
+        is_main_tournament=True,
+        reachable_from=["league"],
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
+    )
+    bad_world = f.world(clubs, [v], [league, comp])
+    errors = validate_world(bad_world)
+    assert any("which is a league, not european" in e for e in errors)
+
+
+def test_main_tournament_reachable_from_another_main_tournament_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    other_main = f.competition(
+        "el_main",
+        [],
+        format="european",
+        is_main_tournament=True,
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
+    )
+    comp = f.competition(
+        "cl_main",
+        [],
+        format="european",
+        is_main_tournament=True,
+        reachable_from=["el_main"],
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
+    )
+    bad_world = f.world(clubs, [v], [other_main, comp])
+    errors = validate_world(bad_world)
+    assert any("is itself a main tournament" in e for e in errors)
+
+
+def test_main_tournament_round_venue_name_requires_a_single_match():
+    from terminliste.model.schema import EuropeanLeg, MainTournamentRound
+
+    with pytest.raises(ValueError, match="only meaningful for a single-match round"):
+        MainTournamentRound(
+            id="final",
+            name="Final",
+            first_leg=EuropeanLeg(forced_date=date(2027, 5, 1)),
+            second_leg=EuropeanLeg(forced_date=date(2027, 5, 8)),
+            venue_name="Wembley Stadium",
+        )
 
 
 def test_season_european_competitions_rejects_a_non_european_format():

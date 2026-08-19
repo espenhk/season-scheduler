@@ -685,8 +685,13 @@
       {% endfor %}
       {% elif competition.is_european %}
       <div class="meta">
+        {% if competition.is_main_tournament %}
+        {{ competition.match_count }} matchday(s)/round(s) tracked · every reachable team shown
+        with opponent "TBD" — pairings aren't drawn this far ahead
+        {% else %}
         {{ competition.match_count }} qualifying round(s) tracked · opponent and home/away shown
         where UEFA has confirmed them, "TBD" where the tie is still conditional on another result
+        {% endif %}
       </div>
       {% for round in competition.rounds %}
       <div class="round">

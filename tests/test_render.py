@@ -446,6 +446,93 @@ def test_european_entries_use_unknown_venue_type_when_home_leg_is_not_set():
     assert all(e["opponent"] == "TBD" for e in entries)
 
 
+def test_round_legs_collapses_a_shared_date_to_one_entry():
+    """`_round_legs` is what stops a same-date round (a main tournament
+    matchday, or a final whose second leg was folded onto the first's date)
+    from producing a spurious 'first leg'/'second leg' duplicate — a real
+    two-legged round (different dates) still produces both."""
+    from terminliste.report.render import _round_legs
+
+    assert _round_legs(date(2026, 9, 10), date(2026, 9, 10)) == [(None, date(2026, 9, 10))]
+    assert _round_legs(date(2026, 8, 18), date(2026, 8, 25)) == [
+        ("first", date(2026, 8, 18)),
+        ("second", date(2026, 8, 25)),
+    ]
+
+
+def test_main_tournament_renders_via_the_display_adapter():
+    """Main tournament competitions (issue #79) have no `european_rounds` of
+    their own — `build_main_tournament_rounds_for_display`
+    (`rounds/european_schedule.py`) adapts `league_phase_matchdays`/
+    `knockout_rounds` into that shape first, so `_european_views`/
+    `_european_entries` show every reachable team's matchdays and knockout
+    legs exactly like a qualifying competition's, without needing any
+    changes of their own — and without duplicating a same-date round
+    (a matchday, or the final) into two fixture rows the way a naive
+    two-legs-always shape would (regression: an earlier version of this
+    adapter did exactly that)."""
+    from terminliste.report.render import _european_views
+    from terminliste.rounds.european_schedule import build_main_tournament_rounds_for_display
+
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    club_colors = {c.id: c.color for c in world.clubs.values()}
+    qualifying = f.competition(
+        "cl",
+        ["a_m"],
+        format="european",
+        european_rounds=[f.european_round("playoff", entrants=["a_m"], forced_date=date(2026, 8, 18))],
+    )
+    main = f.competition(
+        "cl_main",
+        [],
+        format="european",
+        is_main_tournament=True,
+        reachable_from=["cl"],
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
+        knockout_rounds=[
+            f.main_tournament_round(
+                "r16",
+                first_leg=f.european_leg(forced_date=date(2027, 3, 10)),
+                second_leg=f.european_leg(forced_date=date(2027, 3, 17)),
+            ),
+            f.main_tournament_round("final", forced_date=date(2027, 6, 5), venue_name="Wembley Stadium"),
+        ],
+    )
+
+    rounds, resolved_legs = build_main_tournament_rounds_for_display(main, [qualifying, main], set())
+    display_main = main.model_copy(update={"european_rounds": rounds})
+
+    entries = _european_entries(world, [display_main], resolved_legs, club_colors, {})
+    # One reachable team (a_m): 1 matchday + 2 r16 legs + 1 final = 4 rows —
+    # not 6, which is what emitting two rows for the matchday and the final
+    # (the bug the review caught) would produce.
+    assert len(entries) == 4
+    assert sorted(e["date"] for e in entries) == [
+        date(2026, 9, 10),
+        date(2027, 3, 10),
+        date(2027, 3, 17),
+        date(2027, 6, 5),
+    ]
+    assert all(e["team"] == world.team_short_label("a_m") for e in entries)
+    assert all(e["opponent"] == "TBD" for e in entries)
+    matchday_entry = next(e for e in entries if e["date"] == date(2026, 9, 10))
+    assert matchday_entry["round_name"] == "md1"  # no "(None leg)"/"(first leg)" suffix
+    final_entry = next(e for e in entries if e["date"] == date(2027, 6, 5))
+    assert final_entry["round_name"] == "final"
+
+    views = _european_views(world, [display_main], resolved_legs, club_colors)
+    assert len(views) == 1
+    assert views[0]["is_main_tournament"] is True
+    assert views[0]["match_count"] == 3
+    matchday_round = next(r for r in views[0]["rounds"] if r["name"] == "md1")
+    assert len(matchday_round["fixtures"]) == 1
+    r16_round = next(r for r in views[0]["rounds"] if r["name"] == "r16")
+    assert len(r16_round["fixtures"]) == 2
+    final_round = next(r for r in views[0]["rounds"] if r["name"] == "final")
+    assert len(final_round["fixtures"]) == 1
+    assert "Wembley Stadium" in final_round["note"]
+
+
 def test_combined_views_include_european_rounds_alongside_league_matches():
     """A European round used to be invisible in the report — it must show up
     both under "By competition" and in the combined calendar/list views,

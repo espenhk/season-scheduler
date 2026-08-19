@@ -149,21 +149,29 @@ this project didn't already have is needed for that half of issue #32 — the
 work was building the *conditional* half (issue #29's cascade), which this
 document is otherwise about.
 
-## Scope boundary: qualifying only
+## Scope boundary: qualifying only (crossed by issue #79)
 
-This project tracks UEFA *qualifying* rounds, not the group/league phase
-that follows. A team eliminated from a competition's last qualifying round
-(or, on some paths, its third qualifying round) doesn't fall out of Europe
-under the post-2024 CL/EL/UECL format — it drops straight into the next
-competition's *league phase*: many matchdays spread across autumn, not a
-single round with a date to avoid. Modelling that would mean tracking a
-whole second competition structure (a mini-league, not a knockout cascade)
-for a team that might end up in any of three different ones depending on
-results neither this project nor its data source can know in advance.
-`drop_to_competition`/`drop_to_round` is `None` wherever the real rule sends
-a losing team into a league phase rather than another qualifying round —
-this is a deliberate boundary, not an oversight, and is called out in each
-data file's header at the specific round it applies to.
+This project originally tracked only UEFA *qualifying* rounds, not the
+group/league phase that follows. A team eliminated from a competition's
+last qualifying round (or, on some paths, its third qualifying round)
+doesn't fall out of Europe under the post-2024 CL/EL/UECL format — it drops
+straight into the next competition's *league phase*: many matchdays spread
+across autumn, not a single round with a date to avoid. Modelling that would
+mean tracking a whole second competition structure (a mini-league, not a
+knockout cascade) for a team that might end up in any of three different
+ones depending on results neither this project nor its data source can know
+in advance. `drop_to_competition`/`drop_to_round` is `None` wherever the
+real rule sends a losing team into a league phase rather than another
+qualifying round — that was a deliberate boundary, not an oversight, and is
+still called out in each qualifying data file's header at the specific
+round it applies to.
+
+Issue #79 crosses that boundary: `champions_league_main_2026.yml` and its
+Europa/Conference League counterparts model each competition's league phase
+and knockout rounds as their own `Competition` (`is_main_tournament: true`),
+separate from the qualifying one. See "Main tournaments" below for how they
+avoid needing the "whole second competition structure" this section used to
+rule out.
 
 ## What's fully implemented vs. sketched, for 2026-27
 
@@ -194,3 +202,52 @@ data file's header at the specific round it applies to.
   merging at a shared depth, and the error paths on synthetic data, so the
   code path is verified independent of whether the current season's real
   UEFA rules happen to exercise every hop.
+
+## Main tournaments (issue #79)
+
+Why not just extend `EuropeanRound`? A qualifying round is one two-legged
+tie against one named opponent; a league-phase matchday is many teams' games
+across one shared date, and a knockout round after the play-off is
+two-legged like qualifying except the final, which is a single match at a
+venue fixed years in advance. `EuropeanRound.ties` and its `first_leg`/
+`second_leg` pair don't fit either shape, so two new models exist instead:
+`EuropeanMatchday` (a bare `_ScheduledRound` — the same shape `CupRound`
+already uses, since neither cares about opponents, only "when") and
+`MainTournamentRound` (`EuropeanRound`'s two-leg shape, minus `ties`, plus an
+optional `venue_name` valid only when `second_leg` is omitted).
+
+**Reachability, not cascade-walking.** The qualifying cascade's
+`resolve_team_cascade` walks forward from a team's actual entry round,
+branch by branch, because *which* round a team is playing in a given week
+matters — it decides which two dates get blocked. A main tournament's
+matchday calendar doesn't depend on which team is asking: every reachable
+team blocks the same list. So instead of a walk, `Competition.reachable_from`
+just names which qualifying competitions feed this main tournament, and
+`resolve_main_tournament_commitments` takes the union of every entrant
+across every round of every named competition. This is deliberately coarser
+than the qualifying cascade's `drop_to_competition`/`drop_to_round`, which
+does encode *which round* triggers *which* drop. Tightening
+`reachable_from` to be round-aware — "only a team eliminated at the
+play-off round or later can reach the Europa League league phase," per
+UEFA's real rule — is exactly the kind of round-to-round wiring
+`drop_to_competition`/`drop_to_round` already does, and is a natural
+follow-up once a reliable source for the exact drop rules per round is
+reachable from this sandbox (see README's "Sourcing" notes).
+
+**Desired matchday.** `Competition.preferred_weekday` already existed (the
+league soft-preference `PreferredWeekday` in `scoring/soft.py` reads it) but
+had never been wired into window resolution. `resolve_leg_date` now takes an
+optional `preferred_weekday` and, for a *window* (never a `forced_date`,
+which is already exact), prefers the first matching, non-blacked-out day —
+falling back to the old earliest-day behaviour when the window doesn't
+contain one. Reusing the same field instead of adding a matchday-level one
+keeps the "CL Thursday, EL/UECL Tuesday/Wednesday" convention a one-line
+data edit per competition, not new schema.
+
+**No new placement machinery.** Main tournament competitions are
+`movable: false` and resolved by `resolve_european_commitments` before the
+domestic solver ever runs, feeding the same `EuropeanCommitmentDate` list
+`EuropeanCommitmentConflict` and both solvers' candidate-pruning already
+consume for qualifying commitments — "placed first, and specific dates
+don't move" was already true of that whole path, so main tournaments get it
+for free rather than needing issue #79 to add anything new there.

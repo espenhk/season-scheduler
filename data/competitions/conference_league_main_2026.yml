@@ -1,0 +1,105 @@
+# 2026-27 UEFA Conference League — the main tournament, issue #79.
+#
+# format: european, movable: false, is_main_tournament: true — see
+# champions_league_main_2026.yml's header for the general shape of this
+# file, its sourcing/verification notes, and the "assume it reaches the
+# final" simplification `league_phase_matchdays`/`knockout_rounds` make.
+#
+# reachable_from lists conference_league_2026 (Brann and, via
+# europa_league_2026's own cascade, Tromsø IL) and europa_league_2026
+# (Tromsø IL, Lillestrøm SK) — not champions_league_2026, even though a
+# team could in principle fall all the way from Champions League qualifying
+# into the Conference League league phase across two cascade hops. See
+# europa_league_main_2026.yml's header for why champions_league_2026 is
+# left out here too: its qualifying data deliberately wires no
+# drop_to_competition out of Champions League, and including it anyway
+# made a feasible schedule practically unreachable within `cli.py
+# generate`'s time budget.
+#
+# preferred_weekday: tuesday — see europa_league_main_2026.yml's header for
+# why this and Wednesday split the issue's "Tuesday/Wednesday" pair between
+# the two competitions rather than picking one arbitrarily for both.
+#
+# verified: false — see champions_league_main_2026.yml's header for
+# sourcing and channel; the Conference League league phase only runs 6
+# matchdays (not 8, like Champions/Europa League), and its final's venue
+# and date come from Wikipedia's 2027 UEFA Conference League final page.
+id: conference_league_main_2026
+name: UEFA Conference League
+short_name: "UECL"
+season: 2026
+gender: men
+format: european
+movable: false
+is_main_tournament: true
+
+# Season report colour (issue #77) — same teal family as
+# champions_league_main_2026.yml, lightest shade.
+color: "#48c9b0"
+
+team_count: 0
+teams: []
+
+min_rest_days: 2
+preferred_weekday: tuesday
+
+reachable_from:
+  - europa_league_2026
+  - conference_league_2026
+
+league_phase_matchdays:
+  - id: md1
+    name: Matchday 1
+    forced_date: 2026-10-15
+  - id: md2
+    name: Matchday 2
+    forced_date: 2026-10-22
+  - id: md3
+    name: Matchday 3
+    forced_date: 2026-11-05
+  - id: md4
+    name: Matchday 4
+    forced_date: 2026-11-26
+  - id: md5
+    name: Matchday 5
+    forced_date: 2026-12-10
+  - id: md6
+    name: Matchday 6
+    forced_date: 2026-12-17
+
+knockout_rounds:
+  - id: playoff
+    name: Knockout phase play-offs
+    note: "Only teams finishing 9th-24th in the league phase play this round — see header."
+    first_leg:
+      forced_date: 2027-02-18
+    second_leg:
+      forced_date: 2027-02-25
+
+  - id: round_of_16
+    name: Round of 16
+    first_leg:
+      forced_date: 2027-03-11
+    second_leg:
+      forced_date: 2027-03-18
+
+  - id: quarterfinal
+    name: Quarter-final
+    first_leg:
+      forced_date: 2027-04-08
+    second_leg:
+      forced_date: 2027-04-15
+
+  - id: semifinal
+    name: Semi-final
+    first_leg:
+      forced_date: 2027-04-29
+    second_leg:
+      forced_date: 2027-05-06
+
+  - id: final
+    name: Final
+    note: "Single match, neutral venue — fixed years in advance, independent of either finalist."
+    first_leg:
+      forced_date: 2027-06-02
+    venue_name: "Beşiktaş Park, Istanbul"

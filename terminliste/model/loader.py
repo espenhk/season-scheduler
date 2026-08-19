@@ -271,6 +271,7 @@ def validate_world(world: World) -> list[str]:
         errors.extend(_validate_european_rounds(competition))
 
     errors.extend(_validate_european_cascade(world))
+    errors.extend(_validate_main_tournaments(world))
     errors.extend(_validate_competition_colors(world))
     errors.extend(_validate_competition_short_names(world))
 
@@ -390,13 +391,25 @@ def _validate_european_rounds(competition: Competition) -> list[str]:
     belongs to the competition. Mirrors `_validate_cup_rounds`; the one
     thing that check doesn't need and this one does is `entrants`, since a
     European competition's rounds don't all share the same team list the
-    way a cup's do (see `EuropeanRound`)."""
+    way a cup's do (see `EuropeanRound`).
+
+    A main tournament (`is_main_tournament: true`, issue #79) uses
+    `league_phase_matchdays`/`knockout_rounds` instead of `european_rounds`
+    — `_validate_main_tournament_rounds` below is its counterpart.
+    """
     errors: list[str] = []
     if competition.format != "european":
         return errors
+    if competition.is_main_tournament:
+        return _validate_main_tournament_rounds(competition)
     if not competition.european_rounds:
         errors.append(f"european competition {competition.id!r} declares no european_rounds")
         return errors
+    if competition.league_phase_matchdays or competition.knockout_rounds:
+        errors.append(
+            f"qualifying competition {competition.id!r} declares league_phase_matchdays or "
+            f"knockout_rounds — set is_main_tournament: true, or move them out"
+        )
 
     seen_ids: set[str] = set()
     previous_round = None
@@ -466,6 +479,93 @@ def _validate_european_cascade(world: World) -> list[str]:
                     f"competition {competition.id!r} round {round_.id!r} drops into "
                     f"{round_.drop_to_competition!r} round {round_.drop_to_round!r}, which does "
                     f"not exist there"
+                )
+    return errors
+
+
+def _validate_main_tournament_rounds(competition: Competition) -> list[str]:
+    """Structural check for a main tournament's (`is_main_tournament: true`,
+    issue #79) `league_phase_matchdays` and `knockout_rounds`: at least one
+    of the two is non-empty, ids are unique within each list, and — same
+    ordering sanity as `_validate_cup_rounds`/`_validate_european_rounds` —
+    no matchday or round's whole possible range falls entirely before the
+    previous one's."""
+    errors: list[str] = []
+    if competition.european_rounds:
+        errors.append(
+            f"main tournament {competition.id!r} declares european_rounds — that's the "
+            f"qualifying competition's shape; set is_main_tournament: false, or move them out"
+        )
+    if not competition.league_phase_matchdays and not competition.knockout_rounds:
+        errors.append(
+            f"main tournament {competition.id!r} declares neither league_phase_matchdays nor "
+            f"knockout_rounds"
+        )
+        return errors
+
+    seen_ids: set[str] = set()
+    previous = None
+    for matchday in competition.league_phase_matchdays:
+        if matchday.id in seen_ids:
+            errors.append(
+                f"competition {competition.id!r} has duplicate league phase matchday id "
+                f"{matchday.id!r}"
+            )
+        seen_ids.add(matchday.id)
+        if previous is not None and matchday.latest < previous.earliest:
+            errors.append(
+                f"competition {competition.id!r} league phase matchday {matchday.id!r} "
+                f"({matchday.earliest}..{matchday.latest}) falls entirely before the previous "
+                f"matchday {previous.id!r} ({previous.earliest}..{previous.latest})"
+            )
+        previous = matchday
+
+    previous_round = None
+    for round_ in competition.knockout_rounds:
+        if round_.id in seen_ids:
+            errors.append(
+                f"competition {competition.id!r} has duplicate knockout round id {round_.id!r}"
+            )
+        seen_ids.add(round_.id)
+        if previous_round is not None and round_.latest < previous_round.earliest:
+            errors.append(
+                f"competition {competition.id!r} knockout round {round_.id!r} "
+                f"({round_.earliest}..{round_.latest}) falls entirely before the previous round "
+                f"{previous_round.id!r} ({previous_round.earliest}..{previous_round.latest})"
+            )
+        previous_round = round_
+    return errors
+
+
+def _validate_main_tournaments(world: World) -> list[str]:
+    """Cross-competition check for `reachable_from` (issue #79): every id
+    names a competition that actually exists, is a UEFA *qualifying*
+    competition (`format == "european"`, `is_main_tournament: false`), not
+    the main tournament itself or another main tournament — reachability is
+    only ever computed from a qualifying entrant, never from one main
+    tournament into another."""
+    errors: list[str] = []
+    for competition in world.competitions.values():
+        if competition.format != "european" or not competition.is_main_tournament:
+            continue
+        for source_id in competition.reachable_from:
+            source = world.competitions.get(source_id)
+            if source is None:
+                errors.append(
+                    f"main tournament {competition.id!r} is reachable_from unknown competition "
+                    f"{source_id!r}"
+                )
+                continue
+            if source.format != "european":
+                errors.append(
+                    f"main tournament {competition.id!r} is reachable_from {source_id!r}, which "
+                    f"is a {source.format}, not european"
+                )
+                continue
+            if source.is_main_tournament:
+                errors.append(
+                    f"main tournament {competition.id!r} is reachable_from {source_id!r}, which "
+                    f"is itself a main tournament, not a qualifying competition"
                 )
     return errors
 

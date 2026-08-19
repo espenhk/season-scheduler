@@ -262,6 +262,105 @@ cup pair): the real opponent where UEFA has named one, "TBD" where the tie
 is still conditional. A written plan for all of this lives in
 `docs/european_qualifiers_plan.md`.
 
+### Main tournaments (Champions/Europa/Conference League)
+
+Issue #79 lifts the "qualifying only" boundary above for the three UEFA
+competitions' *main* tournaments — league phase plus knockout rounds —
+modelled as their own `Competition` entries (`champions_league_main_2026.yml`
+and friends), separate from the qualifying ones: `is_main_tournament: true`,
+`league_phase_matchdays` (a single date per matchday, like a `CupRound`, not
+two legs — the whole league phase plays across shared matchdays) and
+`knockout_rounds` (`MainTournamentRound`: two legs like a qualifying round,
+except the final, whose `second_leg` is omitted and whose `venue_name` names
+a venue fixed years in advance and almost always outside Norway — freeform
+text rather than a `Venue.id` reference, since `world.venues` only models
+Norwegian grounds).
+
+A main tournament has no static `teams` list — which of several possible
+tournaments a qualifying entrant ends up in isn't known until results are
+in — so `reachable_from` names the *qualifying* competitions whose entrants
+(every team listed in any of their rounds) are reachable here, and every one
+of them is assumed to reach the final, the same "assume it goes all the way"
+simplification `rounds/cup_schedule.py` makes for NM Cupen's final. This is
+coarser than UEFA's real round-by-round drop rule — which round a team is
+eliminated from decides whether it can fall as far as the next competition
+at all, something this project doesn't attempt to model precisely (see
+`Competition.reachable_from`'s docstring in `schema.py`).
+
+`reachable_from` only crosses into another competition where the qualifying
+data itself already wires that hop via `drop_to_competition`/
+`drop_to_round` — `europa_league_main_2026.yml` lists `europa_league_2026`
+plus (via the one real wired hop) `conference_league_2026`'s entrants
+reaching it; `champions_league_2026.yml` deliberately wires no
+`drop_to_competition` at all, so no main tournament's `reachable_from` lists
+it as a source for anyone but `champions_league_main_2026` itself. That
+restriction isn't just for consistency: an earlier version listed
+`champions_league_2026` under every main tournament's `reachable_from`
+(matching the issue's own "both CL, EL and UECL are reachable" framing
+literally), which meant a Champions League qualifying entrant blocked its
+own dates across all three main tournaments' calendars simultaneously —
+`cli.py generate` found zero feasible schedules even at the full 180s
+default budget, with `european_commitment_conflict` overwhelmingly the most
+common dead end (86,236 of 86,236 investigated scenarios hit one, more than
+`min_rest_days` or any other hard rule). Since a team is only ever in *one*
+main tournament's league phase at a time, not all three at once, unioning
+every reachable tournament's whole calendar for one team is a real
+over-approximation, not just a documented simplification.
+
+Narrowing `reachable_from` to what the qualifying cascade already
+corroborates (above) measurably helps — the best candidate at 180s goes from
+3-6 hard violations down to 2 — but does not reach full feasibility either:
+Tromsø IL alone is still reachable for both `europa_league_main_2026` and
+`conference_league_main_2026` (the one real wired cascade hop), so it still
+blocks its own dates across two whole main-tournament calendars at once, and
+that alone is enough that no seed tried so far finds a fully feasible
+schedule within 180s. This is the same shape of tightness the "European
+qualifying cascade" section above already documents for qualifying-only
+seasons (some seeds need the full 180s, implying others might not make it
+either) — main tournaments make it measurably worse, not qualitatively new.
+Closing the remaining gap is a real follow-up, not attempted here: either a
+higher default `--time-budget` for a season with main tournaments in play,
+or the round-aware `reachable_from` tightening `Competition.reachable_from`'s
+docstring already describes.
+
+`resolve_main_tournament_commitments` (`rounds/european_schedule.py`)
+resolves each main tournament's own dates once — no branching to walk, since
+every reachable team blocks the same list — and merges them into the same
+`EuropeanCommitmentDate` list `resolve_european_commitments` already builds
+from the qualifying cascade, so `EuropeanCommitmentConflict` and both
+solvers' cup/European candidate-date pruning need no changes at all to cover
+main tournaments too. The one genuinely new piece of resolution logic is
+`preferred_weekday`-biased date selection: `resolve_leg_date` now prefers the
+first occurrence of a competition's `preferred_weekday` inside a window
+(falling back to the plain earliest day when the window doesn't contain
+one), so Champions League's dates lean Thursday and Europa/Conference
+League's lean Tuesday/Wednesday, per the issue.
+
+Because main tournament competitions are `movable: false` and resolved
+before the domestic solver ever runs (same as qualifying), "European games
+should be placed first, and specific dates shouldn't move" falls out of the
+existing architecture for free rather than needing new placement-order code.
+
+**Report display.** `report/render.py`'s `_european_views`/`_european_entries`
+only know how to read a competition's `european_rounds` — a main tournament
+has none, since its dates live in `league_phase_matchdays`/`knockout_rounds`
+instead. Rather than teach those two functions a second shape,
+`build_main_tournament_rounds_for_display` (`rounds/european_schedule.py`)
+adapts a main tournament into the same `EuropeanRound`/`ResolvedLegs` shape
+`resolve_all_legs` already produces for qualifying — every reachable team
+becomes a synthetic `EuropeanTie` (opponent "TBD", `home_leg` unset, since
+pairings this far ahead genuinely aren't known) — and `cli.py`'s
+`_european_report_data` swaps in a display-only copy of the competition
+(`Competition.model_copy(update={"european_rounds": ...})`, which doesn't
+re-validate) carrying that adapted round list. The rendering code itself
+needed no changes at all beyond one label branch (`is_main_tournament` in
+the by-competition card's summary text) and folding a knockout round's
+`venue_name` into its displayed `note`, since neither `_european_venue_type`
+nor `_european_venue_label` distinguish a synthetic tie's ground from a
+real one's — both read "unknown"/"not yet confirmed" for every main
+tournament fixture, which is honest but doesn't call out a final's actual,
+known venue on its own fixture rows the way the round-level note does.
+
 ## Constraints implemented
 
 **Hard** (`terminliste/scoring/hard.py`) — a schedule with any of these
@@ -468,10 +567,21 @@ end for both Norwegian entrants; Europa League and Conference League carry
 their own real rounds and entrants but only one cascade hop between them is
 wired (Europa League Q3 -> Conference League play-off, the one real
 UEFA rule that lands on another *qualifying* round rather than a league
-phase this project doesn't track) — a natural next step is deciding whether
-that league-phase boundary is worth crossing (many more matchdays, spread
-across autumn, for a team that could end up in any of three competitions'
-league phases depending on results) or stays out of scope.
+phase this project doesn't track).
+
+That league-phase boundary is now crossed — issue #79 adds each
+competition's *main* tournament (league phase plus knockout rounds) as its
+own competition, see "Main tournaments" above. Its `reachable_from`
+simplification (every entrant of a listed qualifying competition is assumed
+able to reach a main tournament's final) is coarser than the boundary it
+replaces and a natural next step in its own right: modelling UEFA's real
+round-by-round drop rule precisely (which round a team is eliminated from
+decides whether it can fall as far as the next competition at all) would
+tighten `reachable_from` from "every entrant of this whole qualifying
+competition" down to "every entrant still alive from this specific round
+onward," at the cost of the same kind of round-to-round wiring
+`drop_to_competition`/`drop_to_round` already does for the qualifying
+cascade.
 
 Both solvers already prune candidate dates that conflict with a resolved
 European commitment up front — `solvers/greedy.py`'s cost function

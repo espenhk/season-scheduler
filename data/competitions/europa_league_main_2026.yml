@@ -1,0 +1,119 @@
+# 2026-27 UEFA Europa League — the main tournament, issue #79.
+#
+# format: european, movable: false, is_main_tournament: true — see
+# champions_league_main_2026.yml's header for the general shape of this
+# file, its sourcing/verification notes, and the "assume it reaches the
+# final" simplification `league_phase_matchdays`/`knockout_rounds` make.
+#
+# reachable_from lists only europa_league_2026 — this competition's own
+# qualifying entrants, Tromsø IL and Lillestrøm SK — not
+# champions_league_2026, even though a Champions League qualifying exit can
+# in principle cascade into the Europa League league phase under the
+# post-2024 format. champions_league_2026.yml deliberately wires no
+# drop_to_competition for that hop ("there is nothing further for this
+# project to track" once a team is out of Champions League qualifying, per
+# that file's header) — extending reachability here to cover it anyway
+# would contradict a scope boundary the qualifying data has already drawn
+# for itself, and blocking a Champions League entrant's dates across all
+# three main tournaments' calendars at once (rather than just its own)
+# turned out to make `cli.py generate` unable to find a single feasible
+# schedule even at the full 180s default budget in practice — see
+# README.md's "Main tournaments" section.
+#
+# preferred_weekday: wednesday, per issue #79's "Europa League/Conference
+# League on Tuesday/Wednesday" — this project's own qualifiers all block
+# specific leg dates rather than a whole weekday, so there was no existing
+# precedent to match; Wednesday here and Tuesday for
+# conference_league_main_2026.yml simply split the issue's given pair
+# between the two, and either can be swapped in the data if the real
+# broadcast calendar (unreachable from this sandbox) turns out to disagree.
+#
+# verified: false — see champions_league_main_2026.yml's header for
+# sourcing and channel; the Europa League final's venue and date come from
+# Wikipedia's 2027 UEFA Europa League final page.
+id: europa_league_main_2026
+name: UEFA Europa League
+short_name: "EL"
+season: 2026
+gender: men
+format: european
+movable: false
+is_main_tournament: true
+
+# Season report colour (issue #77) — same teal family as
+# champions_league_main_2026.yml, middle shade.
+color: "#16a085"
+
+team_count: 0
+teams: []
+
+min_rest_days: 2
+preferred_weekday: wednesday
+
+reachable_from:
+  - europa_league_2026
+
+league_phase_matchdays:
+  - id: md1
+    name: Matchday 1
+    window_start: 2026-09-16
+    window_end: 2026-09-17
+    granularity: week
+  - id: md2
+    name: Matchday 2
+    forced_date: 2026-10-15
+  - id: md3
+    name: Matchday 3
+    forced_date: 2026-10-22
+  - id: md4
+    name: Matchday 4
+    forced_date: 2026-11-05
+  - id: md5
+    name: Matchday 5
+    forced_date: 2026-11-26
+  - id: md6
+    name: Matchday 6
+    forced_date: 2026-12-10
+  - id: md7
+    name: Matchday 7
+    forced_date: 2027-01-21
+  - id: md8
+    name: Matchday 8
+    forced_date: 2027-01-28
+
+knockout_rounds:
+  - id: playoff
+    name: Knockout phase play-offs
+    note: "Only teams finishing 9th-24th in the league phase play this round — see header."
+    first_leg:
+      forced_date: 2027-02-18
+    second_leg:
+      forced_date: 2027-02-25
+
+  - id: round_of_16
+    name: Round of 16
+    first_leg:
+      forced_date: 2027-03-11
+    second_leg:
+      forced_date: 2027-03-18
+
+  - id: quarterfinal
+    name: Quarter-final
+    first_leg:
+      forced_date: 2027-04-08
+    second_leg:
+      forced_date: 2027-04-15
+
+  - id: semifinal
+    name: Semi-final
+    first_leg:
+      forced_date: 2027-04-29
+    second_leg:
+      forced_date: 2027-05-06
+
+  - id: final
+    name: Final
+    note: "Single match, neutral venue — fixed years in advance, independent of either finalist."
+    first_leg:
+      forced_date: 2027-05-26
+    venue_name: "Deutsche Bank Park (Waldstadion), Frankfurt"

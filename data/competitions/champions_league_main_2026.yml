@@ -1,0 +1,159 @@
+# 2026-27 UEFA Champions League — the main tournament, issue #79.
+#
+# format: european, movable: false, is_main_tournament: true — a separate
+# competition from champions_league_2026.yml's *qualifying* rounds. A
+# Champions League qualifying exit doesn't fall out of Europe under the
+# post-2024 format, it drops into the Europa League league phase — but
+# champions_league_2026.yml deliberately wires no drop_to_competition for
+# that hop ("there is nothing further for this project to track" once a
+# team is out of Champions League qualifying, per that file's header), so
+# reachability here stays limited to this competition's own qualifiers
+# rather than reaching into europa_league_main_2026 too. See
+# `reachable_from` below and its docstring in schema.py.
+#
+# `league_phase_matchdays` + `knockout_rounds` replace `european_rounds`
+# here: the league phase plays every entrant's games across a shared
+# matchday rather than a two-legged tie against one named opponent, and who
+# actually reaches each knockout round depends on results this project
+# cannot know in advance — so, like NM Cupen's final in
+# `terminliste/rounds/cup_schedule.py`, every reachable team is assumed to
+# reach the final and every date is blocked at once. That includes the
+# knockout phase play-off (only for teams finishing 9th-24th in the league
+# phase, not the top 8 who go straight to the round of 16) — blocking both
+# is a deliberate over-approximation, not a mistake: which teams finish
+# where isn't known ahead of time either.
+#
+# preferred_weekday: thursday, per issue #79's "follow the desired matchday
+# approach of the qualifiers: Champions League on Thursdays" — this is the
+# issue's own convention, not independently re-verified against UEFA's real
+# broadcast calendar (unreachable from this sandbox; see README.md).
+#
+# verified: false — league phase and knockout dates assembled via web
+# search (UEFA.com's 2026-27 Champions League "teams, dates, draws, format,
+# final" page, Wikipedia's 2026-27 UEFA Champions League and 2027 UEFA
+# Champions League final pages, groundhopperguides.com's schedule writeup,
+# ESPN's and beIN Sports' final-venue coverage), the same channel and the
+# same caveats as champions_league_2026.yml. Each league-phase matchday's
+# published date is actually a narrow 2-3 day spread (fixtures aren't all
+# on one date) — modelled as a window here, the same way this project
+# already handles a qualifying round's multi-day leg windows.
+id: champions_league_main_2026
+name: UEFA Champions League
+short_name: "CL"
+season: 2026
+gender: men
+format: european
+movable: false
+is_main_tournament: true
+
+# Season report colour (issue #77) — a teal family, distinct from the
+# qualifiers' blue family, so a reader can tell "qualifying" and "main
+# tournament" apart at a glance on the report calendar. Darkest here, same
+# spirit as champions_league_2026.yml's own darkest-of-the-three choice.
+color: "#0e4d40"
+
+team_count: 0
+teams: []
+
+min_rest_days: 2
+preferred_weekday: thursday
+
+# Every entrant of champions_league_2026's qualifying rounds — Bodø/Glimt
+# and Viking — is reachable here. See schema.py's `reachable_from`
+# docstring for why this doesn't also try to model exactly which round a
+# team would have to lose to fall out of Champions League contention.
+reachable_from:
+  - champions_league_2026
+
+league_phase_matchdays:
+  - id: md1
+    name: Matchday 1
+    window_start: 2026-09-08
+    window_end: 2026-09-10
+    granularity: week
+  - id: md2
+    name: Matchday 2
+    window_start: 2026-10-13
+    window_end: 2026-10-14
+    granularity: week
+  - id: md3
+    name: Matchday 3
+    window_start: 2026-10-20
+    window_end: 2026-10-21
+    granularity: week
+  - id: md4
+    name: Matchday 4
+    window_start: 2026-11-03
+    window_end: 2026-11-04
+    granularity: week
+  - id: md5
+    name: Matchday 5
+    window_start: 2026-11-24
+    window_end: 2026-11-25
+    granularity: week
+  - id: md6
+    name: Matchday 6
+    window_start: 2026-12-08
+    window_end: 2026-12-09
+    granularity: week
+  - id: md7
+    name: Matchday 7
+    window_start: 2027-01-19
+    window_end: 2027-01-20
+    granularity: week
+  - id: md8
+    name: Matchday 8
+    forced_date: 2027-01-27
+
+knockout_rounds:
+  - id: playoff
+    name: Knockout phase play-offs
+    note: "Only teams finishing 9th-24th in the league phase play this round — see header."
+    first_leg:
+      window_start: 2027-02-16
+      window_end: 2027-02-17
+      granularity: week
+    second_leg:
+      window_start: 2027-02-23
+      window_end: 2027-02-24
+      granularity: week
+
+  - id: round_of_16
+    name: Round of 16
+    first_leg:
+      window_start: 2027-03-09
+      window_end: 2027-03-10
+      granularity: week
+    second_leg:
+      window_start: 2027-03-16
+      window_end: 2027-03-17
+      granularity: week
+
+  - id: quarterfinal
+    name: Quarter-final
+    first_leg:
+      window_start: 2027-04-06
+      window_end: 2027-04-07
+      granularity: week
+    second_leg:
+      window_start: 2027-04-13
+      window_end: 2027-04-14
+      granularity: week
+
+  - id: semifinal
+    name: Semi-final
+    first_leg:
+      window_start: 2027-04-27
+      window_end: 2027-04-28
+      granularity: week
+    second_leg:
+      window_start: 2027-05-04
+      window_end: 2027-05-05
+      granularity: week
+
+  - id: final
+    name: Final
+    note: "Single match, neutral venue — fixed years in advance, independent of either finalist."
+    first_leg:
+      forced_date: 2027-06-05
+    venue_name: "Estadio Metropolitano, Madrid"

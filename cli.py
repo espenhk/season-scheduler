@@ -39,6 +39,7 @@ from terminliste.report.render import render_report, write_json  # noqa: E402
 from terminliste.rounds.cup_schedule import CupSchedulingError, schedule_cups  # noqa: E402
 from terminliste.rounds.european_schedule import (  # noqa: E402
     EuropeanCascadeError,
+    build_main_tournament_rounds_for_display,
     resolve_all_legs,
     resolve_european_commitments,
 )
@@ -78,10 +79,16 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 f"movable={competition.movable}"
             )
         elif competition.format == "european":
-            print(
-                f"     {competition.name}: {competition.team_count} teams entered, "
-                f"{competition.rounds} rounds tracked, movable={competition.movable}"
-            )
+            if competition.is_main_tournament:
+                print(
+                    f"     {competition.name}: main tournament, {competition.rounds} rounds "
+                    f"tracked, movable={competition.movable}"
+                )
+            else:
+                print(
+                    f"     {competition.name}: {competition.team_count} teams entered, "
+                    f"{competition.rounds} rounds tracked, movable={competition.movable}"
+                )
         else:
             print(
                 f"     {competition.name}: {competition.team_count} teams, "
@@ -443,11 +450,31 @@ def _european_report_data(world, season):
     """The season's European competitions plus their rounds resolved to real
     leg dates — what `render_report` needs to show them, as opposed to
     `_resolve_european_or_exit`'s flattened, cascade-walked commitment list,
-    which is shaped for conflict-checking rather than display."""
+    which is shaped for conflict-checking rather than display.
+
+    A main tournament competition (issue #79) has no `european_rounds` of
+    its own — `report/render.py`'s `_european_views`/`_european_entries`
+    only know how to display those — so `build_main_tournament_rounds_for_display`
+    adapts its `league_phase_matchdays`/`knockout_rounds` into the same
+    shape and a display-only copy of the competition carries the result,
+    letting the rendering code stay unaware main tournaments are modelled
+    any differently from a qualifying competition.
+    """
     european_competitions = [world.competition(c) for c in season.european_competitions]
     blackouts = set(season.blacked_out_dates)
     resolved_legs, _ = resolve_all_legs(european_competitions, blackouts)
-    return european_competitions, resolved_legs
+
+    display_competitions = []
+    for competition in european_competitions:
+        if competition.is_main_tournament:
+            rounds, main_resolved_legs = build_main_tournament_rounds_for_display(
+                competition, european_competitions, blackouts
+            )
+            competition = competition.model_copy(update={"european_rounds": rounds})
+            resolved_legs.update(main_resolved_legs)
+        display_competitions.append(competition)
+
+    return display_competitions, resolved_legs
 
 
 def build_parser() -> argparse.ArgumentParser:

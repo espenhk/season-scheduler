@@ -18,10 +18,12 @@ from terminliste.model.schema import (
     Competition,
     CupRound,
     EuropeanLeg,
+    EuropeanMatchday,
     EuropeanRound,
     EuropeanTie,
     FixedRequirement,
     FullRoundRequirement,
+    MainTournamentRound,
     Match,
     RivalryFixture,
     Season,
@@ -88,6 +90,10 @@ def competition(
     movable: bool | None = None,
     cup_rounds: list[CupRound] | None = None,
     european_rounds: list[EuropeanRound] | None = None,
+    is_main_tournament: bool = False,
+    league_phase_matchdays: list[EuropeanMatchday] | None = None,
+    knockout_rounds: list[MainTournamentRound] | None = None,
+    reachable_from: list[str] | None = None,
     start: date | None = None,
     end: date | None = None,
     final_round_kickoff_time: str = "18:00",
@@ -114,6 +120,10 @@ def competition(
         rounds_per_pairing=rounds_per_pairing,
         cup_rounds=cup_rounds or [],
         european_rounds=european_rounds or [],
+        is_main_tournament=is_main_tournament,
+        league_phase_matchdays=league_phase_matchdays or [],
+        knockout_rounds=knockout_rounds or [],
+        reachable_from=reachable_from or [],
         start=start,
         end=end,
         final_round_kickoff_time=final_round_kickoff_time,
@@ -200,6 +210,54 @@ def european_round(
         note=note,
         drop_to_competition=drop_to_competition,
         drop_to_round=drop_to_round,
+    )
+
+
+def european_matchday(
+    id: str,
+    forced_date: date | None = None,
+    window_start: date | None = None,
+    window_end: date | None = None,
+    granularity: str | None = None,
+    name: str | None = None,
+    note: str = "",
+) -> EuropeanMatchday:
+    return EuropeanMatchday(
+        id=id,
+        name=name or id,
+        forced_date=forced_date,
+        window_start=window_start,
+        window_end=window_end,
+        granularity=granularity,
+        note=note,
+    )
+
+
+def main_tournament_round(
+    id: str,
+    first_leg: EuropeanLeg | None = None,
+    second_leg: EuropeanLeg | None = None,
+    forced_date: date | None = None,
+    window_start: date | None = None,
+    window_end: date | None = None,
+    granularity: str | None = None,
+    venue_name: str | None = None,
+    name: str | None = None,
+    note: str = "",
+) -> MainTournamentRound:
+    """`forced_date`/`window_*` build a two-legged round with both legs on
+    the same date/window — pass `first_leg`/`second_leg` explicitly for one
+    that needs leg-level detail, or `second_leg=None` (the default when
+    neither is given a date) for a single-match round like a final."""
+    if first_leg is None:
+        first_leg = european_leg(forced_date, window_start, window_end, granularity)
+    return MainTournamentRound(
+        id=id,
+        name=name or id,
+        first_leg=first_leg,
+        second_leg=second_leg,
+        venue_name=venue_name,
+        note=note,
     )
 
 

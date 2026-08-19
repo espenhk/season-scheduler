@@ -271,6 +271,63 @@ class EuropeanRound(BaseModel):
         return max(self.first_leg.latest, self.second_leg.latest)
 
 
+class EuropeanMatchday(_ScheduledRound):
+    """One league-phase matchday of a UEFA main tournament (issue #79) — a
+    single date (or window), like a `CupRound`, not two legs: every
+    reachable team's league-phase fixture for that matchday is played
+    across one shared date, not a two-legged tie. `_ScheduledRound`'s
+    `id`/`name`/`note` plus forced-date-XOR-window mechanics are exactly
+    what this needs; no extra fields.
+    """
+
+
+class MainTournamentRound(BaseModel):
+    """One knockout round of a UEFA main tournament, following the league
+    phase (issue #79) — the knockout play-off, round of 16, quarter-final,
+    semi-final and final.
+
+    Two legs, like `EuropeanRound`, except the final: `second_leg` is
+    `None` for a single-match round, and `venue_name` then names where
+    it's played, since UEFA fixes a final's venue years in advance,
+    independently of either finalist. That venue is freeform text rather
+    than a `Venue.id` reference the way a domestic fixture's venue is —
+    it's almost always outside Norway (`loader.py`'s `NORWAY_LAT_RANGE`/
+    `NORWAY_LON_RANGE` check would reject a `Venue` entry for it), and this
+    project has no reason to carry foreign stadium coordinates just to
+    print a name in a report.
+    """
+
+    id: str
+    name: str
+    first_leg: EuropeanLeg
+    second_leg: EuropeanLeg | None = None
+    venue_name: str | None = None
+    note: str = ""
+
+    @model_validator(mode="after")
+    def _venue_only_for_single_match(self) -> "MainTournamentRound":
+        if self.venue_name is not None and self.second_leg is not None:
+            raise ValueError(
+                f"main tournament round {self.id!r}: venue_name is only meaningful for a "
+                f"single-match round (omit second_leg) — a two-legged tie has no one shared venue"
+            )
+        return self
+
+    @property
+    def earliest(self) -> date:
+        """The earliest date this round (either leg, or its one match) could conceivably land on."""
+        if self.second_leg is None:
+            return self.first_leg.earliest
+        return min(self.first_leg.earliest, self.second_leg.earliest)
+
+    @property
+    def latest(self) -> date:
+        """The latest date this round (either leg, or its one match) could conceivably land on."""
+        if self.second_leg is None:
+            return self.first_leg.latest
+        return max(self.first_leg.latest, self.second_leg.latest)
+
+
 class TvTimeSpread(BaseModel):
     """Desired TV-broadcast kickoff shape for a competition's round (issue
     #76): on the preferred weekday, most matches sit at `primary_kickoff_time`,
@@ -403,8 +460,54 @@ class Competition(BaseModel):
 
     # European-only: the UEFA qualifying rounds this competition's Norwegian
     # entrant(s) play, in the order they are played — see `EuropeanRound`
-    # and issue #29. Empty for a league or cup.
+    # and issue #29. Empty for a league or cup, and for a European
+    # competition's own *main* tournament (`is_main_tournament: true`) —
+    # that uses `league_phase_matchdays`/`knockout_rounds` instead.
     european_rounds: list[EuropeanRound] = Field(default_factory=list)
+
+    # Issue #79: distinguishes a UEFA competition's *qualifying* rounds
+    # (`european_rounds`, the only thing this project modelled before) from
+    # its *main tournament* — the league phase plus the knockout rounds
+    # that follow. Explicit rather than inferred from which of the two
+    # field groups below is populated, same reasoning as `movable`.
+    is_main_tournament: bool = False
+
+    # Main-tournament-only: every regular league-phase matchday this
+    # competition's reachable entrants (see `reachable_from`) could be
+    # drawn into. Empty for a qualifying competition or a league/cup.
+    league_phase_matchdays: list[EuropeanMatchday] = Field(default_factory=list)
+
+    # Main-tournament-only: the knockout rounds following the league phase,
+    # in playing order — normally play-off, round of 16, quarter-final,
+    # semi-final, final. Empty for a qualifying competition or a league/cup.
+    knockout_rounds: list[MainTournamentRound] = Field(default_factory=list)
+
+    # Main-tournament-only: which *qualifying* competitions' entrants
+    # (issue #79) can reach this one — e.g. the Conference League main
+    # tournament lists both its own qualifying competition and the Europa
+    # League's, since a Europa League third-qualifying-round exit cascades
+    # into the Conference League play-off under the one hop
+    # `europa_league_2026.yml` actually wires (`drop_to_competition`/
+    # `drop_to_round`). Every entrant of every round of every listed
+    # qualifying competition is assumed able to reach this tournament's
+    # final — the same "assume it goes all the way" simplification
+    # `rounds/cup_schedule.py` makes for NM Cupen, since which of several
+    # possible tournaments a qualifying entrant actually lands in isn't
+    # known until results are in. This is coarser than UEFA's real
+    # round-by-round drop rule (a team eliminated at Champions League
+    # play-off can only fall as far as the Europa League; one eliminated
+    # in an earlier round may not reach Europa League at all) — modelling
+    # that precisely is a documented follow-up, not implemented here; see
+    # `docs/european_qualifiers_plan.md`. In the meantime, only wire a
+    # cross-competition hop here that the qualifying data itself also
+    # wires (via `drop_to_competition`/`drop_to_round`) — Champions League
+    # qualifying deliberately wires none, so no main tournament's
+    # `reachable_from` should list `champions_league_2026` either; doing so
+    # blocks a Champions League entrant's dates across every reachable
+    # tournament's whole calendar at once and made a feasible schedule
+    # practically unreachable within `cli.py generate`'s time budget when
+    # tried (see README.md's "Main tournaments" section).
+    reachable_from: list[str] = Field(default_factory=list)
 
     @property
     def min_gap_days(self) -> int:
@@ -454,12 +557,18 @@ class Competition(BaseModel):
 
         League: (n-1) per leg for even n, n for odd n (bye rounds). Cup: the
         number of real-world rounds its teams are entered into. European:
-        the number of qualifying rounds tracked, same idea as a cup.
+        the number of qualifying rounds tracked (or, for a main
+        tournament, league-phase matchdays plus knockout rounds), same
+        idea as a cup.
         """
         if self.format == "cup":
             return len(self.cup_rounds)
         if self.format == "european":
-            return len(self.european_rounds)
+            return (
+                len(self.european_rounds)
+                + len(self.league_phase_matchdays)
+                + len(self.knockout_rounds)
+            )
         n = self.team_count
         per_leg = n - 1 if n % 2 == 0 else n
         return per_leg * self.rounds_per_pairing

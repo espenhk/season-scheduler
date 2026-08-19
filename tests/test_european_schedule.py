@@ -12,6 +12,8 @@ from terminliste.rounds.european_schedule import (
     resolve_all_legs,
     resolve_european_commitments,
     resolve_leg_date,
+    resolve_main_tournament_commitments,
+    resolve_main_tournament_dates,
     resolve_team_cascade,
 )
 
@@ -46,6 +48,45 @@ def test_windowed_leg_falls_back_to_window_start_when_every_day_is_blacked_out()
     resolved, blacked_out = resolve_leg_date(leg, blackouts={date(2026, 8, 4), date(2026, 8, 5)})
     assert resolved == date(2026, 8, 4)
     assert blacked_out is True
+
+
+# -- resolve_leg_date: preferred_weekday (issue #79) --------------------------
+
+
+def test_preferred_weekday_is_picked_over_the_plain_earliest_day():
+    # 2026-08-04 is a Tuesday, 2026-08-06 a Thursday — without a preference
+    # the earliest day (Tuesday) would win.
+    leg = f.european_leg(window_start=date(2026, 8, 4), window_end=date(2026, 8, 7))
+    resolved, blacked_out = resolve_leg_date(leg, blackouts=set(), preferred_weekday="thursday")
+    assert resolved == date(2026, 8, 6)
+    assert blacked_out is False
+
+
+def test_preferred_weekday_falls_back_to_earliest_day_when_absent_from_window():
+    # Tuesday-Wednesday only — no Thursday in this window at all.
+    leg = f.european_leg(window_start=date(2026, 8, 4), window_end=date(2026, 8, 5))
+    resolved, blacked_out = resolve_leg_date(leg, blackouts=set(), preferred_weekday="thursday")
+    assert resolved == date(2026, 8, 4)
+    assert blacked_out is False
+
+
+def test_preferred_weekday_skips_a_blacked_out_occurrence_for_a_later_one():
+    # Two Thursdays in range: 2026-08-06 and 2026-08-13.
+    leg = f.european_leg(window_start=date(2026, 8, 4), window_end=date(2026, 8, 13))
+    resolved, blacked_out = resolve_leg_date(
+        leg, blackouts={date(2026, 8, 6)}, preferred_weekday="thursday"
+    )
+    assert resolved == date(2026, 8, 13)
+    assert blacked_out is False
+
+
+def test_preferred_weekday_never_overrides_a_forced_date():
+    # 2026-08-04 is a Tuesday, not a Thursday — a forced date is used
+    # exactly regardless of any weekday preference.
+    leg = f.european_leg(forced_date=date(2026, 8, 4))
+    resolved, blacked_out = resolve_leg_date(leg, blackouts=set(), preferred_weekday="thursday")
+    assert resolved == date(2026, 8, 4)
+    assert blacked_out is False
 
 
 # -- resolve_team_cascade: a single competition, no cascade ------------------
@@ -524,3 +565,124 @@ def test_cli_report_data_and_solver_commitments_agree_on_excluded_range_dates():
     report_dates = resolved_legs[("cl", "q2")]
 
     assert commitment_dates == report_dates == (date(2026, 7, 22), date(2026, 7, 28))
+
+
+# -- main tournaments (issue #79) ----------------------------------------------
+
+
+def test_resolve_main_tournament_dates_labels_matchdays_and_knockout_legs():
+    main = f.competition(
+        "cl_main",
+        [],
+        format="european",
+        is_main_tournament=True,
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
+        knockout_rounds=[
+            f.main_tournament_round(
+                "r16",
+                first_leg=f.european_leg(forced_date=date(2027, 3, 10)),
+                second_leg=f.european_leg(forced_date=date(2027, 3, 17)),
+            ),
+            f.main_tournament_round(
+                "final", forced_date=date(2027, 6, 5), venue_name="Wembley Stadium"
+            ),
+        ],
+    )
+    dated, warnings = resolve_main_tournament_dates(main, blackouts=set())
+    assert dated == [
+        ("cl_main: md1", date(2026, 9, 10)),
+        ("cl_main: r16 (first leg)", date(2027, 3, 10)),
+        ("cl_main: r16 (second leg)", date(2027, 3, 17)),
+        ("cl_main: final", date(2027, 6, 5)),
+    ]
+    assert warnings == []
+
+
+def test_resolve_main_tournament_dates_applies_preferred_weekday():
+    main = f.competition(
+        "cl_main",
+        [],
+        format="european",
+        preferred_weekday="thursday",
+        is_main_tournament=True,
+        league_phase_matchdays=[
+            f.european_matchday("md1", window_start=date(2026, 8, 4), window_end=date(2026, 8, 7))
+        ],
+    )
+    dated, _ = resolve_main_tournament_dates(main, blackouts=set())
+    assert dated == [("cl_main: md1", date(2026, 8, 6))]  # the Thursday in that window
+
+
+def _cl_qualifying(entrants_by_round: dict[str, list[str]]):
+    return f.competition(
+        "cl_q",
+        sorted({team for teams in entrants_by_round.values() for team in teams}),
+        format="european",
+        european_rounds=[
+            f.european_round(round_id, entrants=teams, forced_date=date(2026, 8, 4))
+            for round_id, teams in entrants_by_round.items()
+        ],
+    )
+
+
+def test_resolve_main_tournament_commitments_blocks_every_reachable_team():
+    qualifying = _cl_qualifying({"q1": ["glimt"], "playoff": ["glimt", "viking"]})
+    main = f.competition(
+        "cl_main",
+        [],
+        format="european",
+        is_main_tournament=True,
+        reachable_from=["cl_q"],
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
+        knockout_rounds=[
+            f.main_tournament_round("final", forced_date=date(2027, 6, 5), venue_name="Wembley")
+        ],
+    )
+    result, warnings = resolve_main_tournament_commitments([qualifying, main], f.season())
+    assert set(result) == {"glimt", "viking"}
+    for team in ("glimt", "viking"):
+        assert {c.date for c in result[team]} == {date(2026, 9, 10), date(2027, 6, 5)}
+        assert all(c.min_rest_days == main.min_rest_days for c in result[team])
+    assert warnings == []
+
+
+def test_resolve_main_tournament_commitments_skips_a_team_not_in_reachable_from():
+    cl_qualifying = _cl_qualifying({"playoff": ["glimt"]})
+    el_qualifying = f.competition(
+        "el_q",
+        ["other_team"],
+        format="european",
+        european_rounds=[
+            f.european_round("playoff", entrants=["other_team"], forced_date=date(2026, 8, 20))
+        ],
+    )
+    main = f.competition(
+        "cl_main",
+        [],
+        format="european",
+        is_main_tournament=True,
+        reachable_from=["cl_q"],
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
+    )
+    result, _ = resolve_main_tournament_commitments([cl_qualifying, el_qualifying, main], f.season())
+    assert set(result) == {"glimt"}
+
+
+def test_resolve_european_commitments_merges_qualifying_cascade_and_main_tournament():
+    qualifying = _cl_qualifying({"playoff": ["glimt"]})
+    main = f.competition(
+        "cl_main",
+        [],
+        format="european",
+        is_main_tournament=True,
+        reachable_from=["cl_q"],
+        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
+    )
+    season = f.season(european_competitions=["cl_q", "cl_main"])
+    commitments_by_team, warnings = resolve_european_commitments([qualifying, main], season)
+    dates = sorted(c.date for c in commitments_by_team["glimt"])
+    # The playoff round's two legs (same forced_date for both, per
+    # `_cl_qualifying`'s single forced_date) plus the main tournament's one
+    # league-phase matchday.
+    assert dates == [date(2026, 8, 4), date(2026, 8, 4), date(2026, 9, 10)]
+    assert warnings == []
