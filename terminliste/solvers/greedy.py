@@ -232,8 +232,12 @@ def _alignment_score(targets: dict[str, set[int]], home_rounds: dict[str, set[in
 
 
 def resolve_round_pins(
-    season: Season, planned: list[PlannedCompetition]
-) -> dict[tuple[str, int], date]:
+    season: Season,
+    planned: list[PlannedCompetition],
+    by_competition: dict[str, SeasonCalendar] | None = None,
+    cup_windows: dict[str, list[tuple[date, int]]] | None = None,
+    european_commitments: dict[str, list[EuropeanCommitmentDate]] | None = None,
+) -> tuple[dict[tuple[str, int], date], list[str]]:
     """Rounds that must land on one single date, keyed by (competition_id, round_index).
 
     Two sources, both forced entirely onto one date rather than searched for:
@@ -241,15 +245,46 @@ def resolve_round_pins(
     and any hard `FullRoundRequirement` — the round whose anchor already sits
     closest to the required date is the one forced onto it exactly
     (`FullRoundOnDate` in `scoring/hard.py`).
+
+    Because a pinned round puts *every* team in the competition on the same
+    date, a resolved cup or European commitment for even one of them is a
+    real conflict — unlike a single fixture's candidate window, which only
+    has to clear the two teams actually playing. `cup_windows` and
+    `european_commitments` (only `certain` entries count, matching
+    `cpsat.py::_build_model`) are checked against each pin the same way
+    `_cup_clear`/`_european_clear` check a fixture's window; a warning is
+    returned rather than raised, alongside the resolved pins, so a caller can
+    surface it without the whole solve failing outright.
+
+    The final round's date is free to move within `by_competition`'s window
+    around its anchor — it was only ever a computed anchor, not something the
+    data demanded — and does, to the nearest clear date, if a conflict is
+    found. A `FullRoundRequirement`'s date is a hard requirement in its own
+    right and cannot move; a conflict there can only be flagged.
     """
+    certain_commitments = {
+        team_id: [c for c in commitments if c.certain]
+        for team_id, commitments in (european_commitments or {}).items()
+    }
+    cup_windows = cup_windows or {}
+
     pins: dict[tuple[str, int], date] = {}
+    warnings: list[str] = []
+
     for plan in planned:
         if plan.competition.format != "league":
             continue
         final_round = plan.competition.rounds - 1
         anchor = plan.anchors.get(final_round)
-        if anchor is not None:
-            pins[(plan.competition.id, final_round)] = anchor
+        if anchor is None:
+            continue
+        calendar = (by_competition or {}).get(plan.competition.id)
+        chosen, warning = _clear_pin_date(
+            anchor, plan, calendar, cup_windows, certain_commitments, movable=True
+        )
+        pins[(plan.competition.id, final_round)] = chosen
+        if warning:
+            warnings.append(warning)
 
     for requirement in season.full_round_requirements:
         if not requirement.hard:
@@ -260,9 +295,60 @@ def resolve_round_pins(
         round_index = min(
             plan.anchors, key=lambda r: abs((plan.anchors[r] - requirement.date).days)
         )
+        _, warning = _clear_pin_date(
+            requirement.date, plan, None, cup_windows, certain_commitments, movable=False
+        )
         pins[(plan.competition.id, round_index)] = requirement.date
+        if warning:
+            warnings.append(warning)
 
-    return pins
+    return pins, warnings
+
+
+def _clear_pin_date(
+    anchor: date,
+    plan: PlannedCompetition,
+    calendar: SeasonCalendar | None,
+    cup_windows: dict[str, list[tuple[date, int]]],
+    european_commitments: dict[str, list[EuropeanCommitmentDate]],
+    movable: bool,
+) -> tuple[date, str | None]:
+    """The pin date to use, plus a warning if it (still) conflicts.
+
+    Tries the anchor first, then — only if `movable` and a calendar is
+    available to search — nearby dates within the competition's own match
+    window, widening once, the same two-step widen `cpsat.py::_build_model`
+    uses for an ordinary fixture's window.
+    """
+    team_ids = plan.competition.teams
+    if _round_clear(anchor, team_ids, cup_windows, european_commitments):
+        return anchor, None
+
+    if movable and calendar is not None:
+        days = plan.competition.match_window_days
+        for radius in (days, days * 3):
+            for day in calendar.window(anchor, radius):
+                if _round_clear(day, team_ids, cup_windows, european_commitments):
+                    return day, None
+
+    round_desc = "final round" if movable else "full-round requirement"
+    resolution = "no clear nearby date was found" if movable else "the date cannot move"
+    return anchor, (
+        f"{plan.competition.id}: {round_desc} on {anchor} conflicts with a resolved cup or "
+        f"European commitment for at least one team, and {resolution}"
+    )
+
+
+def _round_clear(
+    day: date,
+    team_ids: list[str],
+    cup_windows: dict[str, list[tuple[date, int]]],
+    european_commitments: dict[str, list[EuropeanCommitmentDate]],
+) -> bool:
+    return not any(
+        cup_conflict(cup_windows, team_id, day) or european_conflict(european_commitments, team_id, day)
+        for team_id in team_ids
+    )
 
 
 def align_home_teams_to_round_pins(
@@ -358,8 +444,9 @@ def build_initial_schedule(
     align: bool = True,
     cup_schedules: list[CupSchedule] | None = None,
     european_commitments: dict[str, list[EuropeanCommitmentDate]] | None = None,
-) -> tuple[list[Match], set[str]]:
-    """Return a complete schedule plus the keys of fixtures pinned to a date.
+) -> tuple[list[Match], set[str], list[str]]:
+    """Return a complete schedule, the keys of fixtures pinned to a date, and
+    any warnings from resolving those pins.
 
     Pinned fixtures are the ones satisfying a hard `fixed_requirement`; the
     local search must not move them.
@@ -382,10 +469,12 @@ def build_initial_schedule(
     planned = plan_competitions(world, season, competitions, calendar, rng)
     if align:
         align_dual_clubs(world, planned)
-    round_pins = resolve_round_pins(season, planned)
-    align_home_teams_to_round_pins(season, planned, round_pins)
     cup_windows = resolved_cup_windows(cup_schedules or [])
     european = european_commitments or {}
+    round_pins, pin_warnings = resolve_round_pins(
+        season, planned, by_competition, cup_windows, european
+    )
+    align_home_teams_to_round_pins(season, planned, round_pins)
 
     state = PlacementState()
     matches: list[Match] = []
@@ -471,7 +560,7 @@ def build_initial_schedule(
         state.place(world, match)
 
     matches.sort(key=lambda m: (m.date, m.competition_id, m.home_team))
-    return matches, pinned
+    return matches, pinned, pin_warnings
 
 
 def _pick_fixture_for_requirement(

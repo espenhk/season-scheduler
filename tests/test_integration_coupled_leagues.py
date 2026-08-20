@@ -18,7 +18,7 @@ from terminliste.solvers.greedy import build_initial_schedule
 
 
 def test_dual_clubs_never_clash_at_two_different_venues(world, season, competitions, travel):
-    matches, _ = build_initial_schedule(world, season, competitions, seed=42)
+    matches, _, _ = build_initial_schedule(world, season, competitions, seed=42)
     constraints = build_constraints(world, season, competitions)
     ctx = EvalContext(world=world, season=season, travel=travel, detail=True)
     score = evaluate(matches, constraints, ctx)
@@ -31,7 +31,7 @@ def test_venue_sharing_dual_clubs_never_double_book_their_shared_ground(world, s
     """Every dual club in the shipped data shares one stadium between its
     men's and women's team, so this is where the coupling actually has to pay
     off — the same-venue case `club_home_clash` deliberately excludes."""
-    matches, _ = build_initial_schedule(world, season, competitions, seed=42)
+    matches, _, _ = build_initial_schedule(world, season, competitions, seed=42)
     constraints = build_constraints(world, season, competitions)
     ctx = EvalContext(world=world, season=season, travel=travel, detail=True)
     score = evaluate(matches, constraints, ctx)
@@ -45,8 +45,8 @@ def test_alignment_produces_more_back_to_back_home_days_than_independent_schedul
     constraints = build_constraints(world, season, competitions)
     calendar = build_calendar(world, season)
 
-    aligned, _ = build_initial_schedule(world, season, competitions, seed=42, calendar=calendar, align=True)
-    independent, _ = build_initial_schedule(
+    aligned, _, _ = build_initial_schedule(world, season, competitions, seed=42, calendar=calendar, align=True)
+    independent, _, _ = build_initial_schedule(
         world, season, competitions, seed=42, calendar=calendar, align=False
     )
 

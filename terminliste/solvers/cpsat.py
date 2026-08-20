@@ -53,15 +53,19 @@ class CpSatScheduler:
 
         started = time.perf_counter()
         calendar = build_calendar(request.world, request.season)
+        by_competition = calendars_by_competition(calendar, request.competitions)
         planned = plan_competitions(
             request.world, request.season, request.competitions, calendar
         )
         align_dual_clubs(request.world, planned)
-        round_pins = resolve_round_pins(request.season, planned)
+        cup_windows = resolved_cup_windows(request.cup_schedules)
+        round_pins, pin_warnings = resolve_round_pins(
+            request.season, planned, by_competition, cup_windows, request.european_commitments
+        )
         align_home_teams_to_round_pins(request.season, planned, round_pins)
 
         candidates: list[Candidate] = []
-        notes: list[str] = []
+        notes: list[str] = list(pin_warnings)
         # Each pass forbids re-using the previous solutions' date assignments
         # too closely, which is how a solution *pool* becomes three genuinely
         # different options rather than three trivial variations.

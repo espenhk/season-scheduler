@@ -149,7 +149,7 @@ class LocalSearchScheduler:
         for restart in range(self.restarts):
             seed = request.seed + restart * 7919
             try:
-                initial, pinned = build_initial_schedule(
+                initial, pinned, pin_warnings = build_initial_schedule(
                     request.world,
                     request.season,
                     request.competitions,
@@ -161,6 +161,9 @@ class LocalSearchScheduler:
             except ValueError as exc:
                 notes.append(f"restart {restart}: {exc}")
                 continue
+            for warning in pin_warnings:
+                if warning not in notes:
+                    notes.append(warning)
 
             working = [
                 WorkingMatch(
