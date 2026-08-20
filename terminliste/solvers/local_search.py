@@ -18,6 +18,18 @@ Hard violations are folded into the cost as a large finite penalty rather than
 rejected outright, so the search can cross infeasible ground to reach something
 better. Feasibility is only *required* of the answer, and if none is found the
 report says which rules are still broken instead of failing silently.
+
+Issue #98: every restart above rebuilds from a fresh greedy schedule under a
+new seed, so the whole time budget is split into independent "whole new random
+scenario" attempts — good for covering ground broadly, bad in a crunch period
+where a handful of teams' fixtures are the only real trouble and what is
+needed is to keep working *that* schedule rather than discard it for another
+blind draw. A second, "polish" phase (`_polish_candidates`) runs after the
+restarts: it takes each shortlisted candidate's own final state — not a fresh
+build — and anneals further from a low, still-cooling temperature, so it can
+only nudge dates locally rather than re-litigate the whole season. This
+mirrors how a real fixture list actually gets adjusted once published: in
+small steps against what already mostly works, not a redraw from scratch.
 """
 
 from __future__ import annotations
@@ -25,7 +37,7 @@ from __future__ import annotations
 import math
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 
 from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
@@ -92,23 +104,44 @@ class LocalSearchScheduler:
     # against ~2880 at 1.0 and no improvement at all over the starting point at
     # 20 or above. In practice this behaves as hill-climbing with an occasional
     # escape, which is what this landscape rewards.
+    #
+    # `polish_fraction` carves a slice of the total time budget out of the
+    # restarts above and spends it on the second phase instead (issue #98):
+    # each shortlisted candidate gets its own share, annealed further from
+    # its own final state rather than a fresh greedy build. `polish_end_temperature`
+    # continues cooling from wherever the explore phase's `end_temperature`
+    # left off, down to a near-hill-climbing floor — the point is to fix up
+    # the last few trouble spots, not to explore broadly again.
     def __init__(
         self,
         restarts: int = 4,
         start_temperature: float = 0.5,
         end_temperature: float = 0.05,
+        polish_fraction: float = 0.25,
+        polish_end_temperature: float = 0.01,
     ) -> None:
         self.restarts = restarts
         self.start_temperature = start_temperature
         self.end_temperature = end_temperature
+        self.polish_fraction = polish_fraction
+        self.polish_end_temperature = polish_end_temperature
 
     def solve(self, request: SolveRequest) -> SolverResult:
         started = time.perf_counter()
         calendar = build_calendar(request.world, request.season)
         by_competition = calendars_by_competition(calendar, request.competitions)
-        budget_per_restart = request.time_budget_s / max(1, self.restarts)
+        explore_budget_s = request.time_budget_s * (1 - self.polish_fraction)
+        polish_budget_s = request.time_budget_s * self.polish_fraction
+        budget_per_restart = explore_budget_s / max(1, self.restarts)
 
         candidates: list[Candidate] = []
+        # Parallel to `candidates` (same index, appended together below): each
+        # restart's own final annealed state and pinned-match set, kept around
+        # so the polish phase can resume a shortlisted candidate from exactly
+        # where its restart left off instead of rebuilding it from `Match`
+        # objects (which have already been sorted and lost the original
+        # pinned-index bookkeeping).
+        restart_states: list[tuple[list[WorkingMatch], set[str]]] = []
         total_iterations = 0
         notes: list[str] = []
         overall_stats = SearchStats()
@@ -172,8 +205,26 @@ class LocalSearchScheduler:
                     seed=seed,
                 )
             )
+            restart_states.append((best, pinned))
 
         chosen = select_diverse(candidates, request.top_n)
+
+        if polish_budget_s > 0 and chosen:
+            polish_iterations, polish_stats = _polish_candidates(
+                chosen,
+                candidates,
+                restart_states,
+                request,
+                by_competition,
+                budget_s=polish_budget_s,
+                restarts=self.restarts,
+                start_temperature=self.end_temperature,
+                end_temperature=self.polish_end_temperature,
+                notes=notes,
+            )
+            total_iterations += polish_iterations
+            overall_stats += polish_stats
+
         for position, candidate in enumerate(chosen, start=1):
             candidate.label = f"Option {position}"
 
@@ -191,6 +242,73 @@ class LocalSearchScheduler:
             notes=notes,
             search_stats=overall_stats,
         )
+
+
+def _polish_candidates(
+    chosen: list[Candidate],
+    candidates: list[Candidate],
+    restart_states: list[tuple[list[WorkingMatch], set[str]]],
+    request: SolveRequest,
+    calendars: dict[str, SeasonCalendar],
+    budget_s: float,
+    restarts: int,
+    start_temperature: float,
+    end_temperature: float,
+    notes: list[str],
+) -> tuple[int, SearchStats]:
+    """Phase two (issue #98): anneal each shortlisted candidate further from
+    its own final state, rather than restarting from a fresh greedy build.
+
+    Each restart in phase one explores a whole new random scenario; this
+    instead keeps working the schedules that already scored well, at a low
+    and still-cooling temperature so moves stay local — the "jiggle it until
+    it falls into place" search a real season's fixture list actually gets,
+    rather than one more blind draw. A polished candidate only replaces the
+    original when it scores strictly better (`Score.sort_key`, feasibility
+    first): this phase can improve a shortlisted schedule but never make one
+    worse than what phase one already found.
+    """
+    per_candidate_budget = budget_s / len(chosen)
+    total_iterations = 0
+    stats = SearchStats()
+    improved = 0
+
+    for position, candidate in enumerate(chosen):
+        source_index = next(i for i, c in enumerate(candidates) if c is candidate)
+        working_state, pinned = restart_states[source_index]
+        working_copy = [replace(m) for m in working_state]
+
+        polished, iterations, restart_stats = _anneal(
+            working_copy,
+            pinned,
+            request,
+            calendars,
+            seed=candidate.seed + 1_000_003 + position,
+            budget_s=per_candidate_budget,
+            start_temperature=start_temperature,
+            end_temperature=end_temperature,
+            restart_index=restarts + position,
+            total_restarts=restarts + len(chosen),
+        )
+        total_iterations += iterations
+        stats += restart_stats
+
+        matches = [m.to_match() for m in polished]
+        matches.sort(key=lambda m: (m.date, m.competition_id, m.home_team))
+        matches = assign_kickoff_times(
+            matches, request.competitions, request.season.fixed_requirements
+        )
+        score = evaluate(matches, request.constraints, _with_detail(request.ctx))
+        if score.sort_key < candidate.score.sort_key:
+            candidate.matches = matches
+            candidate.score = score
+            improved += 1
+
+    if improved:
+        notes.append(
+            f"polish phase refined {improved} of {len(chosen)} shortlisted candidate(s)"
+        )
+    return total_iterations, stats
 
 
 def _with_detail(ctx: EvalContext) -> EvalContext:

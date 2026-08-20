@@ -18,6 +18,7 @@ from terminliste.rounds.cup_schedule import schedule_cups
 from terminliste.scoring.registry import build_constraints
 from terminliste.scoring.base import EvalContext
 from terminliste.solvers.base import SolveRequest, divergence
+from terminliste.solvers.local_search import LocalSearchScheduler
 
 try:
     import ortools  # noqa: F401
@@ -202,6 +203,109 @@ def test_local_search_progress_callback_reports_a_live_running_total():
         assert investigated == sorted(investigated)
         assert all(u.stats.investigated <= u.total_iterations for u in restart_updates)
     assert updates[-1].stats.investigated <= result.search_stats.investigated
+
+
+def test_polish_phase_runs_as_its_own_restart_index_beyond_the_explore_restarts():
+    """Issue #98: phase two must actually resume each shortlisted candidate's
+    own state rather than kick off yet another fresh restart indistinguishable
+    from phase one's. `_anneal`'s `restart_index` is how a progress update
+    identifies which restart it belongs to (see the progress-callback test
+    above), so a polish pass showing up under a restart index beyond
+    `LocalSearchScheduler.restarts` is direct evidence the second phase ran as
+    a distinct, later phase — not more of the same explore restarts."""
+    world, season, competitions = _small_world()
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    updates = []
+    scheduler = LocalSearchScheduler(restarts=2, polish_fraction=0.3)
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=9, top_n=2, time_budget_s=6.0, progress=updates.append,
+    )
+    scheduler.solve(request)
+
+    assert updates
+    restart_indexes = {u.restart for u in updates}
+    assert any(index >= scheduler.restarts for index in restart_indexes), (
+        "expected at least one progress update from a polish-phase restart index, "
+        f"got only {sorted(restart_indexes)} against restarts={scheduler.restarts}"
+    )
+
+
+def test_polish_phase_disabled_by_zero_fraction_keeps_only_explore_restarts():
+    """The counterpart to the test above: `polish_fraction=0.0` must fall back
+    to exactly phase one's old behaviour, with no restart index beyond
+    `restarts` and no polish note — the escape hatch for anyone who wants the
+    pre-#98 search exactly as it was."""
+    world, season, competitions = _small_world()
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    updates = []
+    scheduler = LocalSearchScheduler(restarts=2, polish_fraction=0.0)
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=9, top_n=2, time_budget_s=6.0, progress=updates.append,
+    )
+    result = scheduler.solve(request)
+
+    assert updates
+    restart_indexes = {u.restart for u in updates}
+    assert all(index < scheduler.restarts for index in restart_indexes)
+    assert not any("polish" in note for note in result.notes)
+
+
+def test_polish_phase_never_regresses_a_shortlisted_candidate():
+    """Direct unit test of `_polish_candidates`'s replace-only-if-better rule:
+    seed it with a candidate whose recorded score is far better than anything
+    the tiny budget below could find fresh, and confirm the candidate comes
+    back unchanged rather than overwritten by a worse polished attempt."""
+    from terminliste.scoring.base import Score
+    from terminliste.solvers.local_search import WorkingMatch, _polish_candidates
+
+    world, season, competitions = _small_world()
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=10, top_n=1, time_budget_s=6.0,
+    )
+
+    scheduler = LocalSearchScheduler(restarts=1)
+    result = scheduler.solve(request)
+    candidate = result.best
+    assert candidate is not None
+
+    working = [
+        WorkingMatch(
+            competition_id=m.competition_id, home_team=m.home_team, away_team=m.away_team,
+            leg=m.leg, round_index=m.round_index, date=m.date, venue=m.venue,
+        )
+        for m in candidate.matches
+    ]
+    # An unbeatable score forces `_polish_candidates`'s comparison to always
+    # find the fresh attempt worse, so the candidate must survive untouched.
+    candidate.score = Score(hard_violations=0, soft_total=1_000_000.0, num_matches=len(working))
+    original_matches = list(candidate.matches)
+
+    from terminliste.model.calendar import build_calendar, calendars_by_competition
+
+    calendar = build_calendar(world, season)
+    by_competition = calendars_by_competition(calendar, competitions)
+
+    _polish_candidates(
+        chosen=[candidate],
+        candidates=[candidate],
+        restart_states=[(working, set())],
+        request=request,
+        calendars=by_competition,
+        budget_s=1.0,
+        restarts=1,
+        start_temperature=0.05,
+        end_temperature=0.01,
+        notes=[],
+    )
+
+    assert candidate.matches == original_matches
 
 
 def test_local_search_is_deterministic_for_a_fixed_seed():

@@ -71,7 +71,17 @@ gitignored `data/.refdata_cache/`, never to `data/*.yml`. See
 - **`terminliste/solvers/`** — two interchangeable backends behind one
   `Scheduler` protocol:
   - `local_search.py` (default): greedy construction + simulated annealing
-    over four move operators. No extra dependencies.
+    over four move operators, in two phases (issue #98). Phase one explores:
+    several restarts, each a fresh greedy build under its own seed, annealed
+    independently — good for covering ground broadly. Phase two polishes:
+    each shortlisted candidate is annealed further from its own final state,
+    not rebuilt from scratch, at a low and still-cooling temperature so moves
+    stay local — the "jiggle a well-scoring schedule until the last few
+    trouble spots fall into place" search a real season's fixture list
+    actually gets, rather than one more blind restart. `polish_fraction`
+    (default 0.25) is the share of the time budget phase two gets; a
+    polished candidate only replaces the original when it scores strictly
+    better, so this phase can only help. No extra dependencies.
   - `cpsat.py` (`--solver cpsat`): OR-Tools CP-SAT, assigning dates to a
     fixed pairing structure. Needs the optional `football-scheduler-cpsat`
     dependency group.
