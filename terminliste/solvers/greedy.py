@@ -4,12 +4,11 @@ Greedy and myopic by design. Its job is to hand the local search a complete,
 usually-feasible schedule to improve, not to produce a good one — early choices
 lock in badly and it cannot see what it costs later.
 
-It scores candidate dates with a cheap local heuristic rather than the full
-constraint set. A full evaluation per candidate date would mean roughly 2,500
-evaluations of a 372-match schedule just to build the starting point, which is
-slower than the entire annealing run that follows. The local heuristic mirrors
-the real constraints closely enough to land in the right neighbourhood, and the
-real scorer takes over from there.
+Candidate dates are ranked by a cheap local heuristic rather than the full
+constraint set: a full evaluation per candidate would mean ~2,500 evaluations
+of a 372-match schedule just to build the starting point, slower than the whole
+annealing run that follows. The heuristic only has to land in the right
+neighbourhood.
 """
 
 from __future__ import annotations
@@ -83,11 +82,11 @@ def plan_competitions(
 ) -> list[PlannedCompetition]:
     """Generate fixtures and pick a target date per round, per competition.
 
-    Passing an `rng` shuffles the team order before the circle method runs.
-    That is the only lever that produces *structurally* different tournaments —
-    different opponents in different rounds — rather than the same fixture list
-    with the dates nudged. Without it every restart converges on near-identical
-    schedules and the three options offered at the end are not a real choice.
+    An `rng` shuffles the team order before the circle method runs — the only
+    lever producing structurally different tournaments rather than the same
+    fixture list with nudged dates. Without it every restart converges on
+    near-identical schedules and the options offered at the end aren't a real
+    choice.
     """
     planned: list[PlannedCompetition] = []
     by_competition = calendars_by_competition(calendar, competitions)
@@ -123,20 +122,14 @@ def align_dual_clubs(
 ) -> None:
     """Relabel teams in the later competitions so dual clubs line up.
 
-    The back-to-back home weekend — Brann women on Saturday, Brann men on
-    Sunday — only happens if the two leagues put that club's two teams at home
-    in rounds whose anchor dates are a day apart. Whether they do is decided by
-    where each team sits in the circle-method rotation, which is otherwise
-    arbitrary.
+    A back-to-back home weekend needs a club's two teams at home in rounds
+    whose anchors are a day apart, which is otherwise decided arbitrarily by
+    the circle-method rotation — the difference between thirty such weekends
+    and five. So hill-climb over team labels in every competition after the
+    first, maximising home rounds landing next to a sibling's.
 
-    Leaving it to chance is what makes the difference between a schedule with
-    thirty back-to-back weekends and one with five, so this hill-climbs over
-    team labels in every competition after the first, maximising the number of
-    home rounds that land next to a sibling team's home round.
-
-    Relabelling preserves the round-robin structure exactly — it only changes
-    which club wears which slot — so this can never produce an invalid
-    tournament.
+    Relabelling only changes which club wears which slot, so the round-robin
+    structure survives exactly.
     """
     if len(planned) < 2:
         return
@@ -150,9 +143,9 @@ def align_dual_clubs(
         if not targets:
             continue
 
+        # Only dual-club teams can score, but any team may need to move out of
+        # the way, so the swap pool is the whole roster.
         teams = list(plan.competition.teams)
-        # Only teams belonging to a dual club can score, but any team may need
-        # to move out of the way, so the swap pool is the whole roster.
         current = _alignment_score(targets, home_rounds)
         improved = True
         budget = rounds
@@ -196,11 +189,10 @@ def _alignment_targets(
 ) -> dict[str, set[int]]:
     """For each dual-club team here, the rounds that sit next to a sibling's.
 
-    Fixed for the duration of the hill-climb, because only the later
-    competition's labels move.
+    Fixed for the hill-climb's duration, since only the later competition's
+    labels move.
     """
-    # Which of this competition's rounds fall a day either side of each of the
-    # anchor competition's rounds.
+    # This competition's rounds falling a day either side of an anchor round.
     adjacent: dict[int, set[int]] = {}
     for anchor_round, anchor_date in anchor_plan.anchors.items():
         neighbours = {
@@ -240,27 +232,19 @@ def resolve_round_pins(
 ) -> tuple[dict[tuple[str, int], date], list[str]]:
     """Rounds that must land on one single date, keyed by (competition_id, round_index).
 
-    Two sources, both forced entirely onto one date rather than searched for:
-    every league's own final round (`FinalRoundSameSlot` in `scoring/hard.py`),
-    and any hard `FullRoundRequirement` — the round whose anchor already sits
-    closest to the required date is the one forced onto it exactly
-    (`FullRoundOnDate` in `scoring/hard.py`).
+    Two sources: every league's final round (`FinalRoundSameSlot`), and any
+    hard `FullRoundRequirement`, which claims the round whose anchor already
+    sits closest to it (`FullRoundOnDate`).
 
-    Because a pinned round puts *every* team in the competition on the same
-    date, a resolved cup or European commitment for even one of them is a
-    real conflict — unlike a single fixture's candidate window, which only
-    has to clear the two teams actually playing. `cup_windows` and
-    `european_commitments` (only `certain` entries count, matching
-    `cpsat.py::_build_model`) are checked against each pin the same way
-    `_cup_clear`/`_european_clear` check a fixture's window; a warning is
-    returned rather than raised, alongside the resolved pins, so a caller can
-    surface it without the whole solve failing outright.
+    A pinned round puts *every* team on the same date, so a resolved cup or
+    European commitment for even one of them conflicts — unlike a single
+    fixture's window, which need only clear the two teams playing. Conflicts
+    are returned as warnings rather than raised, so a caller can surface them
+    without failing the solve.
 
-    The final round's date is free to move within `by_competition`'s window
-    around its anchor — it was only ever a computed anchor, not something the
-    data demanded — and does, to the nearest clear date, if a conflict is
-    found. A `FullRoundRequirement`'s date is a hard requirement in its own
-    right and cannot move; a conflict there can only be flagged.
+    A final round's date is only a computed anchor, so it moves to the nearest
+    clear date; a `FullRoundRequirement`'s date is fixed and can only be
+    flagged.
     """
     certain_commitments = {
         team_id: [c for c in commitments if c.certain]
@@ -313,12 +297,10 @@ def _clear_pin_date(
     european_commitments: dict[str, list[EuropeanCommitmentDate]],
     movable: bool,
 ) -> tuple[date, str | None]:
-    """The pin date to use, plus a warning if it (still) conflicts.
+    """The pin date to use, plus a warning if it still conflicts.
 
-    Tries the anchor first, then — only if `movable` and a calendar is
-    available to search — nearby dates within the competition's own match
-    window, widening once, the same two-step widen `cpsat.py::_build_model`
-    uses for an ordinary fixture's window.
+    Tries the anchor, then — only when `movable` and a calendar is available —
+    nearby dates within the match window, widening once.
     """
     team_ids = plan.competition.teams
     if _round_clear(anchor, team_ids, cup_windows, european_commitments):
@@ -358,12 +340,10 @@ def align_home_teams_to_round_pins(
 ) -> None:
     """Flip fixtures so a hard `FixedRequirement`'s team is home in its pinned round.
 
-    A round pinned onto a specific date (see `resolve_round_pins`) is placed
-    with whatever home/away orientation the round-robin generator happened to
-    give it — which has no reason to already put e.g. Brann at home on May 16.
-    This finds each hard requirement whose date coincides with a pinned
-    round and, if its team is away there, flips that fixture (and its
-    season's mirror, to keep every pairing meeting home once and away once).
+    A pinned round arrives with whatever orientation the round-robin generator
+    gave it, which has no reason to put e.g. Brann at home on May 16. Flips
+    the offending fixture and its season mirror, keeping every pairing meeting
+    home once and away once.
     """
     by_id = {p.competition.id: p for p in planned}
     round_by_competition_date = {
@@ -383,12 +363,10 @@ def align_home_teams_to_round_pins(
 
 
 def _ensure_home_in_round(plan: PlannedCompetition, team_id: str, round_index: int) -> None:
-    """Make `team_id` the home side of its `round_index` fixture, if it isn't already.
+    """Make `team_id` the home side of its `round_index` fixture.
 
-    Flips the fixture in place, and its season mirror (the same pairing's
-    other leg) alongside it — flipping only one leg would leave the pair
-    meeting twice at the same ground, exactly as `_flip_orientation` in
-    `solvers/local_search.py` guards against during search.
+    Flips the season mirror alongside it: flipping only one leg would leave
+    the pair meeting twice at the same ground.
     """
     fixture = next(
         (
@@ -448,20 +426,17 @@ def build_initial_schedule(
     """Return a complete schedule, the keys of fixtures pinned to a date, and
     any warnings from resolving those pins.
 
-    Pinned fixtures are the ones satisfying a hard `fixed_requirement`; the
-    local search must not move them.
+    Pinned fixtures satisfy a hard `fixed_requirement`; the local search must
+    not move them.
 
-    `align=False` skips the dual-club alignment pass — used by the integration
-    test to show what the coupled scheduling is actually worth, by comparing
-    against the schedule this same greedy placer would produce if the two
-    leagues were built without any awareness of each other.
+    `align=False` skips the dual-club alignment pass, letting the integration
+    test measure what coupled scheduling is worth against the same placer run
+    with the leagues unaware of each other.
 
-    `cup_schedules` (already resolved to a date per team) steers placement
-    away from each team's cup round dates up front, so the local search
-    starts from a schedule that mostly already respects `CupRoundConflict`
-    instead of having to fight its way there. `european_commitments` does the
-    same for resolved UEFA qualifying commitments (see
-    `rounds/european_schedule.py`) and `EuropeanCommitmentConflict`.
+    `cup_schedules` and `european_commitments` steer placement away from each
+    team's resolved commitment dates up front, so the local search starts from
+    a schedule that mostly already respects `CupRoundConflict` and
+    `EuropeanCommitmentConflict`.
     """
     rng = random.Random(seed)
     calendar = calendar or build_calendar(world, season)
@@ -483,8 +458,8 @@ def build_initial_schedule(
     remaining = {p.competition.id: list(p.fixtures) for p in planned}
     by_id = {p.competition.id: p for p in planned}
 
-    # Fixed requirements come first — they are the least flexible thing in the
-    # season, and placing them last would mean unpicking everything around them.
+    # Fixed requirements first: the least flexible thing in the season, and
+    # placing them last would mean unpicking everything around them.
     for requirement in season.fixed_requirements:
         if not requirement.hard:
             continue
@@ -509,11 +484,9 @@ def build_initial_schedule(
         pinned.add(match.key)
         remaining[plan.competition.id].remove(fixture)
 
-    # Rounds pinned to a single date next — a league's final round, or a
-    # FullRoundRequirement's round (see `resolve_round_pins`). Placed directly
-    # and pinned, the same way a single-team fixed requirement is: local
-    # search must not be free to drift one match off its round's shared date
-    # while leaving the rest behind.
+    # Then rounds pinned to a single date (see `resolve_round_pins`), placed
+    # and pinned like a fixed requirement so local search cannot drift one
+    # match off its round's shared date.
     for plan in planned:
         for fixture in list(remaining[plan.competition.id]):
             pin_date = round_pins.get((plan.competition.id, fixture.round_index))
@@ -534,9 +507,9 @@ def build_initial_schedule(
             pinned.add(match.key)
             remaining[plan.competition.id].remove(fixture)
 
-    # Then everything else, in chronological round order across both leagues so
-    # the two competitions compete for dates fairly instead of the first one
-    # scheduled taking every good slot.
+    # Everything else in chronological round order across both leagues, so the
+    # competitions compete for dates fairly instead of the first one scheduled
+    # taking every good slot.
     work: list[tuple[date, int, Fixture]] = []
     for plan in planned:
         for fixture in remaining[plan.competition.id]:
@@ -589,8 +562,8 @@ def _place_fixture(
     window = calendar.window(anchor, competition.match_window_days, venue)
 
     if not window:
-        # Every date in the window is blocked. Widen rather than fail: a match
-        # placed badly is fixable by the local search, a missing one is not.
+        # Widen rather than fail: the local search can fix a badly placed
+        # match, but not a missing one.
         window = calendar.window(anchor, competition.match_window_days * 3, venue) or [anchor]
 
     preferred_weekday = WEEKDAYS.index(competition.preferred_weekday)
@@ -602,8 +575,8 @@ def _place_fixture(
             world, calendar, competition, fixture, venue, day, anchor, preferred_weekday, state,
             cup_windows, european_commitments,
         )
-        # A little noise so different seeds explore different starting points;
-        # small enough never to outweigh a real preference.
+        # Noise so different seeds explore different starting points, small
+        # enough never to outweigh a real preference.
         cost += rng.random() * 0.5
         if cost < best_cost:
             best_cost, best_day = cost, day
@@ -661,8 +634,8 @@ def _placement_cost(
     if day in club_days:
         cost += _CLUB_HOME_CLASH
     else:
-        # The flip side of the clash rule: the day either side of a sibling
-        # team's home match is the most valuable date in the season.
+        # Flip side of the clash rule: the day either side of a sibling's home
+        # match is the most valuable date in the season.
         if (day - _ONE_DAY) in club_days or (day + _ONE_DAY) in club_days:
             cost -= _CONSECUTIVE_HOME_BONUS
 

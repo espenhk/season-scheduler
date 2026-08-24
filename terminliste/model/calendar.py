@@ -57,14 +57,12 @@ class SeasonCalendar:
         return candidates
 
     def narrowed(self, start: date, end: date) -> "SeasonCalendar":
-        """A calendar restricted to a tighter [start, end] window inside the season.
+        """A calendar restricted to a tighter [start, end] window inside the
+        season, for a competition whose fixture window is shorter.
 
-        Every date-selection method here (`window`, `dates_on_weekday`, the
-        gap-filling in `anchor_dates`) works off `all_dates`/`global_allowed`/
+        Every date-selection method works off `all_dates`/`global_allowed`/
         `discouraged` rather than re-deriving bounds from `season`, so
-        narrowing those three is enough to make the whole calendar honour the
-        tighter range — used when a competition's real fixture window is
-        shorter than the season's outer envelope.
+        narrowing those three is enough.
         """
         return SeasonCalendar(
             season=self.season,
@@ -83,11 +81,8 @@ def competition_window(season: Season, competition: Competition) -> tuple[date, 
 def calendars_by_competition(
     calendar: SeasonCalendar, competitions: list[Competition]
 ) -> dict[str, SeasonCalendar]:
-    """Per-competition calendar, narrowed to each one's own window if it has one.
-
-    Competitions that don't set `start`/`end` share the season calendar object
-    outright — no copy, no behaviour change from before this existed.
-    """
+    """Per-competition calendar, narrowed to each one's own window if it has
+    one; competitions without `start`/`end` share the season calendar."""
     result: dict[str, SeasonCalendar] = {}
     for competition in competitions:
         start, end = competition_window(calendar.season, competition)
@@ -109,10 +104,8 @@ def _outward_offsets(days: int) -> list[int]:
 def build_calendar(world: World, season: Season) -> SeasonCalendar:
     all_dates = _date_range(season.start, season.end)
     blackouts = set(season.blacked_out_dates)
-    # A date demanded by a hard fixed requirement (or a hard full-round
-    # requirement) can never be a blackout or fall inside an excluded date
-    # range; the loader already rejects both combinations, so this is just
-    # belt and braces.
+    # Belt and braces: the loader already rejects a hard requirement whose
+    # date is blacked out.
     required = {r.date for r in season.fixed_requirements if r.hard} | {
         r.date for r in season.full_round_requirements if r.hard
     }
@@ -144,15 +137,13 @@ def anchor_dates(
 ) -> list[date]:
     """Pick `count` round anchors, preferring `preferred_weekday`.
 
-    Spread evenly across the season rather than taken greedily from the front.
-    Thirty Eliteserien rounds against thirty-five available Sundays should use
-    the whole calendar with the occasional free weekend, not run out in early
-    November and leave a month idle.
+    Spread evenly rather than taken greedily from the front: thirty rounds
+    against thirty-five Sundays should use the whole calendar with the odd
+    free weekend, not run out in November and leave a month idle.
 
-    If the season does not contain enough preferred-weekday dates, the
-    shortfall is filled with midweek anchors placed into the widest remaining
-    gaps. That degradation then shows up honestly in the weekday score instead
-    of as an unexplained failure.
+    Too few preferred-weekday dates and the shortfall goes to midweek anchors
+    in the widest remaining gaps, which shows up honestly in the weekday score
+    rather than as an unexplained failure.
     """
     if count <= 0:
         return []

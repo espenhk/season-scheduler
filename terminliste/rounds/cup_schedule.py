@@ -1,54 +1,36 @@
 """Resolves a cup's rounds to actual dates — the cup's own, lightweight solve.
 
-Unlike a league, a cup's "fixtures" are never modelled as team-vs-team
-pairings: who plays whom is drawn round by round and unknown ahead of time.
-What *is* known, per round, is either an exact date (`forced_date` — already
-announced) or a window it must fall inside (`window_start`/`window_end` — a
-week, month or quarter, per `CupRound.granularity`). Resolving a round means
-picking one placement per entered team inside that constraint, on the base
-assumption (see the round-robin module's cup docs) that every team is still
-in the competition through the final.
+A cup's "fixtures" are never modelled as pairings: who plays whom is drawn
+round by round. What is known per round is either an exact date
+(`forced_date`) or a window it must fall inside, so resolving a round means
+picking one placement per entered team inside that constraint, assuming every
+team survives through the final.
 
-This is deliberately a separate, one-shot pass rather than another dimension
-of the league's simulated annealing: cup rounds are far too coarse-grained
-(month- or quarter-wide windows) to need a search, and resolving them once
-lets the league scheduler treat the result as fixed input — exactly as it
-already treated a cup's dates before this module existed.
+A separate one-shot pass rather than another dimension of the league's
+annealing: month- or quarter-wide windows are far too coarse to need a search,
+and resolving them once lets the league scheduler treat the result as fixed
+input.
 
-Home/away is resolved here too, per round rather than per fixture, since who
-the opponent is stays unknown until the draw: every entered team plays away
-for its first three rounds (an Eliteserien/Toppserien side entering a real NM
-draw is assumed to draw a lower-division side and travel to them), then
-alternates home/away from the fourth round on, except the final, which is
-always at neutral ground (Ullevål stadion) regardless of where the
-alternation would otherwise land. See `_venue_type`.
+Home/away is resolved per round rather than per fixture, since the opponent is
+unknown until the draw: every team plays away for its first three rounds (a
+top-division side is assumed to draw a lower-division one and travel), then
+alternates, except the final, which is always neutral ground. See
+`_venue_type`.
 
-Two rules are enforced here, matching how the season's own round-robin
-guarantees things by construction rather than leaving them to be discovered
-as violations later:
+Two rules hold by construction rather than being discovered as violations
+later:
 
-- Hard: round N is fully placed before round N+1's first placement, leaving
-  `min_rest_days` full rest days between them (a `min_gap_days` calendar
-  gap). Enforced by construction — each round's earliest possible placement
-  is bumped past the previous round's latest actual one, plus the gap — and
-  `CupSchedulingError` is
-  raised if a round's own window (or, for a forced round, the confirmed date
-  itself) leaves no room left to satisfy it. A forced round never moves to
-  make room; if it's too close to the previous round, that is the data's
-  problem to fix, not something placement can paper over.
-- Soft ("as far as possible"): every team's placement for a round falls
-  inside one calendar week. Enforced by construction too: a windowed round's
-  placements run forward from its earliest legal start across at most
-  `match_window_days` days (`match_window_days: 3` gives a 4-day span), so
-  the competition's own data is what keeps this inside a week rather than a
-  runtime check that could fail. A forced round has no spread at all — every
-  team lands on the exact confirmed date, since spreading it across nearby
-  days would be moving a date that, by definition, cannot move. What
-  genuinely can't be guaranteed, in either case, is a *legal* date existing
-  at all once blackouts are subtracted; if every candidate is blacked out
-  (including a forced round's own confirmed date), placement falls back to
-  the round's own anchor regardless, and that gets a plain-English warning
-  rather than a raised error.
+- Round N is fully placed before round N+1 starts, leaving `min_gap_days`
+  between them. `CupSchedulingError` is raised when a round's window (or a
+  forced round's confirmed date) leaves no room; a forced round never moves
+  to make room, so that is the data's problem to fix.
+- Every team's placement for a round falls inside one calendar week: a
+  windowed round runs forward from its earliest legal start across at most
+  `match_window_days` days, and a forced round has no spread at all.
+
+What can't be guaranteed either way is a *legal* date surviving blackouts. If
+none does, placement falls back to the round's anchor with a warning rather
+than an error.
 """
 
 from __future__ import annotations
@@ -67,13 +49,9 @@ NEUTRAL_CUP_VENUE = "Ullevål stadion"
 
 
 class CupSchedulingError(Exception):
-    """A cup's declared rounds cannot be resolved to a valid schedule.
-
-    Raised when a round's own window (or forced date) leaves no room to
-    satisfy round N-before-round-N+1 ordering and the required rest gap
-    between them — a data problem (the window needs widening, or the forced
-    date needs revisiting), not something a solver retry can fix.
-    """
+    """A cup's declared rounds cannot be resolved to a valid schedule — a data
+    problem (widen the window, or revisit the forced date), not something a
+    solver retry can fix."""
 
 
 @dataclass(frozen=True)
@@ -165,15 +143,12 @@ def schedule_cup(competition: Competition, blackouts: set[date]) -> tuple[CupSch
 
 
 def _venue_type(index: int, total_rounds: int) -> VenueType:
-    """Home/away for round `index` (0-based) of `total_rounds`, per team.
+    """Home/away for round `index` (0-based) of `total_rounds`.
 
-    Uniform across every team entered in the round, not resolved per team,
-    since who each team's opponent is (and therefore whose ground the tie is
-    really played at) is only settled by a draw made closer to the round —
-    this only captures which side of that unknown pairing an entered team is
-    on. The final overrides everything else: it is always neutral ground,
-    even for a cup short enough that "the final" would otherwise fall inside
-    the first-three-rounds-away stretch.
+    Uniform across every entered team, since whose ground a tie is really
+    played at is settled by a draw made closer to the round. The final
+    overrides everything: always neutral ground, even in a cup short enough
+    for it to fall inside the first-three-rounds-away stretch.
     """
     if index == total_rounds - 1:
         return "neutral"
@@ -190,14 +165,10 @@ def _resolve_anchor(
 ) -> tuple[date, date | None, date | None]:
     """The round's anchor date, plus the bounds team placements must respect.
 
-    A forced round's bounds are the confirmed date itself, both ends — a
-    confirmed date is a confirmed date, not a suggestion `_spread_teams`
-    should feel free to drift away from onto a nearby day (e.g. because the
-    exact date happens to be a blackout). It still goes through the same
-    minimum-rest gap check a windowed round's earliest placement does, since
-    a confirmed date too close to the previous round's last one is a genuine
-    conflict — one the data needs to fix, not something scheduling can paper
-    over by moving a date that, by definition, cannot move.
+    A forced round's bounds collapse to the confirmed date at both ends, so
+    `_spread_teams` cannot drift off it. It still faces the same rest-gap
+    check a windowed round does: a confirmed date too close to the previous
+    round is a real conflict for the data to fix.
     """
     if round_.is_forced:
         anchor = round_.forced_date
@@ -231,18 +202,15 @@ def _spread_teams(
 ) -> tuple[dict[str, date], bool]:
     """Distribute `teams` round-robin over the days from `anchor` onward.
 
-    Candidate days run `anchor` to `anchor + spread` — forward only, never
-    before it: `anchor` is either a confirmed date or a window's earliest
-    legal start, and no team's placement should ever land earlier than that.
-    A real cup round genuinely plays out over a few days, not all at once,
-    which is what `spread` (`match_window_days`) is for — except for a
-    forced round, where `lower_bound`/`upper_bound` are both set to `anchor`
-    itself, collapsing the candidate range to that one exact day: a confirmed
-    date isn't something to spread away from. Blackout dates are dropped from
-    whatever range survives the bounds; if that leaves nothing at all, every
-    team falls back onto the bare `anchor` and the second return value flags
-    it, since a blacked-out anchor is better than failing outright over one
-    clashing day.
+    Candidates run forward only, `anchor` to `anchor + spread`: the anchor is
+    either a confirmed date or a window's earliest legal start, so nothing
+    should land before it. The spread reflects a real cup round playing out
+    over a few days — a forced round has its bounds collapsed to the anchor
+    and gets none.
+
+    Blackouts are dropped from whatever survives the bounds; if nothing is
+    left every team falls back onto the bare anchor, flagged by the second
+    return value, since that beats failing outright over one clashing day.
     """
     candidates: list[date] = []
     for offset in range(0, spread + 1):
@@ -269,10 +237,8 @@ def schedule_cups(
 ) -> tuple[list[CupSchedule], list[str]]:
     """Resolve every cup competition, pooling their warnings.
 
-    `season.blacked_out_dates` (global blackouts plus `global_blackout_ranges`)
-    is the only blackout source consulted — cups don't book venues, so
-    venue-specific blackouts (`venue_blackouts`/`venue_blackout_ranges`)
-    don't apply to them.
+    Only global blackouts are consulted: cups book no venues, so
+    venue-specific blackouts don't apply to them.
     """
     blackouts = set(season.blacked_out_dates)
     schedules: list[CupSchedule] = []
@@ -285,13 +251,8 @@ def schedule_cups(
 
 
 def resolved_cup_windows(schedules: list[CupSchedule]) -> dict[str, list[tuple[date, int]]]:
-    """Per-team (resolved date, min rest days) pairs, for conflict-avoidance.
-
-    The successor to the old `cup_rest_windows`: same shape and same
-    consumers (`CupRoundConflict`, both solver backends), but reading each
-    team's own resolved date from a `CupSchedule` instead of one date shared
-    by the whole round.
-    """
+    """Per-team (resolved date, min rest days) pairs, for conflict avoidance
+    by `CupRoundConflict` and both solver backends."""
     windows: dict[str, list[tuple[date, int]]] = {}
     for schedule in schedules:
         for placement in schedule.rounds:
@@ -303,14 +264,10 @@ def resolved_cup_windows(schedules: list[CupSchedule]) -> dict[str, list[tuple[d
 def cup_conflict(cup_windows: dict[str, list[tuple[date, int]]], team_id: str, day: date) -> bool:
     """Whether `day` falls inside one of `team_id`'s cup-round rest windows.
 
-    Shared by both solver backends: the greedy placer uses it to steer
-    initial placement away from cup dates, and CP-SAT uses it to exclude
-    conflicting dates from a fixture's candidate set outright, up front —
-    the same treatment a blackout date already gets, and for the same
-    reason. A fixture whose candidate window is a fixed handful of days
-    around a *fixed* round anchor has no way to route around a conflict
-    discovered only after the fact, unlike the greedy/annealing backend,
-    which can still relocate the whole round.
+    The greedy placer uses it to steer initial placement; CP-SAT uses it to
+    exclude conflicting dates from a fixture's candidate set up front, since
+    its fixtures cannot route around a conflict found after the fact the way
+    annealing can relocate a whole round.
     """
     return any(
         abs((day - cup_date).days) - 1 < minimum

@@ -15,31 +15,25 @@ machine can, fetch the JSON there and hand it to this script instead:
     python scripts/fetch_real_schedule.py --competition eliteserien_2026 \\
         --from-json el.json --out baselines/sources/eliteserien_toppserien_2026_full.csv
 
-Either way the script's actual job is the same: match each fixture's team
-names against `data/clubs.yml` for the target competition, and write rows in
-the format `external_schedule.py` expects
-(`competition,date,home_team,away_team,venue`, venue left blank so the
-loader falls back to each home team's registered venue). That matching step
-is the part worth automating — an API's team names rarely spell a club
-exactly the way `data/clubs.yml` does ("FK Bodø/Glimt" vs "Bodø/Glimt",
-"IK Start" vs "Start"), and doing it by hand for ~450 fixtures across two
-leagues is the tedious part this exists to remove.
+Either way the job is the same: match each fixture's team names against
+`data/clubs.yml` for the target competition and write rows in the format
+`external_schedule.py` expects, venue left blank so the loader falls back to
+each home team's registered one. Matching is the part worth automating — an
+API rarely spells a club the way `data/clubs.yml` does ("FK Bodø/Glimt" vs
+"Bodø/Glimt") — and doing it by hand for ~450 fixtures is the tedium this
+removes.
 
-Two source schemas are understood — TheSportsDB (`--schema thesportsdb`,
-the default) and API-Football / api-sports.io v3 (`--schema api-football`)
-— see `baselines/SOURCING_FIXTURES.md` for which to use and why.
+Two source schemas are understood, TheSportsDB (the default) and API-Football
+/ api-sports.io v3; `baselines/SOURCING_FIXTURES.md` says which to use.
 
-Unmatched or ambiguous team names are never guessed at: by default they're
-skipped and listed at the end, so a bad guess can't sneak a wrong fixture
-into a committed baseline. Pass `--allow-fuzzy` to accept substring-based
-matches too, but check the summary output before trusting them — a fuzzy
-match is exactly the kind of thing that goes stale silently when a club
-changes its API-listed name.
+Unmatched or ambiguous names are never guessed at: they're skipped and listed
+at the end, so a bad guess can't sneak into a committed baseline.
+`--allow-fuzzy` accepts substring matches too, but read the summary first — a
+fuzzy match goes stale silently when a club changes its API-listed name.
 
-Repeat one run per competition and pass `--append` on the second so both
-leagues land in the one combined file a baseline's sidecar expects — dual
-clubs' back-to-back-home-weekend scoring only fires when both leagues are
-in the same schedule.
+Run once per competition, passing `--append` on the second, so both leagues
+land in one file: dual clubs' back-to-back-home-weekend scoring only fires
+when they share a schedule.
 """
 
 from __future__ import annotations
@@ -64,24 +58,18 @@ from terminliste.refdata.client import API_BASE, FetchError, fetch_json  # noqa:
 
 CSV_FIELDNAMES = ["competition", "date", "home_team", "away_team", "venue"]
 
-# Characters an API team name might use that `data/clubs.yml` also uses, or
-# might not — normalized away on both sides so "Bodø/Glimt", "Bodo/Glimt"
-# and "Bodø / Glimt" all collapse to the same key.
+# Normalized away on both sides so "Bodø/Glimt", "Bodo/Glimt" and
+# "Bodø / Glimt" collapse to one key.
 _DIACRITIC_MAP = str.maketrans("æøåÆØÅ", "aoaAOA")
 
-# Club-type words that show up as prefixes or suffixes in official names but
-# are exactly the part an API is most likely to drop or abbreviate
-# differently ("Kristiansund BK" vs "Kristiansund", "SK Brann" vs "Brann").
-# Stripped as an extra candidate, not the only one, so a name that legitimately
-# needs the qualifier (there is no risk of collision here: no two clubs in
-# `data/clubs.yml` differ only by one of these tokens) still matches too.
+# Club-type words an API is most likely to drop or abbreviate differently
+# ("Kristiansund BK" vs "Kristiansund"). Stripped as an extra candidate rather
+# than the only one, so a name that needs the qualifier still matches; no two
+# clubs in `data/clubs.yml` differ only by one of these.
 _CLUB_TOKENS = {"fk", "sk", "il", "bk", "ik", "kvinner", "damer", "fotball"}
 
-# A candidate shorter than this is never used as a *fuzzy* (substring) match
-# key, only for exact matching. Below this length, "is it a substring of the
-# API name" stops meaning "is it probably the same club" — a 3-letter short
-# code is short enough to turn up inside an unrelated club's name by
-# coincidence ("Åsane" contains "san", Sandefjord's short_name).
+# Below this length, "is it a substring of the API name" stops meaning "is it
+# probably the same club" — "Åsane" contains "san", Sandefjord's short_name.
 _MIN_FUZZY_CANDIDATE_LEN = 5
 
 
@@ -151,11 +139,9 @@ def _team_candidates(world: World, team_id: str) -> set[str]:
 def _fuzzy_team_candidates(world: World, team_id: str) -> set[str]:
     """Candidates worth trying as a *substring* match key.
 
-    Deliberately narrower than `_team_candidates`: the short code is left
-    out entirely (see `_MIN_FUZZY_CANDIDATE_LEN`), and anything under the
-    length floor is dropped even if it came from the full club name — a
-    substring test on a short string finds unrelated clubs, not variant
-    spellings of the same one.
+    Narrower than `_team_candidates`: the short code is left out, and anything
+    under `_MIN_FUZZY_CANDIDATE_LEN` is dropped even from the full club name,
+    since a substring test on a short string finds unrelated clubs.
     """
     team = world.team(team_id)
     club = world.club(team.club_id)
@@ -166,14 +152,12 @@ def _fuzzy_team_candidates(world: World, team_id: str) -> set[str]:
 def resolve_team(world: World, team_ids: list[str], api_name: str) -> tuple[str | None, bool]:
     """Match an API team name against one competition's roster.
 
-    Restricted to `team_ids` (the competition being converted) rather than
-    every team in `data/clubs.yml` — the only way "Brann" unambiguously
-    means `brann_m` or `brann_w` is by already knowing which league's
-    fixture list is being read.
+    Restricted to the competition being converted rather than all of
+    `data/clubs.yml`: "Brann" only means `brann_m` rather than `brann_w` once
+    you know which league's fixture list this is.
 
-    Returns `(team_id, was_fuzzy)`. An exact normalized match is preferred
-    and never flagged; a fuzzy (substring) match is a fallback, flagged so
-    the caller can decide whether to trust it.
+    Returns `(team_id, was_fuzzy)`. An exact normalized match wins; a
+    substring match is a flagged fallback for the caller to judge.
     """
     api_key = _normalize(api_name)
     if not api_key:
@@ -185,8 +169,7 @@ def resolve_team(world: World, team_ids: list[str], api_name: str) -> tuple[str 
     if len(exact_matches) == 1:
         return next(iter(exact_matches)), False
     if len(exact_matches) > 1:
-        # Two teams in this competition share a normalized name — should not
-        # happen given today's roster, but refuse to guess rather than pick one.
+        # Two teams share a normalized name: refuse to guess rather than pick.
         return None, False
 
     fuzzy_matches = set()
@@ -223,8 +206,8 @@ def _parse_api_football(payload: dict) -> list[RawFixture]:
         if not date_raw:
             continue
         try:
-            # api-sports.io timestamps are full ISO 8601 with an offset
-            # ("2026-03-14T16:00:00+00:00"); only the date half matters here.
+            # api-sports.io timestamps carry a full offset; only the date
+            # half matters here.
             event_date = _datetime.fromisoformat(date_raw).date()
         except ValueError:
             continue
@@ -244,10 +227,9 @@ PARSERS = {
 
 
 def _side_label(api_name: str, team_id: str, fuzzy: bool) -> str:
-    """`'Åsane' -> sandefjord_m (fuzzy)` — so a reviewer scanning the printed
-    warnings sees which team id a name actually resolved to, not just the
-    API's own spelling of it. A wrong fuzzy match is invisible without this:
-    the API name alone reads as plausible either way."""
+    """`'Åsane' -> sandefjord_m (fuzzy)` — a reviewer scanning the warnings
+    needs the team id a name resolved to, since the API name alone reads as
+    plausible whether the match was right or wrong."""
     return f"{api_name!r} -> {team_id} ({'fuzzy' if fuzzy else 'exact'})"
 
 
@@ -314,12 +296,10 @@ def _write_csv(rows: list[dict], out_path: Path, append: bool) -> None:
     combined = existing + rows
     combined.sort(key=lambda r: (r["date"], r["competition"], r["home_team"]))
 
-    # Checked before anything is opened for writing: `csv.DictWriter.writerows`
-    # raises if a row carries a key outside `fieldnames` (an --append target
-    # with an extra column, say), and that check happens mid-write — by then
-    # the header is already on disk and the file's previous contents are gone.
-    # Catching it here, before `out_path` is touched, is what keeps a failed
-    # --append from destroying the file it was supposed to extend.
+    # Checked before anything is opened: `csv.DictWriter.writerows` raises on
+    # a key outside `fieldnames` only mid-write, by which point the header is
+    # on disk and the previous contents are gone — which would let a failed
+    # --append destroy the file it was meant to extend.
     unexpected = {key for row in combined for key in row} - set(CSV_FIELDNAMES)
     if unexpected:
         raise ConversionError(
@@ -328,10 +308,8 @@ def _write_csv(rows: list[dict], out_path: Path, append: bool) -> None:
         )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    # Written to a sibling temp file and moved into place with os.replace
-    # (atomic on the same filesystem) rather than opened directly: a crash or
-    # Ctrl-C mid-write then leaves the original file intact instead of a
-    # truncated one.
+    # Written to a sibling temp file and moved into place atomically, so a
+    # crash mid-write leaves the original intact rather than truncated.
     tmp_path = out_path.with_name(f".{out_path.name}.tmp")
     with tmp_path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=CSV_FIELDNAMES)
@@ -435,9 +413,9 @@ def _load_payload(args: argparse.Namespace) -> dict:
     if not args.thesportsdb_league_id or not args.season:
         raise ConversionError("--thesportsdb-league-id and --season are required without --from-json")
 
-    # Fetched as the raw payload and run through the same `_parse_thesportsdb`
-    # as --from-json, rather than a separate parsed-network-response path —
-    # one conversion path to trust, not two that could drift apart.
+    # Returned as the raw payload so it runs through the same
+    # `_parse_thesportsdb` as --from-json: one conversion path, not two that
+    # could drift apart.
     league_id = urllib.parse.quote(args.thesportsdb_league_id)
     season = urllib.parse.quote(args.season)
     url = f"{API_BASE}/eventsseason.php?id={league_id}&s={season}"

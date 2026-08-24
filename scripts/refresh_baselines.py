@@ -111,12 +111,12 @@ def main() -> int:
 
 
 def _display_path(path: Path) -> Path:
-    """`path`, shortened for display if it's under `PROJECT_ROOT` — purely
-    cosmetic, so a path outside the tree (an out-of-tree `--reports`, say)
-    falls back to the absolute form instead of raising: `Path.relative_to`
-    only accepts a path that's actually a subpath, and this runs after the
-    report has already been written, so a crash here would misreport a
-    successful run as a failure."""
+    """`path`, shortened for display if it's under `PROJECT_ROOT`.
+
+    Cosmetic, so an out-of-tree path falls back to the absolute form rather
+    than raising — this runs after the report is written, where a crash would
+    misreport a successful run as a failure.
+    """
     try:
         return path.relative_to(PROJECT_ROOT)
     except ValueError:

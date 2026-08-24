@@ -1,17 +1,13 @@
 """HTTP client for a free, no-signup sports-data API.
 
-Uses TheSportsDB's public test key (`3`) — the same key their own docs
-publish for anyone to try the API with, not a secret. It's a small, free
-service, not the kind of provider you'd want backing a paying product, but
-it covers the Norwegian Eliteserien and Toppserien and needs no account,
-which matches this project's "everything runs offline by default, network
-access is opt-in" posture: `validate`, `generate` and `score` never call
-this; only `cli.py refresh-reference-data` and `scripts/fetch_real_schedule.py`
-do.
+Uses TheSportsDB's public test key (`3`) — the key their own docs publish, not
+a secret. A small free service, not what you'd back a product with, but it
+covers Eliteserien and Toppserien and needs no account. Only
+`refresh-reference-data` and `scripts/fetch_real_schedule.py` call it;
+`validate`, `generate` and `score` never do.
 
-Deliberately a thin wrapper over `urllib.request` rather than a new
-`requests`/`httpx` dependency — this is the only place in the project that
-makes an HTTP call, and stdlib is enough for a handful of GET-JSON endpoints.
+A thin `urllib.request` wrapper rather than a `requests`/`httpx` dependency:
+stdlib is enough for a handful of GET-JSON endpoints.
 """
 
 from __future__ import annotations
@@ -29,8 +25,8 @@ TIMEOUT_S = 10.0
 class FetchError(Exception):
     """The API could not be reached, or returned something unparseable.
 
-    Callers are expected to catch this and fall back to cached/static data —
-    a refresh failing is never allowed to be worse than not refreshing.
+    Callers catch this and fall back to cached data: a refresh failing is
+    never worse than not refreshing.
     """
 
 

@@ -1,10 +1,9 @@
 """Small hand-built worlds for constraint unit tests.
 
-Full-data fixtures (`world`, `season` in conftest.py) are right for integration
-tests but make it hard to see *why* a constraint fired — a violation in a
-16-team schedule is buried in 240 matches. These factories build minimal
-worlds with exactly the shape a single test needs, so each constraint test can
-state its scenario in four or five lines.
+The full-data fixtures in conftest.py suit integration tests but bury *why* a
+constraint fired — one violation among 240 matches. These build minimal worlds
+with exactly the shape a single test needs, so a constraint test states its
+scenario in four or five lines.
 """
 
 from __future__ import annotations
@@ -33,8 +32,8 @@ from terminliste.model.schema import (
 )
 from terminliste.rounds.cup_schedule import CupRoundPlacement, CupSchedule
 
-# Sentinel default for `competition(color=...)` — see that function's own
-# comment for why `None` can't double as "derive one automatically".
+# `color=None` stays meaningful — a test may want a colourless competition —
+# so "derive one" needs its own sentinel.
 _AUTO_COLOR = object()
 
 # Same idea as `_AUTO_COLOR`, for `competition(short_name=...)`.
@@ -129,12 +128,9 @@ def competition(
         final_round_kickoff_time=final_round_kickoff_time,
         kickoff_slots=kickoff_slots or ["14:00", "18:00", "20:00"],
         tv_time_spread=tv_time_spread,
-        # `color=None` must stay meaningful (a test can deliberately build a
-        # colorless competition), so the "derive a default" case needs its
-        # own sentinel rather than overloading None — derived from `id` so
-        # two different competitions built with no explicit color still get
-        # different ones, and a test world with several of them stays valid
-        # under `_validate_competition_colors` (issue #77 review).
+        # Derived from `id` so several colourless competitions in one test
+        # world still get distinct colours and pass
+        # `_validate_competition_colors` (#77).
         color=(f"#{abs(hash(id)) % 0xFFFFFF:06x}" if color is _AUTO_COLOR else color),
     )
 

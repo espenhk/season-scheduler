@@ -4,10 +4,9 @@ Pure data containers — no scheduling logic, no I/O. `loader.py` reads the YAML
 into these and cross-checks referential integrity; everything downstream works
 off the validated result and never touches the raw YAML.
 
-The shape here is deliberately wider than the first version needs. `Team.level`
-exists so reserve sides are a data edit rather than a refactor, and
-`Competition.format` is a discriminator so cups can be added alongside leagues
-without disturbing the league path.
+The shape is deliberately wider than needed: `Team.level` makes reserve sides a
+data edit rather than a refactor, and `Competition.format` discriminates so cups
+sit alongside leagues without disturbing the league path.
 """
 
 from __future__ import annotations
@@ -71,11 +70,8 @@ class Club(BaseModel):
     name: str
     short_name: str
     city: str
-    # Primary club colour, used to fill/stroke that club's team markers in the
-    # report (square for a home fixture, diamond for an away one) so a reader
-    # can recognise a club by colour the way they would on a real matchday
-    # graphic. One colour per club, not per team, so a dual club's men's and
-    # women's markers always match.
+    # Fills the club's team markers in the report. One colour per club, not per
+    # team, so a dual club's men's and women's markers always match.
     color: str
     teams: list[Team]
 
@@ -91,18 +87,16 @@ RoundGranularity = Literal["week", "month", "quarter"]
 
 
 class _DateSpec(BaseModel):
-    """Shared forced-date-XOR-window mechanics — issue #30's "vague/imprecise
-    game dates" mechanism.
+    """Shared mechanics for a date that may still be imprecise (#30).
 
-    A near-term date may already be confirmed (`forced_date`); a distant one
-    is only known to the week, month or quarter (`window_start`/
-    `window_end`, with `granularity` recording which). Exactly one of the
-    two must be set — never both, never neither — and narrowing a window
-    down to a `forced_date` once the real date is announced is a data edit,
-    not a re-model. Deliberately carries no identity of its own (no `id`,
-    `name`) — `_ScheduledRound` adds that for a whole round; `EuropeanLeg`
-    uses this bare, since a leg's identity is "first" or "second" within its
-    `EuropeanRound`, not something it needs to name itself.
+    A near-term date may be confirmed (`forced_date`); a distant one is known
+    only to the week, month or quarter (`window_start`/`window_end`, with
+    `granularity` recording which). Exactly one of the two must be set, so
+    narrowing a window once the real date is announced is a data edit.
+
+    Carries no identity of its own: `_ScheduledRound` adds that for a whole
+    round, while `EuropeanLeg` uses this bare — a leg is "first" or "second"
+    within its `EuropeanRound`.
     """
 
     forced_date: date | None = None
@@ -142,13 +136,11 @@ class _DateSpec(BaseModel):
 
 
 class _ScheduledRound(_DateSpec):
-    """`_DateSpec` plus the identity a whole round needs: `id`, `name`, and
-    an optional human `note`. `CupRound`'s shape — a cup round has one date
-    (or window) for the whole round, unlike `EuropeanRound`, which needs two
-    (`EuropeanLeg`, one per leg of a two-legged tie). `_DateSpec`'s own
-    forced-XOR-window validator is inherited as-is; it doesn't know about
-    `id`, but its message is still clear enough without one, and pydantic
-    reports which model failed regardless."""
+    """`_DateSpec` plus the identity a whole round needs.
+
+    One date (or window) for the round, unlike `EuropeanRound`, which needs
+    one per leg of a two-legged tie.
+    """
 
     id: str
     name: str
@@ -158,25 +150,18 @@ class _ScheduledRound(_DateSpec):
 class CupRound(_ScheduledRound):
     """One round of a knockout cup: when it may be played, not who plays whom.
 
-    Pairings are drawn round by round and are not known ahead of time, so this
-    only ever describes *when* a round falls; `terminliste/rounds/cup_schedule.py`
-    resolves it to an actual per-team date, honouring `forced_date` exactly and
-    picking a date inside the window otherwise.
+    Pairings are drawn round by round, so this only describes *when*;
+    `rounds/cup_schedule.py` resolves it to a per-team date.
     """
 
 
 class EuropeanLeg(_DateSpec):
     """One leg's date (or window) within a two-legged `EuropeanRound`.
 
-    UEFA schedules a qualifying round's first legs on one pairing window
-    (e.g. "4/5 August") and its second legs on another ("11 August") — two
-    genuinely separate dates, not one span covering both, which is what
-    `EuropeanRound` used to model before this was split out. Resolving a
-    `EuropeanLeg` to a single date is `terminliste/rounds/european_schedule.py`'s
-    job (mirroring `rounds/cup_schedule.py`'s own forced/window resolution);
-    the domestic scheduler then only needs to stay clear of that one date
-    plus `min_rest_days`, not an entire span between the two legs — freeing
-    up the days in between for a league match, e.g. a Thu-Sun-Thu week.
+    UEFA schedules first legs on one window and second legs on another — two
+    separate dates, not one span covering both, so the domestic scheduler need
+    only clear each leg date plus `min_rest_days`, leaving the days between
+    free for a league match (a Thu-Sun-Thu week).
     """
 
 
@@ -186,14 +171,10 @@ EuropeanHomeLeg = Literal["first", "second"]
 class EuropeanTie(BaseModel):
     """One entrant's specific two-legged tie within a `EuropeanRound`.
 
-    More than one of a competition's teams can enter the same round (Norway
-    had two Champions League play-off entrants in 2026-27, each against a
-    different opponent), so opponent and home/away are per-tie, not
-    per-round. `opponent` defaults to `"TBD"` for a tie whose own opponent
-    is still conditional on another, unrelated fixture elsewhere in the
-    draw — same spirit as issue #32's conditional fixtures, just describing
-    who's on the other side of the tie rather than which round is played at
-    all. `home_leg` is `None` when even that isn't settled yet.
+    More than one of a competition's teams can enter the same round, each
+    against a different opponent, so opponent and home/away are per-tie.
+    `opponent` stays `"TBD"` while it depends on another fixture in the draw
+    (#32), and `home_leg` is `None` when even that isn't settled.
     """
 
     team: str
@@ -202,38 +183,23 @@ class EuropeanTie(BaseModel):
 
 
 class EuropeanRound(BaseModel):
-    """One qualifying round of a UEFA competition (Champions/Europa/Conference
-    League), for the Norwegian team(s) entered in it.
+    """One qualifying round of a UEFA competition, for the Norwegian team(s)
+    entered in it (#29, #32).
 
-    Built for issue #29 (the CL/EL/UECL qualifying cascade) and issue #32
-    (conditional fixtures): unlike a domestic cup round, not every team
-    listed on the competition necessarily enters every round — Norway's
-    Champions League runner-up enters at the third qualifying round while
-    the champion enters directly at the play-off round, for instance — so
-    `ties` names exactly which of `Competition.teams` play this particular
-    round (`entrants` is the plain team-id list derived from it).
+    Unlike a cup round, not every team on the competition enters every round —
+    a Champions League runner-up enters at the third qualifying round while
+    the champion enters at the play-off — so `ties` names which of
+    `Competition.teams` play this one.
 
-    `drop_to_competition`/`drop_to_round` model the cascade: if an entrant
-    loses this round, that pair names the round (in a different, lower
-    competition) they drop into instead — e.g. a Champions League
-    Champions-Path third-qualifying-round loss drops into that season's
-    Europa League play-off round. Both are `None` when a loss here has no
-    further *qualifying* round to model, either because the real rule sends
-    the team straight into a competition's league phase (many matchdays,
-    not a single round — out of scope for this project, which only tracks
-    qualifying) or because this project simply hasn't sketched that hop yet
-    (see `data/competitions/europa_league_2026.yml`'s header for exactly
-    which hops are wired and which are left as a documented gap).
+    `drop_to_competition`/`drop_to_round` model the cascade: where an entrant
+    losing here lands instead. Both are `None` when a loss has no further
+    *qualifying* round to model — the team goes straight into a league phase
+    (out of scope), or the hop simply isn't wired yet.
 
-    Because the outcome of a round is unknown ahead of time,
-    `terminliste/rounds/european_schedule.py` does not pick a branch: it
-    walks every reachable round from a team's entry point and blocks every
-    leg date reachable at once, so the domestic scheduler stays clear of a
-    European commitment regardless of which branch of the cascade actually
-    happens. Once a real result is known, resolving the conditional is a
-    data edit — delete the round(s) on the branch not taken (or narrow a
-    surviving leg's window to a `forced_date`) and regenerate; see the
-    module docstring for the mechanics.
+    Outcomes are unknown ahead of time, so `rounds/european_schedule.py` picks
+    no branch: it blocks every reachable leg date at once. Resolving a
+    conditional once results are in is a data edit — delete the rounds on the
+    branch not taken, or narrow a surviving leg to a `forced_date`.
     """
 
     id: str
@@ -272,29 +238,21 @@ class EuropeanRound(BaseModel):
 
 
 class EuropeanMatchday(_ScheduledRound):
-    """One league-phase matchday of a UEFA main tournament (issue #79) — a
-    single date (or window), like a `CupRound`, not two legs: every
-    reachable team's league-phase fixture for that matchday is played
-    across one shared date, not a two-legged tie. `_ScheduledRound`'s
-    `id`/`name`/`note` plus forced-date-XOR-window mechanics are exactly
-    what this needs; no extra fields.
-    """
+    """One league-phase matchday of a UEFA main tournament (#79) — a single
+    date (or window), like a `CupRound`, since a matchday is one fixture per
+    team rather than a two-legged tie."""
 
 
 class MainTournamentRound(BaseModel):
     """One knockout round of a UEFA main tournament, following the league
-    phase (issue #79) — the knockout play-off, round of 16, quarter-final,
-    semi-final and final.
+    phase (#79).
 
-    Two legs, like `EuropeanRound`, except the final: `second_leg` is
-    `None` for a single-match round, and `venue_name` then names where
-    it's played, since UEFA fixes a final's venue years in advance,
-    independently of either finalist. That venue is freeform text rather
-    than a `Venue.id` reference the way a domestic fixture's venue is —
-    it's almost always outside Norway (`loader.py`'s `NORWAY_LAT_RANGE`/
-    `NORWAY_LON_RANGE` check would reject a `Venue` entry for it), and this
-    project has no reason to carry foreign stadium coordinates just to
-    print a name in a report.
+    Two legs, like `EuropeanRound`, except the final: `second_leg` is `None`
+    for a single-match round, and `venue_name` then names where it's played,
+    since UEFA fixes a final's venue years ahead of either finalist. That
+    venue is freeform text, not a `Venue.id` — it's almost always outside
+    Norway, and there's no reason to carry foreign stadium coordinates just to
+    print a name.
     """
 
     id: str
@@ -315,28 +273,26 @@ class MainTournamentRound(BaseModel):
 
     @property
     def earliest(self) -> date:
-        """The earliest date this round (either leg, or its one match) could conceivably land on."""
+        """The earliest date this round could conceivably land on."""
         if self.second_leg is None:
             return self.first_leg.earliest
         return min(self.first_leg.earliest, self.second_leg.earliest)
 
     @property
     def latest(self) -> date:
-        """The latest date this round (either leg, or its one match) could conceivably land on."""
+        """The latest date this round could conceivably land on."""
         if self.second_leg is None:
             return self.first_leg.latest
         return max(self.first_leg.latest, self.second_leg.latest)
 
 
 class TvTimeSpread(BaseModel):
-    """Desired TV-broadcast kickoff shape for a competition's round (issue
-    #76): on the preferred weekday, most matches sit at `primary_kickoff_time`,
-    with one shifted to `early_kickoff_time` and one to `late_kickoff_time`.
+    """Desired TV-broadcast kickoff shape for a competition's round: on the
+    preferred weekday most matches sit at `primary_kickoff_time`, with one
+    shifted early and one late.
 
-    Opt-in via `Competition.tv_time_spread` — `None` there leaves every match's
-    kickoff time to `Competition.kickoff_slots` as before. Applied by
-    `rounds/kickoff.py::assign_kickoff_times` and scored by
-    `scoring/soft.py::TvTimeSpread`.
+    Opt-in via `Competition.tv_time_spread`; `None` there leaves kickoff times
+    to `Competition.kickoff_slots`.
     """
 
     primary_kickoff_time: str = "17:00"
@@ -353,10 +309,8 @@ class TvTimeSpread(BaseModel):
 class Competition(BaseModel):
     """A league or a cup. `format` discriminates the two.
 
-    A league's fixtures are generated and dated by the solver. A cup's rounds
-    are real-world fixed dates (`cup_rounds`) that the solver treats as given
-    rather than something to search over — see `cup_rounds` and
-    `CupRoundConflict` in `scoring/hard.py`.
+    A league's fixtures are generated and dated by the solver; a cup's rounds
+    are real-world fixed dates the solver schedules around.
     """
 
     id: str
@@ -365,21 +319,15 @@ class Competition(BaseModel):
     gender: Gender
     format: CompetitionFormat = "league"
 
-    # This competition's short label — the season report falls back to
-    # `name` in the by-competition heading and the calendar legend, but
-    # every cramped spot (the month calendar's day detail, a fixture card's
-    # competition tag, the combined-list table) uses this instead. `None`
-    # for a competition that hasn't set one yet; `_validate_competition_short_names`
-    # in loader.py requires the shipped data to set one.
+    # Short label used everywhere the report is cramped; headings and the
+    # legend fall back to `name`. `None` until set, which the loader requires
+    # of the shipped data.
     short_name: str | None = None
 
-    # Issue #77: this competition's own colour for the season report's dots
-    # and tags — a report-relevant fact declared in the data, not inferred or
-    # cycled through a fixed palette, so the mapping from colour to
-    # competition is stable across renders and the loader can catch two
-    # competitions accidentally sharing one (see `_validate_competition_colors`
-    # in loader.py). `None` for a competition that hasn't set one yet; the
-    # report falls back to a neutral grey until it does.
+    # This competition's colour for the report's dots and tags (#77). Declared in
+    # the data rather than cycled through a palette, so the mapping stays
+    # stable across renders and the loader can catch two competitions sharing
+    # one. `None` falls back to a neutral grey.
     color: str | None = None
 
     @field_validator("color")
@@ -391,45 +339,34 @@ class Competition(BaseModel):
             raise ValueError(f"competition color {v!r} must be a 6-digit hex code, e.g. '#c0392b'")
         return v.lower()
 
-    # Issue #31: whether the solver is free to place this competition's
-    # fixtures (`True`, the league default) or must treat its dates as a
-    # given to schedule *around* (`False` — every cup and european
-    # competition; see `README.md`'s "Data model" section). Explicit rather
-    # than inferred from `format` so the flag is visible in the data itself,
-    # even though in practice every `format != "league"` competition sets
-    # it `False`.
+    # Whether the solver may place this competition's fixtures, or must
+    # schedule *around* its given dates (#31). Explicit rather than inferred
+    # from `format` so the flag is visible in the data itself.
     movable: bool = True
 
     rounds_per_pairing: int = 2
     team_count: int
     teams: list[str]
 
-    # A competition's own fixture window, when it runs narrower than the
-    # season's outer envelope (e.g. Toppserien finishing well before
-    # Eliteserien). None means "use the season's start/end" — the common case
-    # when every competition in a season shares one calendar.
+    # Narrower fixture window than the season's outer envelope, e.g. Toppserien
+    # finishing well before Eliteserien. None uses the season's start/end.
     start: date | None = None
     end: date | None = None
 
     preferred_weekday: Weekday = "sunday"
-    # Full days off between two of a team's matches — the days strictly
-    # between the two matchdays, counting neither of them. Thursday to Sunday
-    # is two (Friday, Saturday) and legal at the default setting.
+    # Days strictly between two of a team's matchdays, counting neither:
+    # Thursday to Sunday is two.
     min_rest_days: int = 2
     match_window_days: int = 3
     comfortable_rest_days: int = 5
     weights: dict[str, float] = Field(default_factory=dict)
 
-    # The whole final round — every match of the last round of the last leg —
-    # is forced onto one date, at this one kickoff time, by `resolve_round_pins`
-    # (see `rounds/greedy.py`) and checked by `FinalRoundSameSlot`
-    # (`scoring/hard.py`). Real leagues play the last round simultaneously so
-    # no team has a competitive edge from kicking off after its rivals.
+    # The whole final round plays at this one time, so no team gains an edge
+    # from kicking off after its rivals. Forced by `resolve_round_pins` and
+    # checked by `FinalRoundSameSlot`.
     final_round_kickoff_time: str = "18:00"
 
-    # The candidate kickoff times a non-final-round match may be assigned
-    # (`rounds/kickoff.py::assign_kickoff_times`), earliest first. Only
-    # meaningful together with `late_kickoff_long_travel` in `scoring/soft.py`.
+    # Candidate kickoff times for a non-final-round match, earliest first.
     kickoff_slots: list[str] = Field(
         default_factory=lambda: ["14:00", "18:00", "20:00"]
     )
@@ -449,64 +386,44 @@ class Competition(BaseModel):
             _validate_hh_mm(slot)
         return v
 
-    # Issue #76: opt-in TV-broadcast kickoff pattern for a round's matches on
-    # the preferred weekday — see `TvTimeSpread` above. `None` (the default)
-    # leaves kickoff assignment to `kickoff_slots`.
+    # Opt-in TV-broadcast kickoff pattern (#76); `None` leaves kickoff
+    # assignment to `kickoff_slots`.
     tv_time_spread: TvTimeSpread | None = None
 
     # Cup-only: the real-world rounds this competition's teams are entered
-    # into, in the order they are played. Empty for a league.
+    # into, in playing order.
     cup_rounds: list[CupRound] = Field(default_factory=list)
 
     # European-only: the UEFA qualifying rounds this competition's Norwegian
-    # entrant(s) play, in the order they are played — see `EuropeanRound`
-    # and issue #29. Empty for a league or cup, and for a European
-    # competition's own *main* tournament (`is_main_tournament: true`) —
-    # that uses `league_phase_matchdays`/`knockout_rounds` instead.
+    # entrant(s) play, in playing order (#29). Empty for a main tournament,
+    # which uses `league_phase_matchdays`/`knockout_rounds` instead.
     european_rounds: list[EuropeanRound] = Field(default_factory=list)
 
-    # Issue #79: distinguishes a UEFA competition's *qualifying* rounds
-    # (`european_rounds`, the only thing this project modelled before) from
-    # its *main tournament* — the league phase plus the knockout rounds
-    # that follow. Explicit rather than inferred from which of the two
-    # field groups below is populated, same reasoning as `movable`.
+    # Separates a UEFA competition's qualifying rounds from its main
+    # tournament (#79). Explicit rather than inferred from which field group
+    # is populated, same reasoning as `movable`.
     is_main_tournament: bool = False
 
-    # Main-tournament-only: every regular league-phase matchday this
-    # competition's reachable entrants (see `reachable_from`) could be
-    # drawn into. Empty for a qualifying competition or a league/cup.
+    # Main-tournament-only: every league-phase matchday reachable entrants
+    # (see `reachable_from`) could be drawn into.
     league_phase_matchdays: list[EuropeanMatchday] = Field(default_factory=list)
 
-    # Main-tournament-only: the knockout rounds following the league phase,
-    # in playing order — normally play-off, round of 16, quarter-final,
-    # semi-final, final. Empty for a qualifying competition or a league/cup.
+    # Main-tournament-only: the knockout rounds following the league phase, in
+    # playing order.
     knockout_rounds: list[MainTournamentRound] = Field(default_factory=list)
 
-    # Main-tournament-only: which *qualifying* competitions' entrants
-    # (issue #79) can reach this one — e.g. the Conference League main
-    # tournament lists both its own qualifying competition and the Europa
-    # League's, since a Europa League third-qualifying-round exit cascades
-    # into the Conference League play-off under the one hop
-    # `europa_league_2026.yml` actually wires (`drop_to_competition`/
-    # `drop_to_round`). Every entrant of every round of every listed
-    # qualifying competition is assumed able to reach this tournament's
-    # final — the same "assume it goes all the way" simplification
-    # `rounds/cup_schedule.py` makes for NM Cupen, since which of several
-    # possible tournaments a qualifying entrant actually lands in isn't
-    # known until results are in. This is coarser than UEFA's real
-    # round-by-round drop rule (a team eliminated at Champions League
-    # play-off can only fall as far as the Europa League; one eliminated
-    # in an earlier round may not reach Europa League at all) — modelling
-    # that precisely is a documented follow-up, not implemented here; see
-    # `docs/european_qualifiers_plan.md`. In the meantime, only wire a
-    # cross-competition hop here that the qualifying data itself also
-    # wires (via `drop_to_competition`/`drop_to_round`) — Champions League
-    # qualifying deliberately wires none, so no main tournament's
-    # `reachable_from` should list `champions_league_2026` either; doing so
-    # blocks a Champions League entrant's dates across every reachable
-    # tournament's whole calendar at once and made a feasible schedule
-    # practically unreachable within `cli.py generate`'s time budget when
-    # tried (see README.md's "Main tournaments" section).
+    # Main-tournament-only: which qualifying competitions' entrants can reach
+    # this one (#79). Every entrant of every listed competition is assumed able to
+    # reach the final — the same "assume it goes all the way" simplification
+    # `rounds/cup_schedule.py` makes, since where a qualifying entrant lands
+    # isn't known until results are in. Coarser than UEFA's round-by-round
+    # drop rule; `docs/european_qualifiers_plan.md` has the follow-up.
+    #
+    # Only wire a hop the qualifying data itself wires via
+    # `drop_to_competition`/`drop_to_round`. Champions League qualifying wires
+    # none deliberately: listing it blocks an entrant's dates across every
+    # reachable tournament's calendar at once, which put a feasible schedule
+    # out of reach of `cli.py generate`'s time budget.
     reachable_from: list[str] = Field(default_factory=list)
 
     @property
@@ -536,14 +453,9 @@ class Competition(BaseModel):
 
     @model_validator(mode="after")
     def _non_league_is_not_movable(self) -> "Competition":
-        """Makes the `movable` comment above self-policing rather than just
-        descriptive: a cup or European competition claiming `movable: true`
-        is a data error, not a legitimate choice — the solver never
-        generates or dates either one's fixtures, so the flag would be
-        lying about what actually happens. A `league` may still set
-        `movable: false` deliberately (e.g. to keep it out of
-        `season.competitions` while modelling it) — only the reverse is
-        forbidden here."""
+        """A cup or European competition claiming `movable: true` is a data
+        error: the solver never dates its fixtures, so the flag would be
+        lying. A league may still set `movable: false` deliberately."""
         if self.format != "league" and self.movable:
             raise ValueError(
                 f"{self.id}: a {self.format} competition cannot be movable — the solver never "
@@ -553,14 +465,9 @@ class Competition(BaseModel):
 
     @property
     def rounds(self) -> int:
-        """Total rounds.
-
-        League: (n-1) per leg for even n, n for odd n (bye rounds). Cup: the
-        number of real-world rounds its teams are entered into. European:
-        the number of qualifying rounds tracked (or, for a main
-        tournament, league-phase matchdays plus knockout rounds), same
-        idea as a cup.
-        """
+        """Total rounds — (n-1) per leg for an even league, n for an odd one
+        (bye rounds); for a cup or European competition, the number of
+        real-world rounds tracked."""
         if self.format == "cup":
             return len(self.cup_rounds)
         if self.format == "european":
@@ -579,10 +486,8 @@ class Competition(BaseModel):
 
     @property
     def total_matches(self) -> int:
-        """League only — a cup's or European competition's pairings are not
-        modelled as fixtures (opponents are drawn, or simply not this
-        project's concern), so this is 0 for anything but `format ==
-        "league"`."""
+        """League only: a cup's or European competition's opponents are drawn
+        rather than modelled as fixtures, so this is 0 for them."""
         if self.format != "league":
             return 0
         return self.matches_per_leg * self.rounds_per_pairing
@@ -602,10 +507,8 @@ class VenueBlackout(BaseModel):
 
 
 class _DateRangeNote(BaseModel):
-    """Shared start/end/reason mechanics for a closed span of blackout dates
-    — `GlobalBlackoutRange`'s and `VenueBlackoutRange`'s common shape (issue
-    #33), the multi-day counterpart to `DatedNote`'s single date.
-    """
+    """A closed span of blackout dates — the multi-day counterpart to
+    `DatedNote`'s single date."""
 
     start: date
     end: date
@@ -623,36 +526,26 @@ class _DateRangeNote(BaseModel):
 
 
 class GlobalBlackoutRange(_DateRangeNote):
-    """A closed span of dates off-limits for scheduling season-wide, with a
-    reason label for the overview — holiday periods, FIFA international
-    breaks. A labelled, multi-day generalisation of `global_blackouts`'s
-    single dates: `Season.blacked_out_dates` expands it day by day and folds
-    it into the same date->reason mapping every global-blackout consumer
-    reads.
-    """
+    """A closed span of dates off-limits season-wide — holiday periods, FIFA
+    international breaks. `Season.blacked_out_dates` expands it into the same
+    date->reason mapping every global-blackout consumer reads."""
 
 
 class VenueBlackoutRange(_DateRangeNote):
-    """A closed span of dates one venue is unavailable, with a reason label
-    — a multi-day generalisation of `venue_blackouts`'s single dates (a
-    multi-day concert run, ground works spanning a week). Unlike
-    `GlobalBlackoutRange`, this only ever reaches venue-scoped consumers
-    (the candidate calendar's per-venue blocks, `BlackoutDates`'s
-    venue-blackout check) — cup and European round resolution don't book
-    venues at all, so they never consult it, same as `venue_blackouts`.
-    """
+    """A closed span of dates one venue is unavailable — a concert run, ground
+    works spanning a week. Only venue-scoped consumers see it; cup and
+    European round resolution book no venues, so they never consult it."""
 
     venue: str
 
 
 class FullRoundRequirement(BaseModel):
-    """Every team in a competition must have a match on this date.
+    """Every team in a competition must have a match on this date — May 16 in
+    Eliteserien is a full round, not just the marquee fixtures a
+    `FixedRequirement` can pin.
 
-    May 16 in Eliteserien: the eve of the national day is a full round, not
-    just the handful of marquee fixtures a plain `FixedRequirement` can pin.
-    `hard=True` makes it a constraint the solver must satisfy (see
-    `FullRoundOnDate` in `scoring/hard.py`); the round nearest this date is
-    forced onto it entirely by `resolve_round_pins` in `rounds/greedy.py`.
+    `hard=True` makes it a solver constraint (`FullRoundOnDate`);
+    `resolve_round_pins` forces the nearest round onto the date.
     """
 
     id: str
@@ -666,10 +559,8 @@ class RivalryFixture(BaseModel):
     """A specific pairing that should land on a fixed date, home side
     alternating by year parity.
 
-    Bodø/Glimt vs Tromsø IL on May 16: the closest thing Norwegian football
-    has to a natural derby at that latitude. Scored as a preference by
-    `RivalryFixtureOnDate` in `scoring/soft.py` — nothing pins the pairing to
-    the date the way a hard requirement would.
+    Scored as a preference by `RivalryFixtureOnDate` — nothing pins the
+    pairing to the date the way a hard requirement would.
     """
 
     id: str
@@ -696,10 +587,9 @@ class FixedRequirement(BaseModel):
     reason: str = ""
     weight: float = 50.0
 
-    # Informational at the requirement level: `rounds/kickoff.py::assign_kickoff_times`
-    # copies this onto the winning `Match` once dates are fixed, for
-    # requirements like Tromsø's Midnight Sun Match, where the late kickoff is
-    # the whole point and needs to survive into the report.
+    # Copied onto the winning `Match` by `assign_kickoff_times`, for
+    # requirements like Tromsø's Midnight Sun Match where the late kickoff is
+    # the whole point.
     kickoff_time: str | None = None
 
     @field_validator("kickoff_time")
@@ -721,17 +611,13 @@ class Season(BaseModel):
     start: date
     end: date
     competitions: list[str]
-    # Cup competitions tied to this season, kept separate from `competitions`
-    # because they are not fed to the round-robin/solver pipeline: their
-    # rounds are fixed real-world dates, not something to be scheduled. A cup
-    # round can fall outside `start`..`end` (the 2027 Norwegian Cup starts in
-    # August 2026 and runs into the following spring) — that is expected, not
-    # a data error.
+    # Cup competitions, kept out of `competitions` because their rounds are
+    # fixed real-world dates rather than something to schedule. A cup round
+    # may fall outside `start`..`end` — the 2027 Norwegian Cup starts in
+    # August 2026 — which is expected, not a data error.
     cup_competitions: list[str] = Field(default_factory=list)
-    # European (UEFA qualifying) competitions tied to this season — issue
-    # #29 — kept separate for the same reason as `cup_competitions`: these
-    # are resolved once, up front (`rounds/european_schedule.py`), not fed
-    # to the round-robin/solver pipeline.
+    # UEFA qualifying competitions, separate for the same reason: resolved
+    # once up front, never fed to the solver pipeline.
     european_competitions: list[str] = Field(default_factory=list)
     global_blackouts: list[DatedNote] = Field(default_factory=list)
     discouraged_dates: list[DatedNote] = Field(default_factory=list)
@@ -744,18 +630,13 @@ class Season(BaseModel):
 
     @cached_property
     def blacked_out_dates(self) -> dict[date, str]:
-        """Every individual date this season blacks out season-wide, mapped
-        to a reason — `global_blackouts`'s single dates plus every day
-        inside `global_blackout_ranges`, expanded. The one place every
-        global-blackout consumer (the candidate calendar, `BlackoutDates`
-        scoring, cup/European round resolution) reads from, so a multi-day
-        exclusion behaves exactly like a run of single-day ones everywhere
-        blackouts matter.
+        """Every date blacked out season-wide, mapped to a reason: single
+        dates plus every day inside a range. The one place every
+        global-blackout consumer reads, so a multi-day exclusion behaves
+        exactly like a run of single-day ones.
 
-        Cached rather than recomputed: `BlackoutDates.evaluate` runs inside
-        the annealer's inner loop, once per candidate move, and a season is
-        loaded once and never mutated, so expanding every range (potentially
-        tens of dates each) on every call would be pure waste.
+        Cached because `BlackoutDates.evaluate` runs in the annealer's inner
+        loop and a season is never mutated after loading.
         """
         result: dict[date, str] = {}
         for excluded in self.global_blackout_ranges:
@@ -767,13 +648,9 @@ class Season(BaseModel):
 
     @cached_property
     def venue_blacked_out_dates(self) -> dict[str, dict[date, str]]:
-        """Every (venue, date) this season blacks out, keyed by venue then
-        mapped to a reason — `venue_blackouts`'s single dates plus every day
-        inside `venue_blackout_ranges`, expanded. Mirrors `blacked_out_dates`
-        but stays venue-scoped throughout: unlike a global blackout, a venue
-        one never reaches cup or European round resolution, which don't book
-        venues at all. Cached for the same reason `blacked_out_dates` is.
-        """
+        """Every (venue, date) blacked out, keyed by venue then mapped to a
+        reason. `blacked_out_dates`'s venue-scoped counterpart: cup and
+        European round resolution book no venues and never read this."""
         result: dict[str, dict[date, str]] = {}
         for excluded in self.venue_blackout_ranges:
             for day in excluded.dates:
@@ -819,10 +696,8 @@ class Match(BaseModel):
     date: date
     venue: str
 
-    # Not a search variable the way `date` and `venue` are — the solvers only
-    # decide dates. Filled in by `rounds/kickoff.py::assign_kickoff_times`
-    # once a schedule's dates are fixed, so it is always `None` on a
-    # freshly-built `Match` and only meaningful on a solver's final output.
+    # Not searched — filled in by `assign_kickoff_times` once dates are fixed,
+    # so it is `None` on a freshly built `Match`.
     kickoff_time: str | None = None
 
     @field_validator("kickoff_time")

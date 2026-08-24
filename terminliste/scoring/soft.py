@@ -24,10 +24,8 @@ from .base import ConstraintResult, EvalContext, Event, ScheduleIndex
 class PreferredWeekday:
     """Reward matches landing on the league's preferred day.
 
-    Eliteserien wants Sunday, Toppserien Saturday. Expressed as a reward for
-    hitting the day rather than a penalty for missing it, so a competition with
-    no strong preference simply earns fewer points instead of being punished
-    for a calendar it did not choose.
+    A reward rather than a penalty for missing, so a competition with no strong
+    preference just earns fewer points instead of being punished.
     """
 
     competitions: list[Competition]
@@ -78,8 +76,7 @@ class ConsecutiveHomeDays:
     """Reward a club's two teams playing at home on back-to-back days.
 
     The headline win of scheduling the leagues together: one trip into town
-    buys a supporter two matches, and the club runs one match weekend instead
-    of two.
+    buys a supporter two matches, and the club runs one match weekend.
     """
 
     competitions: list[Competition]
@@ -108,9 +105,9 @@ class ConsecutiveHomeDays:
                     self._weight_by_team.get(first, self.weight),
                     self._weight_by_team.get(second, self.weight),
                 )
-                # Both orders count: either team may take the Saturday. Each
-                # adjacency is visited once because `day` only ranges over the
-                # first team's home dates.
+                # Both orders count — either team may take the Saturday — and
+                # each adjacency is still visited once, since `day` ranges only
+                # over the first team's home dates.
                 for day in first_days:
                     for earlier, later, other_day in (
                         (first, second, day + _ONE_DAY),
@@ -141,10 +138,8 @@ class ConsecutiveHomeDays:
 class ConsecutiveAwayDays:
     """Reward back-to-back away days when the two venues are close enough.
 
-    Scaled by how easy the hop is: a two-hour transfer earns nearly full marks,
-    one just inside the eight-hour limit earns very little, and anything beyond
-    it — or unreachable by road, which in Norway means most things involving
-    Tromsø — earns nothing at all.
+    Scaled by how easy the hop is; anything past the limit, or unreachable by
+    road (in Norway, most things involving Tromsø), earns nothing.
     """
 
     competitions: list[Competition]
@@ -191,8 +186,7 @@ class ConsecutiveAwayDays:
                         hours = ctx.travel.hours(venue_a, venue_b)  # type: ignore[attr-defined]
                         if not math.isfinite(hours) or hours > max_hours:
                             continue
-                        # Linear falloff: a short hop is worth close to full
-                        # marks, one just inside the limit almost nothing.
+                        # Linear falloff to nothing at the limit.
                         factor = 1.0 - (hours / max_hours)
                         total += weight * factor
                         count += 1
@@ -216,12 +210,8 @@ class ConsecutiveAwayDays:
 
 @dataclass
 class HomeAwayBreaks:
-    """Penalise runs of three or more consecutive home or away matches.
-
-    A team playing five straight away matches has a wrecked season regardless
-    of how the rest of the calendar looks; this is the classic measure of
-    schedule quality in the round-robin literature.
-    """
+    """Penalise runs of three or more consecutive home or away matches — the
+    classic measure of schedule quality in the round-robin literature."""
 
     competitions: list[Competition]
     id: str = "home_away_breaks"
@@ -300,14 +290,10 @@ class HomeAwayBreaks:
 class HomeAwayBalance:
     """Penalise a home/away split that drifts within either half of the season.
 
-    Over a full double league every team ends level by construction, so the
-    only thing worth measuring is whether they got there smoothly or played
-    fifteen home matches and then fifteen away. Both competitions this
-    project schedules are double leagues today, but an odd `rounds_per_pairing`
-    (a triple round-robin, say) can only ever end within 1 of level — see
-    `round_robin.generate_fixtures` for why that's still guaranteed — which
-    this rule doesn't need to know about: it only ever looks at the
-    within-half drift, never the season-end total.
+    A double league ends level by construction, so the only thing worth
+    measuring is whether a team got there smoothly or played fifteen home
+    matches and then fifteen away. Looks only at within-half drift, never the
+    season-end total, so an odd `rounds_per_pairing` needs no special case.
     """
 
     competitions: list[Competition]
@@ -359,12 +345,9 @@ class HomeAwayBalance:
 
 @dataclass
 class RestComfort:
-    """Penalise rest counts that clear the hard minimum but are still short.
-
-    Two rest days is legal; five is comfortable. This is what pushes the
-    solver towards a humane calendar once feasibility is no longer in
-    question.
-    """
+    """Penalise rest counts that clear the hard minimum but are still short —
+    what pushes the solver towards a humane calendar once feasibility is
+    settled."""
 
     competitions: list[Competition]
     id: str = "rest_comfort"
@@ -466,13 +449,8 @@ class SoftVenuePreference:
 
 @dataclass
 class GrassAwayRoundOne:
-    """Reward a grass-pitch club playing away in round 1.
-
-    Natural turf needs longer to establish than an artificial or hybrid
-    surface, so a grass-venue side is often not match-ready the very first
-    weekend of the season — an away trip is kinder than hosting on a pitch
-    that isn't ready for it yet.
-    """
+    """Reward a grass-pitch club playing away in round 1 — natural turf often
+    isn't match-ready by the first weekend of the season."""
 
     competitions: list[Competition]
     id: str = "grass_away_round_one"
@@ -518,13 +496,8 @@ class GrassAwayRoundOne:
 class LateKickoffLongTravel:
     """Penalise a late Sunday kickoff for an away team with a long trip home.
 
-    A late kickoff already means a late finish; a long drive or flight home
-    on top of that makes for a genuinely bad night for the travelling side.
-    An earlier kickoff, or a short trip, is never penalised regardless of the
-    other factor — this only fires when both line up. `late_from` and
-    `long_travel_hours` are the tunable thresholds; `late_kickoff_long_travel`
-    in a competition's `weights` overrides `weight` the same way every other
-    soft rule's weight can be tuned per competition.
+    Fires only when both line up: a late finish or a long journey alone is
+    fine, the combination is what makes for a bad night.
     """
 
     competitions: list[Competition]
@@ -581,12 +554,11 @@ class LateKickoffLongTravel:
 
 @dataclass
 class RivalryFixtureOnDate:
-    """Reward a fixed annual pairing landing on its date with the right home side.
+    """Reward a fixed annual pairing landing on its date with the right home
+    side, home advantage alternating by year.
 
-    Bodø/Glimt vs Tromsø IL on May 16, home advantage alternating by year —
-    the closest thing Norwegian football has to a natural derby at that
-    latitude. Nothing pins the pairing to the date the way a hard requirement
-    would; this only scores it when the schedule happens to land there.
+    Nothing pins the pairing to the date; this only scores it when the
+    schedule happens to land there.
     """
 
     fixtures: list[RivalryFixture]
@@ -631,17 +603,13 @@ class RivalryFixtureOnDate:
 
 @dataclass
 class TvTimeSpread:
-    """Reward a round following the TV-broadcast kickoff shape configured by
-    `Competition.tv_time_spread` — most matches on the preferred weekday at
-    the primary kickoff time, one early, one late — and penalise a match
-    colliding, at the same date and kickoff time, with a match from a
-    different competition.
+    """Reward a round following `Competition.tv_time_spread` — most matches at
+    the primary kickoff time, one early, one late — and penalise two
+    competitions colliding on the same date and time.
 
-    Kickoff time is assigned once per schedule, after dates are fixed
-    (`rounds/kickoff.py::assign_kickoff_times`), rather than searched, so
-    every match here with `kickoff_time is None` is skipped: that is every
-    match during annealing, and this rule only has anything to say about the
-    finished schedule a candidate's dates produce.
+    Kickoff times are assigned after dates are fixed
+    (`rounds/kickoff.py::assign_kickoff_times`) rather than searched, so
+    matches without one are skipped — during annealing, that is all of them.
     """
 
     competitions: list[Competition]
@@ -766,20 +734,14 @@ def _weights_by_team(
 
 @dataclass
 class EuropeanCommitmentSoftConflict:
-    """Discourage a league match too close to a team's *conditional*
-    European qualifying leg date — a commitment reachable only via one of
-    several mutually-exclusive cascade branches (issue #93).
+    """Discourage a league match too close to a *conditional* European
+    qualifying leg — one reachable only via a mutually-exclusive cascade
+    branch (#93).
 
-    `EuropeanCommitmentConflict`'s (`scoring/hard.py`) soft counterpart,
-    same point-date-plus-rest arithmetic, but reading only the commitments
-    that constraint skips (`commitment.certain is False`): a team either
-    wins a round and advances, or loses it and drops — never both — so
-    blocking a domestic date against every branch at once as a hard
-    exclusion over-constrains the calendar for an outcome that's still a
-    coin flip. Keeping it as a soft penalty still steers the solver away
-    from the date when a cheaper alternative exists, without making an
-    otherwise-feasible schedule infeasible over a branch that never
-    materializes.
+    A team wins a round and advances or loses it and drops, never both, so
+    hard-blocking every branch at once would over-constrain the calendar for
+    an outcome that is still a coin flip. A penalty still steers the solver
+    away when a cheaper date exists.
     """
 
     commitments_by_team: dict[str, list[EuropeanCommitmentDate]]

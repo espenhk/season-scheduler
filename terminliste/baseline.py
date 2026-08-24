@@ -1,32 +1,25 @@
 """Score a committed, real-world fixture list and persist the verdict.
 
-`external_schedule.py` answers "can this arbitrary CSV be scored?". This
-module answers the durable version of the same question: *these particular*
-schedules, the ones actually published by the leagues, kept in the repo with
-their provenance attached, re-scored on demand so the number never drifts
-away from the ruleset that produced it.
+`external_schedule.py` answers "can this arbitrary CSV be scored?"; this
+handles the durable version — the leagues' actually-published schedules, kept
+in the repo with their provenance, re-scored on demand so the number never
+drifts from the ruleset that produced it.
 
-The point is a baseline. A generated schedule scoring 93/100 means nothing on
-its own — it is only interesting next to what the real fixture list scores
-under the same rules. Keeping the real list and its score report in-tree, and
-regenerating them with one command, is what makes that comparison something
-you can actually look up rather than re-derive.
+A generated schedule scoring 93/100 means nothing on its own; it is only
+interesting next to what the real fixture list scores under the same rules.
 
-Two things are deliberate here:
+Two deliberate choices:
 
-**A schedule with no sidecar is not scoreable.** Every `<name>.csv` must sit
-beside a `<name>.yml` naming where it came from, when it was retrieved, and
-whether anyone has verified it. A fixture list that claims to be official but
-cannot say why is the one kind of data this project most wants to keep out —
-see the `verified: false` markers in `data/venues.yml` for the same instinct
-applied to reference data.
+**A schedule with no sidecar is not scoreable.** Every `<name>.csv` needs a
+`<name>.yml` naming where it came from, when, and whether anyone verified it.
+A fixture list claiming to be official but unable to say why is exactly what
+this project wants to keep out.
 
-**A partial baseline is legitimate.** Real sources are often incomplete, and
-`external_schedule.py` already treats coverage gaps as advisory. What a
-partial baseline does change is how its hard-violation count reads: rules
-keyed to dates the file never reaches will fail for want of data rather than
-for want of a good schedule. The sidecar's `expected_hard_violations` records
-those up front, and the report prints them next to the raw count.
+**A partial baseline is legitimate.** Real sources are often incomplete. What
+that changes is how the hard-violation count reads: rules keyed to dates the
+file never reaches fail for want of data, not for want of a good schedule.
+The sidecar's `expected_hard_violations` records those, and the report prints
+them beside the raw count.
 """
 
 from __future__ import annotations
@@ -50,9 +43,8 @@ class BaselineError(Exception):
     """Raised for a baseline whose sidecar is missing, malformed, or inconsistent."""
 
 
-# Sidecar keys that must be present and non-empty. Everything else is optional
-# prose — these are the fields the report and the refusal-to-guess policy
-# actually depend on.
+# Sidecar keys the report and the refusal-to-guess policy depend on;
+# everything else is optional prose.
 REQUIRED_FIELDS = ("id", "name", "season", "schedule_file", "verified", "retrieved", "sources")
 
 
@@ -88,10 +80,9 @@ class BaselineEvaluation:
 def discover_baselines(sources_dir: Path) -> list[BaselineSource]:
     """Every baseline in `sources_dir`, ordered by id.
 
-    Driven by the sidecars rather than the CSVs on purpose: a stray CSV
-    dropped in the directory without provenance should be a loud error when
-    someone tries to score it by name, not something that silently joins the
-    committed baselines on the next refresh.
+    Driven by the sidecars rather than the CSVs, so a stray CSV without
+    provenance is a loud error when someone scores it by name rather than
+    silently joining the committed baselines on the next refresh.
     """
     sources_dir = Path(sources_dir)
     if not sources_dir.is_dir():
@@ -119,11 +110,8 @@ def load_baseline(sidecar_path: Path) -> BaselineSource:
     if missing:
         raise BaselineError(f"{sidecar_path}: missing required field(s) {missing}")
 
-    # `verified` gates whether the sidecar's provenance is trusted at all —
-    # the one field this module exists to keep honest. `bool("no")` is `True`,
-    # so coercing rather than checking would flip a quoted "no" straight
-    # through to "trusted", which is the exact failure mode the field is
-    # supposed to prevent.
+    # Checked, not coerced: `bool("no")` is `True`, so a quoted "no" would
+    # come through as "trusted" — the exact failure this field exists to stop.
     raw_verified = raw["verified"]
     if not isinstance(raw_verified, bool):
         raise BaselineError(
@@ -131,10 +119,9 @@ def load_baseline(sidecar_path: Path) -> BaselineSource:
             f"got {raw_verified!r}"
         )
 
-    # A scalar string here (someone forgot the leading "- ") would otherwise
-    # pass the presence check above and then get iterated character by
-    # character below, silently turning one sentence into dozens of
-    # one-letter bullets.
+    # A scalar string (a forgotten leading "- ") passes the presence check
+    # above and then iterates character by character, turning one sentence
+    # into dozens of one-letter bullets.
     for list_field in ("sources", "expected_hard_violations", "competitions"):
         value = raw.get(list_field)
         if value is not None and not isinstance(value, list):
@@ -169,9 +156,8 @@ def load_baseline(sidecar_path: Path) -> BaselineSource:
 def evaluate_baseline(source: BaselineSource, world: World) -> BaselineEvaluation:
     """Score one baseline against the season's full hard + soft ruleset.
 
-    Identical machinery to `cli.py score` — same constraint registry, same
-    travel model, same `detail=True` evaluation — so a baseline's number is
-    directly comparable to a generated schedule's, which is the entire point.
+    Identical machinery to `cli.py score`, so a baseline's number is directly
+    comparable to a generated schedule's — the entire point.
     """
     season = world.season(source.season_id)
     competitions = [world.competition(c) for c in season.competitions]
@@ -210,9 +196,9 @@ def write_reports(evaluation: BaselineEvaluation, world: World, reports_dir: Pat
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     json_path = reports_dir / f"{evaluation.source.id}.json"
-    # ensure_ascii=False: this file is committed and read in diffs, and half
-    # the names in it are Norwegian. \u00e5-escaped club names would make every
-    # review of a baseline change an exercise in decoding.
+    # ensure_ascii=False: this file is committed and read in diffs, and
+    # \u00e5-escaped Norwegian club names would make every review a decoding
+    # exercise.
     json_path.write_text(
         json.dumps(_json_payload(evaluation), indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -227,9 +213,8 @@ def write_reports(evaluation: BaselineEvaluation, world: World, reports_dir: Pat
 def _json_payload(evaluation: BaselineEvaluation) -> dict:
     """Machine-readable twin of the markdown.
 
-    Shaped to be diffable across refreshes: the breakdown rows are sorted by
-    constraint id rather than by magnitude, so a rule whose score moved shows
-    up as a one-line change instead of a reordering of the whole table.
+    Breakdown rows sort by constraint id rather than magnitude, so a rule
+    whose score moved is a one-line diff, not a reordered table.
     """
     source, score = evaluation.source, evaluation.score
     return {

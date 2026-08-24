@@ -110,10 +110,8 @@ def test_coverage_warning_flags_a_pair_that_never_meets(tmp_path, world):
 def test_coverage_warning_text_is_stable_across_hash_seeds(tmp_path, world):
     """The example pair named in a warning must not move with the hash seed.
 
-    `missing` is a set, so an unordered pick would give different text run to
-    run. Harmless while the warning is only printed; not harmless once it is
-    committed to a baseline report, where it would show up as a spurious diff
-    on every refresh.
+    `missing` is a set, so an unordered pick would give different text each
+    run — a spurious diff on every baseline-report refresh.
     """
     path = tmp_path / "schedule.csv"
     _write_csv(

@@ -47,11 +47,9 @@ from terminliste.scoring.base import EvalContext, Score, evaluate  # noqa: E402
 from terminliste.scoring.registry import build_constraints  # noqa: E402
 from terminliste.solvers import Candidate, ProgressUpdate, SearchStats, SolveRequest, SolverResult, get_scheduler  # noqa: E402
 
-# TheSportsDB's league-name string for each competition this project knows
-# about. Unconfirmed against a live call in this sandbox — the network egress
-# policy here blocks the API host entirely (see README) — so treat these as
-# a documented best guess to verify the first time this runs somewhere that
-# can actually reach the API, not as tested constants.
+# TheSportsDB's league-name string per competition. Unconfirmed against a live
+# call — this sandbox's egress policy blocks the API host — so verify these the
+# first time this runs somewhere that can reach it.
 API_LEAGUE_NAMES = {
     "eliteserien_2026": "Norwegian Eliteserien",
     "toppserien_2026": "Norwegian Toppserien",
@@ -147,9 +145,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
     ctx = EvalContext(world=world, season=season, travel=travel)
 
     scheduler = get_scheduler(args.solver)
-    # Live progress (issue #34) — a terminal-only courtesy: piped/redirected
-    # output (e.g. a CI log) would otherwise fill up with carriage-return
-    # updates that don't mean anything once flattened to lines.
+    # Terminal only (#34): piped output would fill a CI log with
+    # carriage-return updates that mean nothing once flattened to lines.
     live = sys.stdout.isatty()
     request = SolveRequest(
         world=world,
@@ -349,7 +346,7 @@ def cmd_refresh_travel_times(args: argparse.Namespace) -> int:
 
 
 def _print_progress(update: ProgressUpdate) -> None:
-    """Live "how's it going" line (issue #34), overwritten in place."""
+    """Live "how's it going" line (#34), overwritten in place."""
     pct = 100 * update.iterations / max(1, update.total_iterations)
     stats = update.stats
     feasible_pct = 100 * stats.feasible_rate if stats.investigated else 0.0
@@ -447,18 +444,15 @@ def _resolve_european_or_exit(world, season):
 
 
 def _european_report_data(world, season):
-    """The season's European competitions plus their rounds resolved to real
-    leg dates — what `render_report` needs to show them, as opposed to
-    `_resolve_european_or_exit`'s flattened, cascade-walked commitment list,
-    which is shaped for conflict-checking rather than display.
+    """The season's European competitions with their rounds resolved to real
+    leg dates — what `render_report` needs, as opposed to
+    `_resolve_european_or_exit`'s flattened commitment list, which is shaped
+    for conflict-checking.
 
-    A main tournament competition (issue #79) has no `european_rounds` of
-    its own — `report/render.py`'s `_european_views`/`_european_entries`
-    only know how to display those — so `build_main_tournament_rounds_for_display`
-    adapts its `league_phase_matchdays`/`knockout_rounds` into the same
-    shape and a display-only copy of the competition carries the result,
-    letting the rendering code stay unaware main tournaments are modelled
-    any differently from a qualifying competition.
+    A main tournament (#79) has no `european_rounds`, which is all the report
+    knows how to display, so `build_main_tournament_rounds_for_display` adapts its
+    matchdays and knockout rounds into that shape onto a display-only copy of
+    the competition.
     """
     european_competitions = [world.competition(c) for c in season.european_competitions]
     blackouts = set(season.blacked_out_dates)

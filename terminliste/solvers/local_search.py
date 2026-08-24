@@ -4,32 +4,26 @@ Takes the greedy schedule and improves it by repeatedly making a small change,
 rescoring, and keeping the change if it helped (or, early on, sometimes even if
 it did not — that is what lets it climb out of a local optimum).
 
-Four move operators, chosen to span different scales:
+Four move operators spanning different scales:
 
-* `shift` moves one match a few days inside its round window — fine adjustment.
+* `shift` moves one match a few days inside its round window — fine.
 * `swap_rounds` exchanges two rounds' dates within a leg — medium.
-* `flip_orientation` swaps home and away across a mirrored fixture pair — changes
-  who travels without touching the calendar.
-* `swap_teams` exchanges two teams' entire seasons — the coarsest move, and the
-  most effective, because a team stuck with a bad calendar can be relocated
-  wholesale. It is a relabelling, so the tournament stays valid by construction.
+* `flip_orientation` swaps home and away across a mirrored fixture pair,
+  changing who travels without touching the calendar.
+* `swap_teams` exchanges two teams' entire seasons — the coarsest move, and
+  the most effective, since a team stuck with a bad calendar can be relocated
+  wholesale. It is a relabelling, so the tournament stays valid.
 
 Hard violations are folded into the cost as a large finite penalty rather than
-rejected outright, so the search can cross infeasible ground to reach something
-better. Feasibility is only *required* of the answer, and if none is found the
-report says which rules are still broken instead of failing silently.
+rejected outright, so the search can cross infeasible ground to reach
+something better; if the answer is still infeasible the report says which
+rules are broken rather than failing silently.
 
-Issue #98: every restart above rebuilds from a fresh greedy schedule under a
-new seed, so the whole time budget is split into independent "whole new random
-scenario" attempts — good for covering ground broadly, bad in a crunch period
-where a handful of teams' fixtures are the only real trouble and what is
-needed is to keep working *that* schedule rather than discard it for another
-blind draw. A second, "polish" phase (`_polish_candidates`) runs after the
-restarts: it takes each shortlisted candidate's own final state — not a fresh
-build — and anneals further from a low, still-cooling temperature, so it can
-only nudge dates locally rather than re-litigate the whole season. This
-mirrors how a real fixture list actually gets adjusted once published: in
-small steps against what already mostly works, not a redraw from scratch.
+Search runs in two phases (#98). The restarts each rebuild from a fresh greedy
+schedule, covering ground broadly. `_polish_candidates` then anneals each
+shortlisted candidate further from its own final state at a low temperature,
+nudging dates locally — how a published fixture list actually gets adjusted,
+rather than one more blind draw.
 """
 
 from __future__ import annotations
@@ -53,9 +47,9 @@ from .greedy import build_initial_schedule
 class WorkingMatch:
     """Mutable stand-in for `Match` during the search.
 
-    Duck-types the attributes `ScheduleIndex` and the constraints read. Mutating
-    in place and undoing on rejection avoids copying the whole schedule tens of
-    thousands of times, which otherwise dominates the runtime.
+    Duck-types what `ScheduleIndex` and the constraints read. Mutating in place
+    and undoing on rejection avoids copying the whole schedule tens of
+    thousands of times, which would otherwise dominate the runtime.
     """
 
     competition_id: str
@@ -65,10 +59,8 @@ class WorkingMatch:
     round_index: int
     date: date
     venue: str
-    # Never mutated by a move — kickoff is assigned once dates are final (see
-    # `rounds/kickoff.py::assign_kickoff_times`), not searched. Present here
-    # only so this duck-types `Match` for constraints that read it, such as
-    # `FinalRoundSameSlot`.
+    # Never mutated by a move — kickoff is assigned once dates are final, not
+    # searched. Here only so constraints like `FinalRoundSameSlot` can read it.
     kickoff_time: str | None = None
 
     @property
@@ -96,22 +88,18 @@ class LocalSearchScheduler:
 
     name = "local"
 
-    # The temperatures are low, and deliberately so. Soft deltas here are small
-    # — 4 points for moving off the preferred weekday, 25 for losing a
-    # back-to-back home pairing — so a textbook starting temperature accepts
-    # almost every bad move and spends the budget destroying the greedy
-    # schedule and rebuilding it. Measured over three seeds, 0.5 scored ~2990
-    # against ~2880 at 1.0 and no improvement at all over the starting point at
-    # 20 or above. In practice this behaves as hill-climbing with an occasional
-    # escape, which is what this landscape rewards.
+    # Temperatures are deliberately low. Soft deltas are small — 4 points for
+    # moving off the preferred weekday, 25 for losing a back-to-back home
+    # pairing — so a textbook starting temperature accepts nearly every bad
+    # move and spends the budget demolishing the greedy schedule. Over three
+    # seeds, 0.5 scored ~2990 against ~2880 at 1.0, and 20 or above never beat
+    # the starting point: this landscape rewards hill-climbing with the
+    # occasional escape.
     #
-    # `polish_fraction` carves a slice of the total time budget out of the
-    # restarts above and spends it on the second phase instead (issue #98):
-    # each shortlisted candidate gets its own share, annealed further from
-    # its own final state rather than a fresh greedy build. `polish_end_temperature`
-    # continues cooling from wherever the explore phase's `end_temperature`
-    # left off, down to a near-hill-climbing floor — the point is to fix up
-    # the last few trouble spots, not to explore broadly again.
+    # `polish_fraction` diverts that share of the budget from the restarts to
+    # the polish phase (#98), which cools from `end_temperature` down to
+    # `polish_end_temperature` — near hill-climbing, to fix the last trouble
+    # spots rather than explore again.
     def __init__(
         self,
         restarts: int = 4,
@@ -135,12 +123,10 @@ class LocalSearchScheduler:
         budget_per_restart = explore_budget_s / max(1, self.restarts)
 
         candidates: list[Candidate] = []
-        # Parallel to `candidates` (same index, appended together below): each
-        # restart's own final annealed state and pinned-match set, kept around
-        # so the polish phase can resume a shortlisted candidate from exactly
-        # where its restart left off instead of rebuilding it from `Match`
-        # objects (which have already been sorted and lost the original
-        # pinned-index bookkeeping).
+        # Parallel to `candidates`: each restart's final annealed state and
+        # pinned set, so the polish phase can resume exactly where the restart
+        # left off. The `Match` objects can't serve — they have been sorted and
+        # lost the pinned-index bookkeeping.
         restart_states: list[tuple[list[WorkingMatch], set[str]]] = []
         total_iterations = 0
         notes: list[str] = []
@@ -259,17 +245,12 @@ def _polish_candidates(
     end_temperature: float,
     notes: list[str],
 ) -> tuple[int, SearchStats]:
-    """Phase two (issue #98): anneal each shortlisted candidate further from
-    its own final state, rather than restarting from a fresh greedy build.
+    """Anneal each shortlisted candidate further from its own final state, at a
+    low temperature so moves stay local (#98).
 
-    Each restart in phase one explores a whole new random scenario; this
-    instead keeps working the schedules that already scored well, at a low
-    and still-cooling temperature so moves stay local — the "jiggle it until
-    it falls into place" search a real season's fixture list actually gets,
-    rather than one more blind draw. A polished candidate only replaces the
-    original when it scores strictly better (`Score.sort_key`, feasibility
-    first): this phase can improve a shortlisted schedule but never make one
-    worse than what phase one already found.
+    A polished candidate replaces the original only when it scores strictly
+    better, so this phase can never leave a schedule worse than phase one
+    found it.
     """
     per_candidate_budget = budget_s / len(chosen)
     total_iterations = 0
@@ -327,9 +308,7 @@ def _with_detail(ctx: EvalContext) -> EvalContext:
 @dataclass(slots=True)
 class _CostResult:
     cost: float
-    # Ids of hard constraints this scenario broke — empty means viable. Built
-    # from `result.count` the cost loop already computes for every
-    # constraint, so tracking it costs nothing extra beyond the append.
+    # Ids of hard constraints this scenario broke — empty means viable.
     hard_ids: tuple[str, ...]
 
 
@@ -363,13 +342,10 @@ def _anneal(
     ctx = request.ctx
     constraints = request.constraints
 
-    # Cooling is driven by iteration progress towards a target count rather
-    # than by polling the clock mid-search, so the exact number of draws made
-    # from the seeded RNG depends only on the seed and the calibrated rate
-    # below — not on scheduling jitter from one run to the next. The target
-    # count itself *is* time-budget-derived (and cached per problem size), so
-    # a slower machine still gets proportionally fewer iterations instead of
-    # the run simply taking longer.
+    # Cooling follows iteration progress rather than the clock, so the draws
+    # taken from the seeded RNG depend only on the seed and the calibrated
+    # rate, not on scheduling jitter. The target count is still budget-derived,
+    # so a slower machine runs fewer iterations rather than taking longer.
     total_iterations = max(1, round(budget_s * _iterations_per_second(matches, request, calendars)))
 
     rng = random.Random(seed)
@@ -381,11 +357,9 @@ def _anneal(
 
     decay = math.log(end_temperature / start_temperature)
     stats = SearchStats()
-    # Throttled by iteration count, not wall-clock: a clock poll every
-    # iteration would be the one thing in this loop that actually costs
-    # something (see the cooling-schedule note above for why time is kept out
-    # of the hot path entirely). ~40 updates per restart is plenty for a
-    # human watching a terminal.
+    # Throttled by iteration count: a clock poll every iteration would be the
+    # one genuinely costly thing in this loop. ~40 updates per restart is
+    # plenty for a human watching a terminal.
     report_every = max(1, total_iterations // 40)
 
     iterations = 0
@@ -432,12 +406,10 @@ def _anneal(
     return matches, iterations, stats
 
 
-# Iterations/second this process can push through a given problem size, keyed
-# by (match count, constraint count) and measured once — the first time that
-# shape is seen — rather than re-measured on every restart or every solve()
-# call. Re-measuring per call is exactly what made the search non-reproducible:
-# two back-to-back calls with the same seed could time slightly differently
-# and so run a different number of iterations before hitting the deadline.
+# Iterations/second per problem size, measured once per (match count,
+# constraint count). Measuring per call would make the search irreproducible:
+# two runs with the same seed could time differently and so take a different
+# number of iterations.
 _RATE_CACHE: dict[tuple[int, int], float] = {}
 
 _CALIBRATION_PROBES = 200
@@ -509,8 +481,8 @@ class _MoveSet:
         self._pinned_indexes = {i for i, m in enumerate(matches) if m.key in pinned}
         self._movable = [i for i in range(len(matches)) if i not in self._pinned_indexes]
 
-        # Round anchor = the earliest date the round currently occupies. Used as
-        # the centre of each match's allowed window.
+        # Round anchor = the earliest date the round occupies, used as the
+        # centre of each match's allowed window.
         self._anchors: dict[tuple[str, int], date] = {}
         for match in matches:
             key = (match.competition_id, match.round_index)
@@ -537,9 +509,8 @@ class _MoveSet:
         for i, match in enumerate(matches):
             self._indexes_by_competition.setdefault(match.competition_id, []).append(i)
 
-        # Mirror map: leg-1 A-v-B <-> leg-2 B-v-A. Precomputed because the
-        # orientation move needs it on every call and a linear scan of 240
-        # matches would dominate that move's cost.
+        # Mirror map: leg-1 A-v-B <-> leg-2 B-v-A. Precomputed because a linear
+        # scan of 240 matches would dominate the orientation move's cost.
         self._mirror_of: dict[int, int] = {}
         seen: dict[tuple[str, str, str], int] = {}
         for i, match in enumerate(matches):
@@ -605,8 +576,8 @@ class _MoveSet:
             for index in self._indexes_by_round[(competition_id, round_index)]:
                 match = self._matches[index]
                 if index in self._pinned_indexes:
-                    # A pinned match anchors its round; moving the round around
-                    # it would silently break the requirement it satisfies.
+                    # A pinned match anchors its round; moving the round would
+                    # break the requirement it satisfies.
                     return self._abort(snapshot)
                 snapshot.append((index, match.home_team, match.away_team, match.date, match.venue))
                 match.date = match.date + timedelta(days=shift)

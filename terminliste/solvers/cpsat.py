@@ -3,21 +3,18 @@
 Enabled with `--solver cpsat`. Requires OR-Tools, which is an optional
 dependency; the import is deferred so the default install stays light.
 
-**What this model does and does not decide.** It assigns *dates*, given the
-pairing structure produced by the same round generator the local-search backend
-uses. Who plays whom, and which way round, is fixed before the model is built.
-That keeps the model to a few thousand booleans and solves in seconds; letting
-CP-SAT choose the pairings as well would make it a genuinely large problem and
-is the obvious next step rather than something quietly assumed away here.
+The model assigns *dates* only: who plays whom, and which way round, is fixed
+before it is built, by the same round generator the local-search backend uses.
+That keeps it to a few thousand booleans and seconds of solve time. Letting
+CP-SAT choose the pairings too would make this a genuinely large problem — the
+obvious next step, not something quietly assumed away.
 
-One consequence worth knowing: `home_away_breaks` is a property of the pairing
-order, not the dates, so it is near-constant across this model's solutions and
-is left out of the objective. It is still *reported*, by the same scorer both
-backends share — the report tells the truth about a schedule regardless of
-which solver produced it.
+So `home_away_breaks`, a property of the pairing order rather than the dates,
+is near-constant across this model's solutions and left out of the objective.
+The shared scorer still reports it.
 
-Hard constraints are registered with assumption literals, so an infeasible
-model names the rules responsible instead of returning a bare INFEASIBLE.
+Hard constraints carry assumption literals, so an infeasible model names the
+rules responsible instead of returning a bare INFEASIBLE.
 """
 
 from __future__ import annotations
@@ -73,18 +70,14 @@ class CpSatScheduler:
         candidates: list[Candidate] = []
         notes: list[str] = list(pin_warnings)
         # Each pass forbids re-using the previous solutions' date assignments
-        # too closely, which is how a solution *pool* becomes three genuinely
-        # different options rather than three trivial variations.
+        # too closely, so the pool holds three genuinely different options
+        # rather than three trivial variations.
         forbidden: list[dict[str, date]] = []
         budget_per_pass = request.time_budget_s / max(1, request.top_n)
 
-        # One CP-SAT pass is this backend's unit of "scenario investigated"
-        # (issue #34) — the same unit local search uses is one proposed move,
-        # which has no CP-SAT analogue; a pass is the coarsest thing both
-        # backends' stats can be compared at. `hard_violation_counts` is
-        # populated from whichever hard rule(s) either made the model
-        # infeasible (the assumption culprits) or are still broken in the
-        # extracted schedule our own scorer checked.
+        # One pass is this backend's "scenario investigated" (#34) — local
+        # search's unit, a proposed move, has no CP-SAT analogue, so a pass is
+        # the coarsest unit both backends' stats compare at.
         stats = SearchStats()
 
         for pass_index in range(request.top_n):
@@ -252,12 +245,10 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
     model = cp_model.CpModel()
     by_competition = calendars_by_competition(calendar, request.competitions)
     cup_windows = resolved_cup_windows(request.cup_schedules)
-    # Only `certain` commitments narrow the candidate domain — a commitment
-    # reachable only via one of several mutually-exclusive cascade branches
-    # (issue #93) isn't a guaranteed fixture, so excluding a date over it
-    # here would re-introduce the same over-constraining `_european_clear`
-    # is meant to avoid; `EuropeanCommitmentSoftConflict` (scoring/soft.py)
-    # is where an uncertain commitment's date gets discouraged instead.
+    # Only `certain` commitments narrow the candidate domain (#93): one
+    # reachable solely via a mutually-exclusive cascade branch isn't a
+    # guaranteed fixture, so `EuropeanCommitmentSoftConflict` discourages its
+    # date instead of this excluding it outright.
     european_commitments = {
         team_id: [c for c in commitments if c.certain]
         for team_id, commitments in request.european_commitments.items()
@@ -267,13 +258,11 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
     fixtures: list[tuple[object, object, str]] = []  # (fixture, competition, venue)
     placement: dict[int, dict[date, object]] = {}
 
-    # A hard fixed requirement can name a date no round window reaches — May 16
-    # 2026 is a Saturday, and the Sunday after it is a national-day blackout, so
-    # no Eliteserien anchor comes within reach. The date is added to the
-    # candidate set of exactly one fixture: the home fixture whose round already
-    # sits closest to it. Adding it to every fixture of that team instead would
-    # let an early date leak into a late round and drag the leg boundary with
-    # it, which is how this model first came out infeasible.
+    # A hard fixed requirement can name a date no round window reaches (May 16
+    # 2026 is a Saturday, with the Sunday after it blacked out), so it is added
+    # to exactly one fixture's candidate set: the home fixture whose round sits
+    # closest. Offering it to every fixture of that team would let an early
+    # date leak into a late round and drag the leg boundary with it.
     required_dates: dict[tuple[str, int, str, str], date] = {}
     for requirement in season.fixed_requirements:
         if not requirement.hard:
@@ -299,11 +288,8 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
             anchor = plan.anchors[fixture.round_index]
             pin_date = round_pins.get((competition.id, fixture.round_index))
             if pin_date is not None:
-                # A round pinned to one date (the final round, or a
-                # FullRoundRequirement's round — see `resolve_round_pins`)
-                # gets exactly one candidate date, which forces it without
-                # needing a separate assumption literal: there is nothing
-                # else for `AddExactlyOne` below to choose.
+                # One candidate date forces the pin without a separate
+                # assumption literal — `AddExactlyOne` has nothing else to pick.
                 window = [pin_date]
             else:
                 window = _european_clear(
@@ -460,13 +446,10 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
                 model.Add(sum(vars_) <= 1).OnlyEnforceIf(club_literal)
 
     # H5 leg ordering: every first meeting before every second meeting.
-    #
-    # Expressed with a split date per competition rather than by comparing
-    # candidate windows. Comparing windows looks cheaper but couples the
-    # boundary to whichever fixture happens to own the earliest candidate — one
-    # out-of-window required date is enough to make the whole model infeasible.
-    # A split variable says exactly what the rule means and cannot be perturbed
-    # that way.
+    # A split date per competition, rather than comparing candidate windows —
+    # comparing windows looks cheaper but couples the boundary to whichever
+    # fixture owns the earliest candidate, so one out-of-window required date
+    # makes the whole model infeasible.
     leg_literal = assume("leg_ordering")
     for plan in planned:
         by_leg: dict[int, list[int]] = defaultdict(list)
@@ -489,15 +472,9 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
                 for day, var in placement[i].items():
                     model.Add(day.toordinal() > split).OnlyEnforceIf([var, leg_literal])
 
-    # H6 cup round conflict is not modelled as a constraint here at all — it
-    # is enforced up front, by excluding conflicting dates from a fixture's
-    # candidate set (see `_cup_clear`). That is stricter than an
-    # `OnlyEnforceIf` constraint would be: this model's fixtures each have a
-    # small, fixed candidate window around a round anchor chosen without cup
-    # awareness, so a fixture boxed in by a conflict discovered only *after*
-    # the candidate set was built would have no legal date left to fall back
-    # on and the whole model would come out infeasible — cup conflicts
-    # literally cannot occur in a solution this model produces.
+    # H6 cup round conflict has no constraint here: conflicting dates are
+    # excluded from each fixture's candidate set up front (`_cup_clear`), so
+    # a cup conflict cannot occur in a solution at all.
 
     # -- objective: the soft rules CP-SAT can see ---------------------------
     objective_terms: list[tuple[int, object]] = []
@@ -538,21 +515,15 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
                         model.Add(sum(vars_b) >= 1).OnlyEnforceIf(pair)
                         objective_terms.append((sign * _scaled(weight), pair))
 
-    # S6 rest comfort. The scorer charges `weight * (comfortable - rest_days)`
-    # for a rest count between the legal minimum and the comfortable target —
-    # a graduated penalty, not a threshold. Transcribing it faithfully
-    # matters: rewarding only fully-clear windows made CP-SAT trade away rest
-    # wholesale to buy back-to-back home days, and score worse on the real
-    # scorer while believing it had improved.
+    # S6 rest comfort. The scorer's penalty is graduated, not a threshold, and
+    # transcribing that faithfully matters: rewarding only fully-clear windows
+    # made CP-SAT trade rest away wholesale for back-to-back home days.
     #
-    # `minimum` and `comfortable` here are calendar-day window lengths
-    # (`min_gap_days`/`comfortable_gap_days`), not the full-rest-day counts
-    # the scorer works in — a window of L consecutive days with at most one
-    # match is the calendar-day analogue of L-1 full rest days. Summing a
-    # bonus over every window length from minimum+1 to comfortable gives
-    # `weight * (rest_days - min_rest_days)`, which differs from the scorer's
-    # penalty by a constant — the same objective, in the direction CP-SAT
-    # maximises.
+    # `minimum` and `comfortable` are calendar-day window lengths, not the
+    # full-rest-day counts the scorer works in — a window of L days with at
+    # most one match is the analogue of L-1 rest days. Summing a bonus over
+    # every length from minimum+1 to comfortable gives the scorer's penalty up
+    # to a constant, in the direction CP-SAT maximises.
     for team_id, days in dates_by_team.items():
         comfortable = _comfort_for(planned, team_id)
         minimum = minimum_by_team.get(team_id, 1)
@@ -657,9 +628,8 @@ def _infeasibility_note(solver, status, culprits: list[str], cp_model, pass_inde
 def _cup_clear(window: list[date], fixture, cup_windows: dict[str, list[tuple[date, int]]]) -> list[date]:
     """Drop candidate dates that conflict with either side's cup commitment.
 
-    Mirrors how a blackout date is already never offered as a candidate: a
-    date a team can't legally play is excluded up front rather than modelled
-    as a constraint to satisfy after the fact.
+    Excluded up front, the way a blackout date already is, rather than
+    modelled as a constraint to satisfy after the fact.
     """
     return [
         day

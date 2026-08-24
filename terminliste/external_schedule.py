@@ -1,20 +1,16 @@
 """Load an externally supplied schedule and score it against the same rules.
 
-The scoring machinery does not care where a `Match` list came from — this
-module is what lets a *real* fixture list (copied from a league's official
-site, a spreadsheet someone drafted by hand, last year's actual calendar) be
-scored exactly like a solver's own output. That is the fastest way to answer
-"what's wrong with this schedule" without touching the solver at all, and it
-is also how the solver's own output should be sanity-checked: score it as if
-it were an external submission and see whether anything looks different.
+The scoring machinery doesn't care where a `Match` list came from, so a real
+fixture list — a league's published calendar, a hand-drafted spreadsheet —
+can be scored exactly like a solver's own output. That is the fastest way to
+answer "what's wrong with this schedule" without touching the solver.
 
-The format is deliberately minimal — competition, date, home team, away team,
-with venue optional — because a real-world source rarely comes with our
-internal `round_index`/`leg` bookkeeping attached. Both are inferred here:
-`leg` from the order in which each pair meets, `round_index` from the rank of
-each unique match date within its competition (a "matchday number"). Neither
-inferred field feeds into any constraint except `leg_ordering`, which is
-exactly the property leg inference is designed to preserve.
+The format is minimal — competition, date, home team, away team, venue
+optional — because a real-world source rarely carries our `round_index`/`leg`
+bookkeeping. Both are inferred: `leg` from the order each pair meets,
+`round_index` from the rank of each date within its competition. Neither feeds
+any constraint but `leg_ordering`, which is the property leg inference is
+designed to preserve.
 """
 
 from __future__ import annotations
@@ -45,11 +41,10 @@ class RawEntry:
 def load_external_schedule(path: Path, world: World) -> tuple[list[Match], list[str]]:
     """Parse a CSV or JSON schedule file into `Match` objects.
 
-    Returns `(matches, warnings)`. Warnings are non-fatal: an unknown team id
-    or a bad date raises `ExternalScheduleError` immediately (the file cannot
-    be scored at all), but things like a pair meeting the wrong number of
-    times are reported so the caller can show them without refusing to score
-    the rest of the schedule.
+    Returns `(matches, warnings)`. An unknown team id or bad date raises
+    `ExternalScheduleError`, since the file can't be scored at all; softer
+    problems like a pair meeting the wrong number of times come back as
+    warnings so the rest of the schedule still scores.
     """
     path = Path(path)
     if not path.exists():
@@ -103,9 +98,8 @@ def _parse_json(path: Path) -> list[RawEntry]:
             f"{path}: expected a JSON list of matches, or an object with a 'matches' list"
         )
     entries: list[RawEntry] = []
-    # 1-based throughout: matches CSV's line numbers and _validate_entries's
-    # "entry N" numbering, so a parse error and a later validation error can
-    # both be traced to the same row without an off-by-one translation.
+    # 1-based to match CSV line numbers and `_validate_entries`'s "entry N",
+    # so a parse error and a validation error name the same row.
     for i, row in enumerate(rows, start=1):
         try:
             entries.append(
@@ -174,10 +168,8 @@ def _build_matches(entries: list[RawEntry], world: World) -> list[Match]:
 def _assign_legs(entries: list[RawEntry]) -> dict[int, int]:
     """First meeting of a pair is leg 1, second leg 2, and so on.
 
-    Orientation-independent: A-home-v-B and B-home-v-A count as the same pair
-    meeting, which is what makes this the right proxy for "first meeting" /
-    "second meeting" in a double league regardless of which side was drawn at
-    home in each leg.
+    Orientation-independent — A-home-v-B and B-home-v-A are the same pair
+    meeting — so this reads legs correctly whichever side was drawn at home.
     """
     order: dict[tuple[str, str, str], list[int]] = {}
     for i, entry in enumerate(entries):
@@ -213,11 +205,9 @@ def _assign_rounds(entries: list[RawEntry]) -> dict[int, int]:
 def _coverage_warnings(world: World, entries: list[RawEntry]) -> list[str]:
     """Flag pairs that met an unexpected number of times, or not at all.
 
-    Advisory only — an incomplete or partial schedule is a perfectly
-    reasonable thing to score (a proposed change to a few rounds, say), so this
-    never blocks scoring. It just tells the reader what the coverage actually
-    looks like before they read a "feasible" badge that only covers the
-    matches they gave us.
+    Advisory only: a partial schedule — a proposed change to a few rounds —
+    is a reasonable thing to score. This just says what the coverage is
+    before the reader trusts a "feasible" badge covering only part of it.
     """
     warnings: list[str] = []
     by_competition: dict[str, list[RawEntry]] = {}
@@ -239,14 +229,11 @@ def _coverage_warnings(world: World, entries: list[RawEntry]) -> list[str]:
         missing = all_pairs - set(counts)
         wrong = {pair: n for pair, n in counts.items() if n != expected}
 
-        # `min` rather than `next(iter(...))` for the example pair: `missing`
-        # is a set, so iteration order moves with the hash seed and the same
-        # file would produce different warning text from one process to the
-        # next. That is invisible when the warning is printed and gone, but
-        # these strings also land in committed baseline reports, where a
-        # sentence that rewrites itself every run is a diff nobody can read.
-        # `wrong` is a dict in row order and so already stable; sorted anyway
-        # so the guarantee is stated rather than inherited by accident.
+        # `min`, not `next(iter(...))`: `missing` is a set, so its iteration
+        # order moves with the hash seed, and these strings land in committed
+        # baseline reports where a sentence that rewrites itself every run is
+        # an unreadable diff. `wrong` is already stable, sorted anyway so the
+        # guarantee is stated rather than inherited.
         if missing:
             warnings.append(
                 f"{competition.name}: {len(missing)} pair(s) never meet (expected {expected} "

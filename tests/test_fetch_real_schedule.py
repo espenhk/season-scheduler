@@ -1,10 +1,8 @@
 """`scripts/fetch_real_schedule.py` — team-name matching and JSON-to-CSV conversion.
 
-Fully offline: every test feeds synthetic API JSON through `--from-json` (or
-imports the conversion functions directly), so nothing here depends on
-`baselines/SOURCING_FIXTURES.md`'s live-fetch path actually working — that
-part could not be verified from this sandbox (see the guide for why) and is
-exercised here only up to the point where a real HTTP call would happen.
+Fully offline: every test feeds synthetic API JSON through `--from-json` or
+imports the conversion functions directly, so the live-fetch path is exercised
+only up to the point where a real HTTP call would happen.
 """
 
 from __future__ import annotations
@@ -26,14 +24,12 @@ from terminliste.model.loader import load_world  # noqa: E402
 
 
 def _load_script():
-    """Import the standalone script as a module — it lives outside any
-    package (`scripts/` has no `__init__.py`, matching `publish_web.py` and
-    `refresh_baselines.py`), so `importlib` is the straightforward way in."""
+    """Import the standalone script as a module: `scripts/` has no
+    `__init__.py`, so `importlib` is the way in."""
     spec = importlib.util.spec_from_file_location("fetch_real_schedule", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    # Registered in sys.modules before exec: dataclass field resolution (this
-    # module uses `from __future__ import annotations`, so fields are lazily
-    # resolved as strings) looks the module up by name there.
+    # Registered before exec because the script's lazily-resolved dataclass
+    # annotations are looked up by module name in sys.modules.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
@@ -99,9 +95,8 @@ def test_short_code_does_not_win_a_fuzzy_match(script, world, unrelated_name):
 
 
 def test_near_miss_is_flagged_fuzzy_not_silently_accepted(script, world):
-    """"Aalesund" (common English spelling) vs our "Aalesunds FK" is a real
-    near-miss, not a contrived one — this is what motivated defaulting fuzzy
-    matches to skipped-and-reported rather than auto-accepted."""
+    """"Aalesund" vs our "Aalesunds FK" is a real near-miss, and why fuzzy
+    matches default to skipped-and-reported rather than auto-accepted."""
     team_ids = world.competition("toppserien_2026").teams
     team_id, fuzzy = script.resolve_team(world, team_ids, "Aalesund")
     assert (team_id, fuzzy) == ("aalesund_w", True)

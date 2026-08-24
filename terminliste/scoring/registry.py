@@ -2,8 +2,8 @@
 
 One place decides which rules are in play. Both solver backends and the report
 consume the same list, so a constraint added here is immediately live
-everywhere — that is the whole point of declaring rules as objects rather than
-writing them into a solver.
+everywhere — the point of declaring rules as objects rather than writing them
+into a solver.
 """
 
 from __future__ import annotations
@@ -51,14 +51,11 @@ def build_constraints(
 ) -> list[Constraint]:
     """Every rule in force for this season, hard first.
 
-    `competitions` are the league(s) actually being scheduled. `cup_schedules`
-    are real-world-dated cups (already resolved to a date per team — see
-    `rounds/cup_schedule.py`) that share teams with them — not scheduled
-    themselves, but kept clear of via `CupRoundConflict`. `european_commitments`
-    is the same idea for UEFA qualifying leg dates — see
-    `rounds/european_schedule.py` and `EuropeanCommitmentConflict` (its
-    `certain` dates) plus `EuropeanCommitmentSoftConflict` (issue #93 — the
-    same dict's `certain=False` ones, reachable only via a cascade fork).
+    `competitions` are the league(s) being scheduled. `cup_schedules` and
+    `european_commitments` are already-resolved dates for competitions sharing
+    their teams — never scheduled here, only kept clear of, by
+    `CupRoundConflict` and the two European constraints (the soft one covers
+    the `certain=False`, cascade-fork dates the hard one skips — #93).
     """
     hard_requirements = [r for r in season.fixed_requirements if r.hard]
 

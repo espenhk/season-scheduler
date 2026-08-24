@@ -1,15 +1,11 @@
 """Populate the ground-travel-time cache from OSRM, one venue pair at a time.
 
 Same shape as `refresh.py`: a cache miss or an unreachable API degrades to
-"kept whatever was already cached" rather than a crash, so this can be run
-occasionally without becoming a liability the day the API is down — which,
-inside this project's own sandboxed dev environment, it always is (see
-README on the egress proxy's host allowlist).
+"kept whatever was already cached" rather than a crash.
 
-Unlike `refresh.py` (which only ever diffs, never writes `data/*.yml`), this
-writes straight into `data/.refdata_cache/travel.json`: that file is a cache
-of API responses, not hand-authored data, so it's exactly as safe to
-regenerate as any other cache.
+Unlike `refresh.py`, which only ever diffs, this writes straight into
+`data/.refdata_cache/travel.json` — a cache of API responses, not
+hand-authored data, so it's as safe to regenerate as any other cache.
 """
 
 from __future__ import annotations
@@ -24,8 +20,8 @@ from .travel_client import FetchError, fetch_ground_route
 
 DEFAULT_CACHE_PATH = Path(__file__).resolve().parent.parent.parent / "data" / ".refdata_cache" / "travel.json"
 
-# Road networks don't change week to week — a long TTL keeps `generate`/
-# `score` cheap to run repeatedly without re-fetching every pair each time.
+# Road networks don't change week to week, so a long TTL saves re-fetching
+# every pair on each run.
 DEFAULT_TTL_S = 30 * 24 * 60 * 60
 
 

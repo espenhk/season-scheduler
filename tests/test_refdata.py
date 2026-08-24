@@ -1,9 +1,7 @@
 """The reference-data client, cache, and diff/refresh layer.
 
-`client.fetch_teams` is tested by monkeypatching `urllib.request.urlopen` —
-nothing here makes a real network call, on purpose: the sandbox this project
-is developed in blocks the API host outright (see README), so a test that
-needed the real network would never run anywhere this ships from.
+`client.fetch_teams` is tested by monkeypatching `urllib.request.urlopen`.
+Nothing here makes a real network call, so the suite runs anywhere.
 """
 
 from __future__ import annotations

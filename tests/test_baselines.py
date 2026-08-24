@@ -1,11 +1,9 @@
 """The committed baselines load, score, and match their committed reports.
 
-Two jobs. The first is a data guard: a baseline CSV whose team ids have gone
-stale, or a sidecar someone added without provenance, should fail here rather
-than at the next refresh. The second is the staleness check — if a constraint
-is added or re-weighted and `baselines/reports/` is not regenerated, the
-committed number is quietly lying about the current ruleset, and that is
-exactly the failure a baseline exists to prevent.
+Two jobs: a data guard, so a CSV with stale team ids or a sidecar without
+provenance fails here rather than at the next refresh; and a staleness check,
+since a re-weighted constraint with `baselines/reports/` not regenerated
+leaves the committed number quietly lying about the current ruleset.
 """
 
 from __future__ import annotations
@@ -74,9 +72,9 @@ def test_reports_are_up_to_date():
 
 
 def test_writes_to_an_out_of_tree_reports_dir_do_not_crash_on_the_display_path(tmp_path):
-    """`Path.relative_to` raises for a path outside `PROJECT_ROOT` — the
-    report itself must still get written successfully; only the cosmetic
-    "wrote ..." line needs to fall back to an absolute path instead."""
+    """`Path.relative_to` raises outside `PROJECT_ROOT`, but the report must
+    still be written — only the "wrote ..." line falls back to an absolute
+    path."""
     result = subprocess.run(
         [
             sys.executable, str(PROJECT_ROOT / "scripts" / "refresh_baselines.py"),
@@ -124,19 +122,12 @@ def _undeclared_or_exceeded(
 
 def test_every_hard_violation_is_declared_in_the_sidecar(world, sources):
     """A baseline may only break hard rules its sidecar owns up to, and only
-    up to the count it declares.
+    as often as it declares.
 
-    This is what keeps `expected_hard_violations` honest. Left unchecked it
-    would rot into a stale paragraph that explains away violations nobody
-    re-read; tied to the score, an undeclared violation — or one that fires
-    *more* often than declared — is a test failure that forces a decision:
-    either the schedule data is wrong, or the sidecar owes the reader an
-    explanation.
-
-    The count matters as much as the rule id: a sidecar declaring
-    "fixed_requirement (6)" and a baseline that actually breaks it 7 times
-    would pass a rule-id-only check, but the 7th is a real finding about the
-    fixture data, not the same known gap the other 6 are.
+    Tied to the score, `expected_hard_violations` can't rot into a stale
+    paragraph explaining away violations nobody re-read. The count matters as
+    much as the rule id: a 7th `fixed_requirement` break against a declared 6
+    is a real finding, not the same known gap.
     """
     for source in sources:
         evaluation = evaluate_baseline(source, world)
@@ -170,10 +161,8 @@ def test_declared_count_parsing_reads_the_convention_sidecars_use():
 
 
 def test_undeclared_or_exceeded_catches_a_new_instance_of_a_declared_rule():
-    """The regression case from review: extending a baseline past the point
-    where `fixed_requirement` is expected to break 6 times, and it turns out
-    to break 7 — the 7th must not pass silently just because the rule id
-    itself was already declared."""
+    """A 7th break of a rule declared to break 6 times must not pass silently
+    just because the rule id itself was declared."""
     undeclared, exceeded = _undeclared_or_exceeded(
         actual={"fixed_requirement": 7, "full_round_on_date": 16},
         declared={"fixed_requirement": 6, "full_round_on_date": 16},
@@ -213,13 +202,10 @@ def test_missing_required_field_is_rejected(tmp_path):
 
 
 def test_cup_scheduling_failure_is_wrapped_as_baseline_error(world, sources, monkeypatch):
-    """`schedule_cups` raises its own `CupSchedulingError` — `cli.py score`
-    handles that directly, but `evaluate_baseline` presents a single error
-    type to its callers (`load_external_schedule` failures already go
-    through `BaselineError` the same way), and `refresh_baselines.py` only
-    catches `(BaselineError, DataError)`. An unwrapped `CupSchedulingError`
-    would escape as a raw traceback instead of the clean FAIL every other
-    bad-data path produces."""
+    """`evaluate_baseline` presents one error type to its callers, and
+    `refresh_baselines.py` only catches `(BaselineError, DataError)` — an
+    unwrapped `CupSchedulingError` would escape as a raw traceback instead of
+    the clean FAIL every other bad-data path produces."""
 
     def _boom(*args, **kwargs):
         raise CupSchedulingError("no room for round 1")
@@ -265,11 +251,8 @@ def _base_sidecar_fields(**overrides) -> dict:
 
 @pytest.mark.parametrize("bad_verified", ["no", "false", 0, 1])
 def test_verified_must_be_a_real_bool_not_a_coerced_scalar(tmp_path, bad_verified):
-    """`bool("no")` is `True` — coercing here would flip a quoted "no"
-    straight through to "trusted", which is the one thing this field exists
-    to prevent. (An empty-string `verified` is covered separately by
-    `test_missing_required_field_is_rejected` — it's caught by the presence
-    check first, not this type check.)"""
+    """`bool("no")` is `True`, so coercing would flip a quoted "no" through to
+    "trusted" — the one thing this field exists to prevent."""
     sidecar = tmp_path / "bad.yml"
     sidecar.write_text(
         yaml.safe_dump(_base_sidecar_fields(verified=bad_verified)), encoding="utf-8"

@@ -20,20 +20,11 @@ from .base import Constraint, ConstraintResult, EvalContext, Event, ScheduleInde
 class MinRestDays:
     """At least N full days off between any team's matches.
 
-    N counts only the days strictly between the two matchdays, not either
-    matchday itself: Thursday to Sunday is two full rest days and legal at
-    the default setting. Only a rest count strictly below the minimum counts
-    as a violation — including a team playing twice in one day, which counts
-    as -1 rest days.
-
-    This rule only governs gaps between a team's own matches *in the
-    competitions passed to it* (`competitions`, always the movable,
-    solver-scheduled ones); the equivalent gap against a European qualifying
-    leg is `EuropeanCommitmentConflict`'s job, using the same `min_rest_days`
-    value but read from the European competition, not this one — which is
-    what makes a Thu-Sun-Thu week (a European leg, the league match, the
-    next European leg) work out to legal on both sides, without either rule
-    needing to know about the other.
+    N counts only the days strictly between two matchdays, so Thursday to
+    Sunday is two rest days. Gaps against a European leg belong to
+    `EuropeanCommitmentConflict`, which reads its minimum from the European
+    competition — that split is what makes a Thu-Sun-Thu week legal on both
+    sides without either rule knowing about the other.
     """
 
     competitions: list[Competition]
@@ -43,9 +34,8 @@ class MinRestDays:
     _minimum_by_team: dict[str, int] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
-        # A team can appear in only one competition today, but taking the
-        # strictest applicable minimum is what will keep this correct once a
-        # team plays in a league and a cup at the same time.
+        # Strictest applicable minimum, so this stays correct once a team can
+        # play in a league and a cup at once.
         for competition in self.competitions:
             for team_id in competition.teams:
                 current = self._minimum_by_team.get(team_id)
@@ -66,8 +56,8 @@ class MinRestDays:
                 if rest_days >= minimum:
                     continue
                 count += 1
-                # Deeper shortfalls hurt more, so the annealer prefers fixing a
-                # same-day double-booking before a one-day-short gap.
+                # Deeper shortfalls hurt more, so the annealer fixes a same-day
+                # double-booking before a one-day-short gap.
                 shortfall = minimum - rest_days
                 penalty -= self.weight * shortfall
                 if ctx.detail:
@@ -166,8 +156,7 @@ class BlackoutDates:
 class VenueDoubleBooking:
     """One venue cannot host two matches on the same day.
 
-    A physical impossibility, and the rule that binds Lillestrøm SK to LSK
-    Kvinner: different clubs, but one Åråsen.
+    Also what binds Lillestrøm SK to LSK Kvinner: different clubs, one Åråsen.
     """
 
     id: str = "venue_double_booking"
@@ -253,9 +242,9 @@ class ClubHomeClash:
 class LegOrdering:
     """In a double league, every first meeting precedes every second meeting.
 
-    The round generator already guarantees this in round order; this constraint
-    guards the *calendar*, where a stretched round window could otherwise let a
-    late first-leg match slip past an early second-leg one.
+    The round generator guarantees this in round order; this guards the
+    calendar, where a stretched round window could let a late first-leg match
+    slip past an early second-leg one.
     """
 
     id: str = "leg_ordering"
@@ -278,10 +267,8 @@ class LegOrdering:
                 if match.leg < 2:
                     continue
                 previous_end = last_of_leg.get(match.leg - 1)
-                # Date-only precision: "precedes" excludes ties. A leg-2 match
-                # landing on the same day the previous leg's last match was
-                # played is not a first-meeting-before-second-meeting schedule,
-                # so it counts as a violation rather than being waved through.
+                # "Precedes" excludes ties: a leg-2 match on the same day the
+                # previous leg ends is a violation, not a pass.
                 if previous_end is None or match.date > previous_end:
                     continue
                 count += 1
@@ -303,11 +290,8 @@ class LegOrdering:
 
 @dataclass
 class FixedDateRequirement:
-    """A named team must be at home on a named date.
-
-    May 16 in the shipped data: the eve of the national day, when the big clubs
-    want the city full and a home fixture to sell.
-    """
+    """A named team must be at home on a named date — May 16 in the shipped
+    data, the eve of the national day."""
 
     requirements: list[FixedRequirement]
     id: str = "fixed_requirement"
@@ -349,9 +333,9 @@ class FixedDateRequirement:
 class OneMatchPerTeamPerDay:
     """A team plays at most once a day.
 
-    Implied by `min_rest_days` whenever that minimum is 1 or more, but stated
-    separately so the rule survives a competition that legitimately sets a very
-    short minimum, and so the violation reads plainly in the report.
+    Implied by `min_rest_days` at any minimum of 1 or more, but stated
+    separately to survive a competition that sets a very short minimum, and to
+    read plainly in the report.
     """
 
     id: str = "one_match_per_team_per_day"
@@ -388,12 +372,9 @@ class OneMatchPerTeamPerDay:
 class CupRoundConflict:
     """No league match too close to a team's resolved cup commitment.
 
-    The cup itself is not modelled as `Match` objects (real opponents are
-    unknown), so the (date, minimum) windows come from `resolved_cup_windows`
-    — the same helper the greedy placer uses — rather than from the schedule
-    index. `cup_schedules` holds each cup's rounds *already resolved* to a
-    date per team (see `rounds/cup_schedule.py`); the cup name attached to
-    each window is only for the report's event text.
+    Cup ties are not `Match` objects — real opponents are unknown — so the
+    (date, minimum) windows come from `resolved_cup_windows` rather than the
+    schedule index.
     """
 
     cup_schedules: list[CupSchedule]
@@ -447,24 +428,16 @@ class CupRoundConflict:
 
 @dataclass
 class EuropeanCommitmentConflict:
-    """No league match too close to a team's resolved European qualifying
-    leg date.
+    """No league match too close to a team's resolved European qualifying leg.
 
-    `CupRoundConflict`'s counterpart: point-date-plus-rest, same shape and
-    same arithmetic, just reading from `resolve_european_commitments`
-    (`rounds/european_schedule.py`) instead of `resolved_cup_windows`. Each
-    of a team's commitments is one specific leg date — every leg of every
-    round reachable from the team's entry point, across however many
-    cascade branches (issue #29) are still open — not a range spanning a
-    whole tie, which is what let a normal Thu-Sun-Thu European week (a leg,
-    a league match, the next leg) look like a conflict when this used to
-    block the entire span between two legs instead of each leg on its own.
+    `CupRoundConflict`'s counterpart, reading from
+    `resolve_european_commitments`. Each commitment is one leg date rather
+    than a span covering a whole tie (#29), so a normal Thu-Sun-Thu European
+    week stays legal.
 
-    Only `commitment.certain` dates count here (issue #93): a commitment
-    reachable only via one of several mutually-exclusive cascade branches
-    isn't a guaranteed fixture yet, so it can't be a hard exclusion on the
-    domestic calendar — `EuropeanCommitmentSoftConflict` in `scoring/soft.py`
-    is where those show up instead, as a penalty rather than a violation.
+    Only `commitment.certain` dates count (#93): one reachable solely via a
+    mutually-exclusive cascade branch isn't a guaranteed fixture, so it lands
+    in `EuropeanCommitmentSoftConflict` as a penalty instead.
     """
 
     commitments_by_team: dict[str, list[EuropeanCommitmentDate]]
@@ -507,15 +480,11 @@ class EuropeanCommitmentConflict:
 
 @dataclass
 class FinalRoundSameSlot:
-    """Every league's final round lands on one date, at one kickoff time.
+    """Every league's final round lands on one date, at one kickoff time, so
+    no team gains an edge from kicking off after its rivals have finished.
 
-    Real leagues play the last round simultaneously so no team has a
-    competitive edge from kicking off after its rivals have already
-    finished. This only checks the outcome — it is the window restriction in
-    `solvers/greedy.py::resolve_round_pins` (and the pinning that keeps local
-    search from nudging a final-round match off it) that makes the outcome
-    achievable in the first place, and `rounds/kickoff.py` that gives the
-    round a shared kickoff time at all.
+    Checks the outcome only; `solvers/greedy.py::resolve_round_pins` and
+    `rounds/kickoff.py` are what make it achievable.
     """
 
     competitions: list[Competition]
@@ -563,11 +532,9 @@ class FinalRoundSameSlot:
 
 @dataclass
 class FullRoundOnDate:
-    """Every team in a competition has a match on a named date.
-
-    May 16 in Eliteserien: the eve of the national day is a full round, not
-    just the handful of marquee fixtures a plain `FixedDateRequirement` pins.
-    """
+    """Every team in a competition has a match on a named date — May 16 in
+    Eliteserien is a full round, not just the marquee fixtures
+    `FixedDateRequirement` pins."""
 
     requirements: list[FullRoundRequirement]
     id: str = "full_round_on_date"

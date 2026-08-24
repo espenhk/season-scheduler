@@ -352,13 +352,10 @@ def validate_world(world: World) -> list[str]:
 def _validate_cup_rounds(competition: Competition) -> list[str]:
     """A cup must declare at least one round, with unique ids in a sane order.
 
-    This is the cheap, structural check: ids are unique, and no round's whole
-    possible range (`earliest`..`latest` — a forced date collapses both to the
-    same day) falls entirely before the previous round's. It cannot rule out
-    every infeasible case — a round's window can still be too narrow once the
-    previous round's *actual* placement and the required gap between rounds
-    are known — that deeper check happens when `schedule_cup` resolves the
-    rounds to real dates.
+    Cheap and structural: no round's whole possible range falls entirely
+    before the previous round's. A window can still turn out too narrow once
+    the previous round's actual placement is known — `schedule_cup` catches
+    that.
     """
     errors: list[str] = []
     if competition.format != "cup":
@@ -386,16 +383,13 @@ def _validate_cup_rounds(competition: Competition) -> list[str]:
 
 
 def _validate_european_rounds(competition: Competition) -> list[str]:
-    """Structural check for a `format == "european"` competition's rounds:
-    at least one, unique ids, sane order, and every `entrants` id actually
-    belongs to the competition. Mirrors `_validate_cup_rounds`; the one
-    thing that check doesn't need and this one does is `entrants`, since a
-    European competition's rounds don't all share the same team list the
-    way a cup's do (see `EuropeanRound`).
+    """Structural check for a European competition's rounds: at least one,
+    unique ids, sane order, and every `entrants` id belonging to the
+    competition.
 
-    A main tournament (`is_main_tournament: true`, issue #79) uses
-    `league_phase_matchdays`/`knockout_rounds` instead of `european_rounds`
-    — `_validate_main_tournament_rounds` below is its counterpart.
+    Mirrors `_validate_cup_rounds`, plus `entrants` — a European
+    competition's rounds don't all share one team list the way a cup's do.
+    `_validate_main_tournament_rounds` covers a main tournament (#79) instead.
     """
     errors: list[str] = []
     if competition.format != "european":
@@ -443,11 +437,9 @@ def _validate_european_rounds(competition: Competition) -> list[str]:
 
 
 def _validate_european_cascade(world: World) -> list[str]:
-    """Cross-competition check: every `drop_to_competition`/`drop_to_round`
-    pointer names a competition and round that actually exist, and the
-    target is a different (lower) competition, not the same one — a
-    cascade always crosses into another UEFA competition, never loops
-    within its own rounds."""
+    """Every `drop_to_competition`/`drop_to_round` pointer names an existing
+    competition and round, in a different competition — a cascade always
+    crosses into another UEFA competition, never loops within its own."""
     errors: list[str] = []
     for competition in world.competitions.values():
         if competition.format != "european":
@@ -484,12 +476,9 @@ def _validate_european_cascade(world: World) -> list[str]:
 
 
 def _validate_main_tournament_rounds(competition: Competition) -> list[str]:
-    """Structural check for a main tournament's (`is_main_tournament: true`,
-    issue #79) `league_phase_matchdays` and `knockout_rounds`: at least one
-    of the two is non-empty, ids are unique within each list, and — same
-    ordering sanity as `_validate_cup_rounds`/`_validate_european_rounds` —
-    no matchday or round's whole possible range falls entirely before the
-    previous one's."""
+    """Structural check for a main tournament's (#79) `league_phase_matchdays`
+    and `knockout_rounds`: one of the two non-empty, ids unique within each
+    list, and the same ordering sanity `_validate_cup_rounds` applies."""
     errors: list[str] = []
     if competition.european_rounds:
         errors.append(
@@ -538,12 +527,9 @@ def _validate_main_tournament_rounds(competition: Competition) -> list[str]:
 
 
 def _validate_main_tournaments(world: World) -> list[str]:
-    """Cross-competition check for `reachable_from` (issue #79): every id
-    names a competition that actually exists, is a UEFA *qualifying*
-    competition (`format == "european"`, `is_main_tournament: false`), not
-    the main tournament itself or another main tournament — reachability is
-    only ever computed from a qualifying entrant, never from one main
-    tournament into another."""
+    """Every `reachable_from` id (#79) names an existing UEFA *qualifying*
+    competition: reachability is only ever computed from a qualifying
+    entrant, never from one main tournament into another."""
     errors: list[str] = []
     for competition in world.competitions.values():
         if competition.format != "european" or not competition.is_main_tournament:
@@ -571,10 +557,9 @@ def _validate_main_tournaments(world: World) -> list[str]:
 
 
 def _validate_competition_colors(world: World) -> list[str]:
-    """Issue #77: every competition must declare its own report colour, and
-    no two competitions may share exactly the same one — two competitions
-    with the same colour would be indistinguishable as dots on the season
-    report's month calendar."""
+    """Every competition declares its own report colour (#77), and no two
+    share one — matching colours would be indistinguishable as dots on the
+    season report's month calendar."""
     errors: list[str] = []
     by_color: dict[str, list[str]] = defaultdict(list)
     for competition in world.competitions.values():
@@ -592,10 +577,8 @@ def _validate_competition_colors(world: World) -> list[str]:
 
 
 def _validate_competition_short_names(world: World) -> list[str]:
-    """Every competition must declare its own short label — the season
-    report's month calendar and every other cramped spot fall back to it
-    instead of the (often much longer) full name, so a missing one would
-    leave a cramped spot with nothing to show."""
+    """Every competition declares its own short label: the report's cramped
+    spots use it instead of the much longer full name."""
     errors: list[str] = []
     by_short_name: dict[str, list[str]] = defaultdict(list)
     for competition in world.competitions.values():
@@ -745,12 +728,9 @@ def _validate_calendar_capacity(world: World, season: Season) -> list[str]:
         window_start = competition.start or season.start
         window_end = competition.end or season.end
         available_days = (window_end - window_start).days + 1
-        # Tight lower bound: the first round can land on day 1, and each
-        # subsequent round only needs to clear min_gap_days (min_rest_days
-        # full rest days, plus the two matchdays either side of them) from
-        # the one before it — (rounds - 1) gaps, not `rounds` of them. The
-        # previous `rounds * min_rest_days` formula overcounted by one full
-        # gap and could flag a genuinely feasible season as too short.
+        # Tight lower bound: the first round lands on day 1 and each later one
+        # clears min_gap_days from its predecessor — (rounds - 1) gaps, not
+        # `rounds` of them.
         needed = (competition.rounds - 1) * competition.min_gap_days + 1
         if needed > available_days:
             errors.append(

@@ -28,9 +28,8 @@ class CacheEntry:
 def read(path: Path) -> CacheEntry | None:
     """The cached entry, or `None` if there is none or it's unreadable.
 
-    A corrupt or half-written cache file is treated the same as a missing
-    one — refresh from the API rather than raising, since the entire point
-    of a cache is to be safe to throw away.
+    A corrupt or half-written file is treated as missing rather than raising:
+    the whole point of a cache is to be safe to throw away.
     """
     if not path.exists():
         return None

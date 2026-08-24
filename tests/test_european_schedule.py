@@ -282,15 +282,12 @@ def test_a_fork_keeps_uncertainty_for_every_round_further_down_that_branch():
 
 
 def test_win_and_drop_branches_at_the_same_depth_both_produce_commitments():
-    """A team that could either advance within its own competition or drop
-    into another one's equivalent round has both branches open until a
-    result narrows it down — the resolver must block dates from both, not
-    pick one arbitrarily.
+    """A team that could either advance or drop into another competition has
+    both branches open until a result narrows it down, so the resolver blocks
+    dates from both rather than picking one.
 
-    Since issue #93, only the pre-fork commitment (q3, played whatever
-    happens next) is `certain`; both post-fork branches are mutually
-    exclusive — a team either wins q3 and advances, or loses it and drops,
-    never both — so neither counts as a guaranteed fixture on its own."""
+    Only the pre-fork commitment is `certain` (#93): the two branches are
+    mutually exclusive, so neither is a guaranteed fixture on its own."""
     el = f.competition(
         "el",
         ["tromso"],
@@ -582,13 +579,9 @@ def test_resolve_european_commitments_ignores_venue_blackout_ranges():
 
 
 def test_cli_report_data_and_solver_commitments_agree_on_excluded_range_dates():
-    """Regression: `cli.py::_european_report_data` (the report's display
-    path) used to build its own blackout set from `season.global_blackouts`
-    alone, so a windowed leg overlapping a `global_blackout_ranges` entry
-    resolved to a different date there than in
-    `resolve_european_commitments` (what the solver treats as the real
-    commitment) — the report would show a leg on a date the scheduler
-    believes it isn't played on."""
+    """The report's display path and the solver's commitments must resolve a
+    windowed leg to the same date, blackout ranges included — otherwise the
+    report shows a leg on a date the scheduler thinks it isn't played on."""
     import cli
     from terminliste.model.schema import GlobalBlackoutRange
 

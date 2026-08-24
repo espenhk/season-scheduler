@@ -29,18 +29,15 @@ from ..solvers.base import Candidate, SearchStats, SolverResult
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
-# Fallback (text, background) pair for a competition that hasn't declared its
-# own `color` (data/competitions/*.yml — issue #77; `_validate_competition_colors`
-# in model/loader.py catches this for the shipped data, but test factories and
-# ad-hoc `World`s built without going through the loader can still lack one).
+# Fallback for a competition with no declared `color` (#77). The loader
+# catches this in the shipped data, but a `World` built without it — a test
+# factory, say — can still lack one.
 _DEFAULT_COMP_COLOR = {"fg": "var(--muted)", "bg": "var(--line)"}
 
 
 def _tint(hex_color: str, factor: float = 0.85) -> str:
-    """Lighten a hex colour by blending it toward white, so a competition's
-    own report colour (`Competition.color`) can double as both the dot/text
-    foreground and a matching light tag background, without the data file
-    having to declare both."""
+    """Lighten a hex colour toward white, so one declared `Competition.color`
+    serves as both the dot/text foreground and a matching tag background."""
     hex_color = hex_color.lstrip("#")
     r, g, b = (int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
     r, g, b = (round(c + (255 - c) * factor) for c in (r, g, b))
@@ -50,15 +47,10 @@ def _tint(hex_color: str, factor: float = 0.85) -> str:
 def _json_attr(value: object) -> str:
     """JSON, pre-escaped for embedding in a double-quoted HTML attribute.
 
-    `season.html.j2`'s name doesn't end in `.html` (Jinja's `select_autoescape`
-    matches on the template name's own extension, and this one's is `.j2`), so
-    the environment's autoescaping never actually applies to it — every other
-    value this template prints is plain trusted data (club/team/rule names
-    from our own YAML), so that's gone unnoticed, but `json.dumps` output is
-    full of literal double quotes that would otherwise terminate the
-    attribute early. Escaping by hand here, rather than fixing autoescaping
-    project-wide, keeps the fix scoped to the one thing that actually needs
-    it.
+    `select_autoescape` matches on a template's extension, and `season.html.j2`
+    ends in `.j2`, so nothing escapes it automatically. Every other value the
+    template prints is trusted YAML text, but `json.dumps` output is full of
+    double quotes that would terminate the attribute early.
     """
     return html.escape(json.dumps(value), quote=True)
 
@@ -78,16 +70,13 @@ def render_report(
     """Render a solver result (or a single scored schedule) as one HTML page.
 
     `full_diagnostics=True` is for scoring one externally supplied schedule
-    rather than choosing between solver candidates: every negative-scoring
-    rule is shown, not just the top few, and a dedicated section calls out
-    broken hard rules by name. `warnings` surfaces non-fatal issues found while
-    loading that schedule (e.g. a pair that never played) above the score.
-    `cup_schedules` are the season's cups already resolved to a date per team
-    (see `rounds/cup_schedule.py`) — the caller resolves them once and passes
-    the result in, rather than this function resolving them again per render.
-    `european_competitions` + `resolved_legs` are the same idea for UEFA
-    qualifying rounds (see `rounds/european_schedule.py::resolve_all_legs`) —
-    pass both together or neither.
+    rather than choosing between candidates: every negative-scoring rule is
+    shown, and a dedicated section names broken hard rules. `warnings`
+    surfaces non-fatal issues found loading that schedule.
+
+    `cup_schedules`, and `european_competitions` + `resolved_legs` (pass both
+    or neither), arrive already resolved — the caller resolves once rather
+    than this doing it per render.
     """
     env = Environment(
         loader=FileSystemLoader(TEMPLATE_DIR),
@@ -97,10 +86,8 @@ def render_report(
     )
     template = env.get_template("season.html.j2")
 
-    # One colour per club (see `Club.color` in model/schema.py), used to fill
-    # every team's marker regardless of whether it belongs to a dual club —
-    # the dual clubs additionally drive the back-to-back-home-day pairing
-    # feature below, which is a separate concern from colour.
+    # Every team's marker is filled from its club's colour, dual club or not;
+    # dual clubs separately drive the back-to-back-home-day pairing below.
     club_colors = {club.id: club.color for club in world.clubs.values()}
     dual_club_ids = {c.id for c in world.dual_clubs()}
     competition_colors = _competition_colors(world)
@@ -174,10 +161,8 @@ def _build_option(
         "soft_total": score.soft_total,
         "points": score.points,
         "headlines": headlines,
-        # JSON twins of the same two headline shapes, embedded as data
-        # attributes so the club filter can swap between them client-side
-        # without a page reload (issue #61) — see the `.headlines` element in
-        # the template and its `applyClubFilter` script.
+        # JSON twins of the headline shapes, embedded as data attributes so
+        # the club filter can swap between them without a page reload (#61).
         "headlines_json": _json_attr(headlines),
         "club_headlines_json": _json_attr(club_headlines),
         "hard_violation_detail": (
@@ -204,13 +189,10 @@ def _build_option(
 
 def _season_exclusions(world: World, season: Season) -> list[dict]:
     """Every date this season blacks out — global and venue-scoped, single
-    dates and ranges alike — as one list sorted by start date, for the
-    report's "Season exclusions" overview (issue #33's reason/label ask,
-    extended to cover `venue_blackouts`'s pre-existing gap too). Built here
-    rather than left to the template so the four source lists can be merged
-    and sorted once, instead of rendering as separately-sorted blocks that
-    would put every range after every single date regardless of when it
-    falls.
+    dates and ranges alike — sorted by start date for the "Season exclusions"
+    overview (#33). Merged here rather than in the template, which would
+    render four separately-sorted blocks and put every range after every
+    single date.
     """
     entries: list[dict] = []
     for blackout in season.global_blackouts:
@@ -261,12 +243,9 @@ _DIFFICULTY_COPY = {
 
 
 def _search_stats_view(stats: SearchStats) -> dict | None:
-    """How hard the search had to work (issue #34), shaped for the template.
-
-    `None` when nothing was tracked — the `score` command's imported-schedule
-    path builds a `SolverResult` without ever running a search, so there is
-    nothing to report here.
-    """
+    """How hard the search had to work (#34), shaped for the template. `None`
+    when nothing was tracked, as on the imported-schedule path, which builds a
+    `SolverResult` without running a search."""
     if not stats.investigated:
         return None
     breakdown = [
@@ -308,18 +287,17 @@ def _result_row(result: ConstraintResult, world: World, full: bool = False) -> d
         # means anything, not so many that the page becomes a log file.
         "examples": [e.detail for e in result.events[: (8 if full else 3)] if e.detail],
         "more": max(0, len([e for e in result.events if e.detail]) - (8 if full else 3)),
-        # Per-team/per-club occurrence counts — what the collapsed "Biggest
-        # upsides"/"Biggest problems" entries show instead of the raw example
-        # list once expanded (issue #61).
+        # Per-team/per-club occurrence counts, shown instead of the raw
+        # example list when a "biggest upsides"/"problems" entry is expanded
+        # (#61).
         "occurrences": _entity_counts(world, result),
     }
 
 
 def _classify_events(world: World, events: list[Event]) -> tuple[list[Event], list[Event]]:
-    """Split a rule's team-scoped events into club-coupling events (two teams
-    of the same club, e.g. the back-to-back-day pairing rules) and ordinary
-    single-team events. Shared by the fairness rows and the per-team
-    occurrence summary below, both of which need the same split."""
+    """Split a rule's team-scoped events into club-coupling ones (two teams of
+    the same club, as the back-to-back-day rules produce) and ordinary
+    single-team ones."""
     club_events: list[Event] = []
     team_events: list[Event] = []
     for event in events:
@@ -334,11 +312,8 @@ def _classify_events(world: World, events: list[Event]) -> tuple[list[Event], li
 
 
 def _count_by_club(world: World, club_events: list[Event]) -> dict[str, int]:
-    """Tally a list of already-classified club-coupling events by club id.
-    Shared by every place that needs this (fairness rows, per-club headlines,
-    the per-team occurrence summary) so the attribution logic — which event's
-    `team_ids[0]` names the club it belongs to — lives in exactly one place.
-    """
+    """Tally already-classified club-coupling events by club id, so the
+    attribution rule — `team_ids[0]` names the club — lives in one place."""
     counts: dict[str, int] = defaultdict(int)
     for event in club_events:
         counts[world.team(event.team_ids[0]).club_id] += 1
@@ -347,14 +322,12 @@ def _count_by_club(world: World, club_events: list[Event]) -> dict[str, int]:
 
 def _entity_counts(world: World, result: ConstraintResult) -> list[dict]:
     """How many of this rule's events touch each team (or each dual club, for
-    the two club-coupling rules), worst/most-frequent first. Returns `[]` for
-    a rule whose events carry no `team_ids` at all (e.g. `preferred_weekday`,
-    scored per competition rather than per team).
+    the club-coupling rules), most frequent first. `[]` for a rule whose
+    events carry no `team_ids`, e.g. `preferred_weekday`.
 
-    Picks whichever of the two event shapes is actually larger, the same way
-    `_fairness_row_for` does — a rule could in principle mix both shapes, and
-    picking consistently keeps the two report sections from disagreeing about
-    which bucket "the" occurrences for that rule come from.
+    Picks whichever event shape is larger, matching `_fairness_row_for`, so
+    the two report sections can't disagree about which bucket a mixed-shape
+    rule's occurrences come from.
     """
     club_events, team_events = _classify_events(world, result.events)
     if not club_events and not team_events:
@@ -374,12 +347,10 @@ def _entity_counts(world: World, result: ConstraintResult) -> list[dict]:
 
 
 def _competition_colors(world: World) -> dict[str, dict]:
-    """One (text, background) colour pair per competition id, derived from
-    each competition's own `color` (issue #77) rather than a cycled palette —
-    the background is a light tint of the same hue (`_tint`) so a
-    competition's calendar dot and its combined-view tag read as the same
-    colour. Omits a competition with no `color` set; callers fall back to
-    `_DEFAULT_COMP_COLOR`."""
+    """One (text, background) colour pair per competition id (#77), the
+    background a light tint of the same hue so a competition's calendar dot
+    and its combined-view tag read as one colour. A competition with no
+    `color` is omitted; callers fall back to `_DEFAULT_COMP_COLOR`."""
     return {
         competition.id: {"fg": competition.color, "bg": _tint(competition.color)}
         for competition in world.competitions.values()
@@ -389,10 +360,9 @@ def _competition_colors(world: World) -> dict[str, dict]:
 
 def _calendar_legend(world: World, competition_colors: dict[str, dict]) -> list[dict]:
     """Competition name -> dot colour, for the month calendar's colour key
-    (issue #77 review) — `title` on the dots themselves only surfaces on
-    desktop hover, no help on the phone this view targets, so the legend is
-    the only way a reader learns what a colour means without tapping a day
-    and reading the tags."""
+    (#77). A dot's `title` only surfaces on desktop hover, no help on the
+    phone this view targets, so the legend is how a reader learns what a
+    colour means."""
     return sorted(
         (
             {
@@ -446,11 +416,9 @@ def _club_event_counts(world: World, result: ConstraintResult | None) -> dict[st
 
 def _club_headlines(world: World, candidate: Candidate, dual_club_ids: set[str]) -> dict[str, list[dict]]:
     """The same three headline numbers as `_headlines`, narrowed to one club's
-    own matches — what the calendar's club filter shows in place of the
-    season-wide totals once a club is selected (issue #61). Keyed by club id
-    so the template's script can look a selection up directly; consumed as
-    JSON (see `club_headlines_json` in `_build_option`), never rendered
-    server-side, since which club is picked happens entirely client-side.
+    matches — what the calendar's club filter shows once a club is selected
+    (#61). Keyed by club id and consumed as JSON, never rendered server-side,
+    since the selection happens client-side.
     """
     score = candidate.score
     club_matches: dict[str, list[Match]] = defaultdict(list)
@@ -495,11 +463,10 @@ def _match_entries(
     competition_colors: dict[str, dict] | None = None,
 ) -> list[dict]:
     """One flat, chronologically sorted list of every match this option plays,
-    with everything both the per-competition view and the combined view need.
+    with everything the per-competition and combined views need.
 
-    Built once per option so the two views agree by construction — there is
-    no second pass over the raw matches that could compute `paired` or a
-    club's colour differently.
+    Built once per option so the two views agree by construction, with no
+    second pass that could compute `paired` or a club's colour differently.
     """
     matches = candidate.matches
     competition_colors = competition_colors or {}
@@ -584,13 +551,10 @@ def _combined_calendar_view(entries: list[dict]) -> list[dict]:
     """Every league's matches, plus every cup's per-team round dates, merged
     into one calendar, grouped by ISO week.
 
-    Round numbers don't line up across competitions (Eliteserien and
-    Toppserien run different round counts), so week-of-year is the grouping
-    that actually interleaves them the way issue #24 asks for. `entries` mixes
-    league match entries (`_match_entries`) and cup entries (`_cup_entries`);
-    the sort key falls back to a cup entry's own team name where a league
-    entry would have `home`, so both shapes interleave by date without a
-    KeyError.
+    Round numbers don't line up across competitions running different round
+    counts, so week-of-year is the only grouping that interleaves them (#24).
+    The sort key falls back to a cup entry's team name where a league entry
+    has `home`, so both shapes interleave by date without a KeyError.
     """
     weeks: dict[tuple[int, int], list[dict]] = defaultdict(list)
     for entry in entries:
@@ -623,18 +587,14 @@ def _combined_list_view(entries: list[dict]) -> list[dict]:
 
 
 def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
-    """A month-grid calendar (issue #77): one cell per day, showing at most
-    one dot per competition that has something on that day (a match, cup
-    round placement, or European leg), plus that day's full entry list —
-    rendered once per date and referenced from the grid by date so the same
-    markup isn't duplicated for a day that appears as both an in-month cell
-    in one month and a padding cell in the next.
+    """A month-grid calendar (#77): one cell per day, with at most one dot per
+    competition that has something on it.
 
-    Returns `(months, day_details)`: `months` is the grid itself (one entry
-    per calendar month spanned by `entries`, each a list of Monday-first
-    weeks); `day_details` is every date that has at least one entry, sorted
-    chronologically, for the template to render as hidden per-day blocks
-    that a tap on the matching cell reveals.
+    Returns `(months, day_details)` — the grid itself, one entry per month
+    spanned, each a list of Monday-first weeks; and every date with an entry,
+    for the template to render as hidden blocks a tap reveals. The details are
+    keyed by date rather than inlined, so a day appearing as both an in-month
+    cell and the next month's padding isn't rendered twice.
     """
     if not entries:
         return [], []
@@ -654,9 +614,8 @@ def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
         {
             "date_iso": day.isoformat(),
             "label": day.strftime("%A %d %B %Y"),
-            # Earliest kickoff first; an entry with no kickoff time at all
-            # (every cup/European entry, and a league match not yet assigned
-            # one) sorts after every timed one rather than arbitrarily first.
+            # Earliest kickoff first; an entry without one — every cup and
+            # European entry — sorts after the timed ones, not before them.
             "matches": sorted(
                 day_entries,
                 key=lambda e: (
@@ -673,9 +632,8 @@ def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
 
 def _month_grid(month_start: date, by_day: dict[date, list[dict]]) -> dict:
     """One calendar month's Monday-first weeks, each day carrying its own
-    deduped competition dots (`_day_dots`) — padding days from the
-    neighbouring month are included (`in_month=False`) so every week is a
-    full row, but their dots still resolve from the same `by_day` map."""
+    deduped competition dots. Padding days from neighbouring months are kept
+    (`in_month=False`) so every week is a full row."""
     weeks = []
     for week in calendar.Calendar(firstweekday=0).monthdatescalendar(month_start.year, month_start.month):
         weeks.append(
@@ -693,15 +651,12 @@ def _month_grid(month_start: date, by_day: dict[date, list[dict]]) -> dict:
 
 
 def _day_dots(day_entries: list[dict]) -> list[dict]:
-    """One dot per competition present on the day — name/colour come from the
-    first entry seen, since every entry for the same competition on the same
-    day carries the same `comp_fg`/`competition_name` anyway (issue #77:
-    "only one dot per league per day" even when several of that
-    competition's matches fall on it). `club_ids` is the union of every club
-    touching that competition that day, so the template can put it on the
-    dot's own `data-clubs` — without it, the season report's club filter
-    (`applyClubFilter` in season.html.j2) would have no way to reach the
-    calendar's dots the way it already reaches every other view's cards."""
+    """One dot per competition present on the day (#77), however many of its
+    matches fall on it — name and colour come from the first entry seen, since
+    every entry for the same competition carries the same ones. `club_ids` is
+    the union of every club playing it that day, which the template puts on
+    the dot's `data-clubs` so the report's club filter can reach the
+    calendar."""
     names: dict[str, str] = {}
     colors: dict[str, str] = {}
     club_ids: dict[str, set[str]] = defaultdict(set)
@@ -730,11 +685,9 @@ def _cup_views(
 ) -> list[dict]:
     """Cup rounds, in the same shape `_competition_views` uses for leagues.
 
-    Pairings are drawn round by round and unknown ahead of time, so there is
-    no home-vs-away fixture list here — the opponent is always "TBD". What we
-    do know per round, per entered team, is its own resolved date and which
-    side of the (still-undrawn) tie it is on — see `CupRoundPlacement.venue_type`
-    and `_venue_type` in `rounds/cup_schedule.py` for the home/away/neutral rule.
+    Pairings are drawn round by round, so there is no home-vs-away fixture
+    list and the opponent is always "TBD". What is known per entered team is
+    its own resolved date and which side of the undrawn tie it is on.
     """
     views: list[dict] = []
     for schedule in sorted(cup_schedules, key=lambda s: s.competition_id):
@@ -796,11 +749,9 @@ def _cup_entries(
     club_colors: dict[str, str],
     competition_colors: dict[str, dict],
 ) -> list[dict]:
-    """Cup rounds flattened to one row per entered team per round — the same
-    granularity `_cup_fixtures` produces for the by-competition view — so the
-    combined calendar/list can merge them with league entries instead of
-    omitting cups entirely. Tagged `is_cup` so the template picks the TBD-
-    opponent card/row instead of a fixture's home-vs-away one.
+    """Cup rounds at `_cup_fixtures`' granularity — one row per entered team
+    per round — so the combined views can merge them with league entries.
+    Tagged `is_cup` so the template picks the TBD-opponent card.
     """
     entries: list[dict] = []
     for schedule in cup_schedules:
@@ -852,16 +803,12 @@ def _european_views(
     resolved_legs: ResolvedLegs,
     club_colors: dict[str, str],
 ) -> list[dict]:
-    """European qualifying rounds, in the same shape `_cup_views` uses for
-    cups.
+    """European qualifying rounds, in the shape `_cup_views` uses for cups.
 
-    The one real difference from a cup round: an opponent is often already
-    known (`EuropeanTie.opponent`), since UEFA draws qualifying pairings
-    well ahead of the tie, unlike a cup's round-by-round draw — shown
-    directly where the data has it, "TBD" (the same fallback `EuropeanTie`
-    itself defaults to) where the tie is still conditional on another
-    result. Home/away is similarly read straight from `EuropeanTie.home_leg`
-    rather than inferred the way `_cup_views`' `venue_type` is.
+    The difference: UEFA draws pairings well ahead, so an opponent is often
+    known and shown directly, "TBD" only where the tie still hangs on another
+    result. Home/away likewise comes straight from `EuropeanTie.home_leg`
+    rather than being inferred as a cup's `venue_type` is.
     """
     views: list[dict] = []
     for competition in sorted(european_competitions, key=lambda c: c.id):
@@ -896,17 +843,12 @@ def _european_views(
 
 def _round_legs(first_date: date, second_date: date) -> list[tuple[str | None, date]]:
     """The real matches a resolved round's two leg dates represent: two
-    (`"first"`/`"second"`, own date) entries for a genuine two-legged tie,
-    or one (`None`, shared date) entry when both legs share a date — a
-    single real match, not a tie, the same date-equality
-    `_european_round_date_label` already collapses to one displayed date
-    for. A qualifying round's two legs are never scheduled on the same UEFA
-    date, so this only ever collapses a main tournament's adapted
-    single-date rounds (`build_main_tournament_rounds_for_display` — a
-    league-phase matchday, or a final whose `second_leg` was folded onto
-    `first_leg`'s date) — without this, `_european_fixtures`/
-    `_european_entries` would otherwise emit two rows ("first leg" and
-    "second leg") for what is really just one match.
+    labelled entries for a genuine tie, or one unlabelled entry when both
+    legs share a date, which means a single match rather than a tie.
+
+    A qualifying round's legs never share a UEFA date, so this only collapses
+    a main tournament's adapted single-date rounds — otherwise a league-phase
+    matchday would emit "first leg" and "second leg" rows for one match.
     """
     if first_date == second_date:
         return [(None, first_date)]
@@ -952,11 +894,10 @@ def _european_entries(
     club_colors: dict[str, str],
     competition_colors: dict[str, dict],
 ) -> list[dict]:
-    """European rounds flattened to one row per entered team per leg — the
-    same granularity `_european_fixtures` produces for the by-competition
-    view — so the combined calendar/list can merge them with league (and
-    cup) entries. Tagged `is_european` so the template picks the
-    opponent-aware card/row instead of a league fixture's home-vs-away one.
+    """European rounds at `_european_fixtures`' granularity — one row per
+    entered team per leg — so the combined views can merge them with league
+    and cup entries. Tagged `is_european` so the template picks the
+    opponent-aware card.
     """
     entries: list[dict] = []
     for competition in european_competitions:
@@ -993,9 +934,8 @@ def _european_entries(
 
 def _european_venue_type(home_leg: str | None, leg_label: str | None) -> str:
     """`"home"`/`"away"` read straight from `EuropeanTie.home_leg`, or
-    `"unknown"` when even that isn't settled yet — distinct from a cup
-    round's `"neutral"`, which means something different (a final at a
-    fixed neutral ground, not "not yet known")."""
+    `"unknown"` when that isn't settled — distinct from a cup round's
+    `"neutral"`, which means a final at a fixed neutral ground."""
     if home_leg is None:
         return "unknown"
     return "home" if home_leg == leg_label else "away"
@@ -1018,18 +958,14 @@ def _european_round_date_label(leg_dates: tuple[date, date]) -> str:
 
 def _fairness_rows(world: World, candidate: Candidate) -> list[dict]:
     """Per-team/per-club view of every soft rule that can play favourites, so
-    a schedule that showers one team in rewards (or penalties) another never
-    sees is visible before the schedule is accepted — see issue #23.
+    a schedule showering one team in rewards another never sees is visible
+    before it's accepted (#23).
 
     Discovered from `candidate.score.soft_results()` rather than a maintained
-    list of constraint ids: a soft rule earns a row here the moment its
-    events carry `team_ids` (see `scoring/base.py::Event`), so a new rule
-    added to `soft.py` shows up automatically as long as it tags its events —
-    nothing in this file needs to change for it. Reuses the already-computed,
-    already-weighted events on `candidate.score` (built with `ctx.detail=True`
-    for every rendered candidate — see `solvers/local_search.py::_with_detail`)
-    rather than re-deriving counts from the raw matches, so this can never
-    disagree with the score itself.
+    id list: a rule earns a row the moment its events carry `team_ids`, so a
+    new one in `soft.py` shows up here with no change. Reuses the already
+    weighted events on `candidate.score` rather than re-deriving counts, so
+    this can never disagree with the score itself.
     """
     score = candidate.score
     participant_teams = sorted({t for m in candidate.matches for t in (m.home_team, m.away_team)})
@@ -1050,28 +986,22 @@ def _fairness_row_for(
 ) -> dict | None:
     """One rule's events, shaped into a fairness row.
 
-    An event whose `team_ids` name two teams of the *same* club — the
-    back-to-back-home/away-day pairing, the only place that happens — is
-    attributed to that club once, since it describes something the club's
-    two teams did together rather than either one individually. Everything
-    else (a single team's own event, or two teams from different clubs, e.g.
-    a discouraged-date penalty hitting both the home and away side) is
-    attributed to each named team on its own.
+    An event naming two teams of the *same* club — only the back-to-back-day
+    pairings do — is attributed to that club once, since it describes what the
+    two teams did together. Everything else is attributed to each named team
+    individually.
 
-    Returns `None` for a rule whose events carry no `team_ids` at all (not
-    team-attributable — e.g. `preferred_weekday`, which is scored per
-    competition) or whose relevant entity universe has fewer than two
-    members to compare.
+    `None` for a rule whose events carry no `team_ids` (e.g.
+    `preferred_weekday`, scored per competition) or whose entity universe has
+    fewer than two members to compare.
     """
     club_events, team_events = _classify_events(world, result.events)
 
     if not club_events and not team_events:
         return None
 
-    # In practice every soft rule's events are consistently one shape or the
-    # other — a rule either couples a club's own teams every time or scores
-    # individual teams every time, never a mix — but picking whichever
-    # bucket actually has events keeps this correct even if that changes.
+    # Every soft rule's events are consistently one shape today, but picking
+    # whichever bucket has events keeps this correct if that changes.
     if len(club_events) >= len(team_events):
         if len(dual_club_ids) < 2:
             return None
@@ -1101,10 +1031,9 @@ def _fairness_row(constraint_id: str, entries: list[tuple[str, int]]) -> dict:
         "entries": [{"label": label, "count": n} for label, n in entries],
         "min": lo,
         "max": hi,
-        # Flagged when the spread between the best- and worst-treated entity
-        # is at least as wide as the average count itself (and at least 2, so
-        # a single stray event on an otherwise-flat rule doesn't trip it) —
-        # the "not zero, and not double" bar from issue #23.
+        # Flagged when best-to-worst spread is at least as wide as the average
+        # count, and at least 2, so one stray event on an otherwise-flat rule
+        # doesn't trip it (#23).
         "flagged": hi > 0 and (hi - lo) >= max(2, round(mean)),
     }
 

@@ -206,13 +206,10 @@ def test_local_search_progress_callback_reports_a_live_running_total():
 
 
 def test_polish_phase_runs_as_its_own_restart_index_beyond_the_explore_restarts():
-    """Issue #98: phase two must actually resume each shortlisted candidate's
-    own state rather than kick off yet another fresh restart indistinguishable
-    from phase one's. `_anneal`'s `restart_index` is how a progress update
-    identifies which restart it belongs to (see the progress-callback test
-    above), so a polish pass showing up under a restart index beyond
-    `LocalSearchScheduler.restarts` is direct evidence the second phase ran as
-    a distinct, later phase — not more of the same explore restarts."""
+    """The polish phase (#98) must resume a shortlisted candidate rather than
+    kick off another fresh restart. A progress update carrying a
+    `restart_index` beyond `LocalSearchScheduler.restarts` is direct evidence
+    it ran as a distinct, later phase."""
     world, season, competitions = _small_world()
     constraints = build_constraints(world, season, competitions)
     ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))

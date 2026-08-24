@@ -1,11 +1,9 @@
-"""Unit tests for `solvers/greedy.py`'s round-pin resolution.
+"""Unit tests for `solvers/greedy.py`'s round-pin resolution (#94).
 
-Regression coverage for issue #94: a league's final round (or a hard
-`FullRoundRequirement`'s round) used to be pinned straight to its anchor
-date with no check against resolved cup/European commitments at all, unlike
-every other fixture's candidate window (`_cup_clear`/`_european_clear` in
-`solvers/cpsat.py`). `resolve_round_pins` is shared by both solver
-backends, so a fix here fixes both.
+A pinned round — a league's final, or a hard `FullRoundRequirement`'s — must
+clear resolved cup and European commitments the same way every other
+fixture's candidate window does. `resolve_round_pins` is shared by both
+solver backends.
 """
 
 from __future__ import annotations
@@ -43,10 +41,9 @@ def test_final_round_pin_moves_off_a_date_that_conflicts_with_a_european_commitm
     season, planned, by_competition = _world_and_plan(competition)
     final_round, anchor = _final_round(planned, "men")
 
-    # A certain commitment sitting exactly on the final round's anchor, with
-    # a rest window wide enough (min_rest_days=3) to also block the anchor's
-    # immediate neighbours — only `resolve_round_pins`'s widened search can
-    # find a genuinely clear date.
+    # A commitment on the final round's anchor, with a rest window wide
+    # enough to block its neighbours too: only the widened search finds a
+    # clear date.
     commitment = EuropeanCommitmentDate(
         team_id="t0", date=anchor, min_rest_days=3, label="cl: matchday 1", competition_id="cl"
     )

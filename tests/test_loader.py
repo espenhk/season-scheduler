@@ -437,20 +437,11 @@ def test_european_commitments_resolve_cleanly_from_the_shipped_data(world):
     commitments_by_team, warnings = resolve_european_commitments(competitions, season)
     assert commitments_by_team["bodo_glimt_m"], "Bodø/Glimt's Champions League run should resolve"
     assert commitments_by_team["viking_m"]
-    # Tromsø's cascade crosses from europa_league_2026 into
-    # conference_league_2026 at Q3 -> playoff: Q2 and Q3 (2 legs each), then
-    # *both* branches still open at the play-off depth — Europa League's own
-    # play-off (win) and Conference League's (drop) — 4 more leg dates, for
-    # 8 in total from qualifying alone. Brann's own qualifying run (Q2 ->
-    # Q3 -> play-off, no cascade) is a plain 3 rounds x 2 legs = 6.
-    #
-    # issue #79's main tournaments add to both, on top of the qualifying
-    # cascade above: Tromsø is a europa_league_2026 entrant (reachable for
-    # both europa_league_main_2026 and conference_league_main_2026 — 17 +
-    # 15 = 32 more commitment dates, see those files' league_phase_matchdays
-    # + knockout_rounds counts), while Brann is only a
-    # conference_league_2026 entrant (reachable for
-    # conference_league_main_2026 alone — 15 more).
+    # Tromsø's cascade crosses into conference_league_2026 at Q3 -> playoff,
+    # so Q2, Q3 and *both* still-open play-off branches give 8 qualifying leg
+    # dates; Brann's uncascaded Q2 -> Q3 -> play-off gives 6. Main tournaments
+    # (#79) add every matchday and knockout leg of each reachable competition:
+    # 17 + 15 for Tromsø, 15 for Brann.
     assert len(commitments_by_team["tromso_m"]) == 8 + 32
     assert len(commitments_by_team["brann_m"]) == 6 + 15
     assert warnings == []
@@ -768,8 +759,8 @@ def test_calendar_capacity_uses_the_competitions_own_narrower_window():
 
 
 def test_every_shipped_competition_has_a_distinct_color(world):
-    """Issue #77: the season report's calendar dots need one colour per
-    competition, distinct enough to tell competitions apart at a glance."""
+    """The report's calendar dots need one colour per competition (#77),
+    distinct enough to tell them apart at a glance."""
     colors = [c.color for c in world.competitions.values()]
     assert all(color is not None for color in colors)
     assert len(colors) == len(set(colors))
@@ -822,9 +813,8 @@ def test_two_competitions_sharing_a_color_are_caught():
 
 
 def test_every_shipped_competition_has_a_distinct_short_name(world):
-    """The season report's month calendar and every other cramped spot show
-    a competition's short_name instead of its (often much longer) full
-    name."""
+    """The report's cramped spots show a competition's short_name instead of
+    its much longer full name."""
     short_names = [c.short_name for c in world.competitions.values()]
     assert all(short_name is not None for short_name in short_names)
     assert len(short_names) == len(set(short_names))
@@ -857,11 +847,9 @@ def test_two_competitions_sharing_a_short_name_are_caught():
 
 
 def test_capacity_check_uses_a_tight_lower_bound_not_rounds_times_rest():
-    """A season with just enough room for `(rounds - 1) * min_gap_days + 1`
-    days should validate clean — the first round needs no rest before it, so
-    only the gaps *between* rounds count. The old `rounds * min_gap_days`
-    formula overcounted by one full gap and would wrongly flag this season as
-    too short."""
+    """A season with exactly `(rounds - 1) * min_gap_days + 1` days validates
+    clean: the first round needs no rest before it, so only the gaps between
+    rounds count."""
     from terminliste.model.loader import _validate_calendar_capacity
     import factories as f
 

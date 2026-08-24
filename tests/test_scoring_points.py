@@ -1,9 +1,8 @@
 """`Score.points` — the 0-100 normalised quality score.
 
 Constructed directly against `Score` rather than through `evaluate()`: the
-scale's contract (bounded range, infeasible cap, monotonic decay) doesn't
-depend on any particular constraint or world, so a bare `Score` is the
-smallest fixture that can test it.
+scale's contract — bounded range, infeasible cap, monotonic decay — depends
+on no particular constraint or world.
 """
 
 from __future__ import annotations

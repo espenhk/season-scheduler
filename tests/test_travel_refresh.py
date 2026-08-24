@@ -1,9 +1,7 @@
 """The ground-travel-time client and refresh layer, mocked at the HTTP layer.
 
-Same posture as test_refdata.py: nothing here makes a real network call — the
-sandbox this project is developed in blocks the API host outright (see
-README) — so a test that needed the real network would never run anywhere
-this ships from.
+Same posture as test_refdata.py: nothing here makes a real network call, so
+the suite runs anywhere.
 """
 
 from __future__ import annotations

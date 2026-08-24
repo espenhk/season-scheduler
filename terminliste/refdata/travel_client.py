@@ -1,11 +1,9 @@
 """HTTP client for ground travel times, via OSRM's free public routing API.
 
-OSRM (Open Source Routing Machine) publishes a no-signup demo server that
-routes real road networks — actual driving time and distance, not a
-straight-line guess. Same posture as `client.py`: a thin `urllib.request`
-wrapper (this is the only other place in the project that makes an HTTP
-call), and only `cli.py refresh-travel-times` ever calls it; `validate`,
-`generate` and `score` only read the cache this populates.
+OSRM's no-signup demo server routes real road networks — actual driving time
+and distance, not a straight-line guess. Same posture as `client.py`: a thin
+`urllib.request` wrapper, called only by `cli.py refresh-travel-times`;
+`validate`, `generate` and `score` just read the cache it populates.
 """
 
 from __future__ import annotations
@@ -22,8 +20,8 @@ TIMEOUT_S = 10.0
 class FetchError(Exception):
     """The API could not be reached, or returned something unparseable.
 
-    Callers are expected to catch this and fall back to cached data — a
-    refresh failing is never allowed to be worse than not refreshing.
+    Callers catch this and fall back to cached data: a refresh failing is
+    never worse than not refreshing.
     """
 
 

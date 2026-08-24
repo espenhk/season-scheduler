@@ -116,12 +116,9 @@ def test_triple_league_every_pair_meets_three_times_with_a_two_one_split(n):
 def test_triple_league_home_totals_are_balanced_within_one(n):
     """Legs 1 and 3 share an orientation, leg 2 is the mirror of both.
 
-    Every team's home tally from legs 1+2 cancels exactly (each opponent
-    contributes one home and one away across those two legs, regardless of
-    orientation), so the only thing that can unbalance a team's season total
-    is leg 3 — which is the *same* single-leg assignment as leg 1, already
-    balanced by `assign_home_away`. That is what keeps a triple round-robin
-    fair without needing a season-aware balancing pass of its own.
+    Legs 1+2 cancel exactly for every team, so only leg 3 can unbalance a
+    season total — and it repeats leg 1's assignment, already balanced by
+    `assign_home_away`.
     """
     teams = [f"t{i}" for i in range(n)]
     fixtures = generate_fixtures("comp", teams, rounds_per_pairing=3)

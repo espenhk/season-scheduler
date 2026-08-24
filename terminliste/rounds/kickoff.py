@@ -1,23 +1,17 @@
 """Kickoff-time assignment for a placed schedule.
 
-Kickoff time is not a search variable the way date and venue are — both
-solver backends only ever decide dates (see `rounds/greedy.py` and
-`solvers/cpsat.py`). This module fills in `Match.kickoff_time` once a
-schedule's dates are already fixed:
+Kickoff time is not searched — both solver backends only decide dates — so
+this fills in `Match.kickoff_time` once a schedule's dates are fixed:
 
-* The final round of every league is forced onto one date by
-  `resolve_round_pins` (`rounds/greedy.py`); here it also gets one shared
-  kickoff time (`Competition.final_round_kickoff_time`), which is what lets
-  `FinalRoundSameSlot` (`scoring/hard.py`) actually pass.
-* Any match a hard `FixedRequirement` names an explicit `kickoff_time` for
+* Every league's final round gets one shared time
+  (`Competition.final_round_kickoff_time`), which is what lets
+  `FinalRoundSameSlot` pass.
+* A match named by a hard `FixedRequirement` with an explicit `kickoff_time`
   (Tromsø's Midnight Sun Match) gets that time.
-* A competition opted into `Competition.tv_time_spread` (issue #76) gets its
-  round's matches on the preferred weekday shaped for TV: most at the
-  primary time, one shifted early and one shifted late — see
-  `_tv_time_spread_assignments` below.
-* Every other match gets one of `Competition.kickoff_slots`, chosen
-  deterministically per fixture (a stable hash of its key) so a schedule's
-  kickoffs do not change from one otherwise-identical run to the next.
+* A competition opted into `Competition.tv_time_spread` (#76) gets its
+  preferred-day matches shaped for TV — see `_tv_time_spread_assignments`.
+* Everything else gets one of `Competition.kickoff_slots`, picked by a stable
+  hash of the fixture key so kickoffs don't move between identical runs.
 """
 
 from __future__ import annotations
@@ -40,16 +34,13 @@ def _slot_for(match: Match, slots: list[str]) -> str:
 def _tv_time_spread_assignments(
     matches: list[Match], competitions: list[Competition]
 ) -> dict[str, str]:
-    """Early/primary/late kickoff times for every competition that opts into
-    `Competition.tv_time_spread`, grouped by round and restricted to matches
-    landing on that competition's preferred weekday — off-day matches, and
-    every match of a final round (already forced onto its own shared slot),
-    are left for the caller to fall back to `kickoff_slots`.
+    """Early/primary/late kickoff times per round, for every competition that
+    opts into `Competition.tv_time_spread`.
 
-    Which match in a round gets shifted early or late is chosen by a stable
-    hash of its key, the same determinism `_slot_for` gives ordinary slots.
-    A round with only one matching match gets the primary time; zero means
-    nothing to assign.
+    Covers only matches on the competition's preferred weekday; off-day and
+    final-round matches fall back to `kickoff_slots`. Which match gets shifted
+    early or late comes from a stable hash of its key, the same determinism
+    `_slot_for` gives ordinary slots.
     """
     spread_by_competition = {
         c.id: c for c in competitions if c.tv_time_spread is not None

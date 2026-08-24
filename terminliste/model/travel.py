@@ -3,22 +3,17 @@
 Used by the away-day pairing bonus: two away matches on consecutive days are
 only a good thing if the squad can actually get from one to the other.
 
-Ground travel time comes from a real routing API (OSRM), fetched ahead of
-time by `cli.py refresh-travel-times` and cached in
-`data/.refdata_cache/travel.json` — `ApiTravelModel` only ever reads that
-cache, matching this project's "validate/generate/score never touch the
-network" rule. There is no self-rolled distance-over-average-speed model for
-roads any more: Norwegian roads follow fjords and go around mountains, and a
-routing API already knows that, so there is nothing to approximate.
+Ground travel comes from a routing API (OSRM), fetched ahead of time by
+`cli.py refresh-travel-times` and read only from
+`data/.refdata_cache/travel.json`, so validate/generate/score never touch the
+network. Nothing approximates roads: Norwegian ones follow fjords and go
+around mountains, and the routing API already knows that.
 
-Air travel time is genuinely well approximated by great-circle distance —
-that's the actual distance a plane covers — divided by cruise speed, plus a
-fixed door-to-door overhead for check-in/security/boarding. It's checked
-whenever ground travel is missing or slow, and the cheaper of the two wins.
-A pair where neither option gets under the threshold is unreachable.
-
-`travel_overrides.yml` still wins over both, for the rare case the API (or
-the flight estimate) gets a specific pair wrong.
+Air travel *is* well approximated — great-circle distance is what a plane
+actually covers — as distance over cruise speed plus a door-to-door overhead.
+The cheaper of the two wins; a pair where neither gets under the threshold is
+unreachable. `travel_overrides.yml` beats both, for the rare pair either gets
+wrong.
 """
 
 from __future__ import annotations
@@ -37,8 +32,8 @@ EARTH_RADIUS_KM = 6371.0
 # Cruise speed for a short-haul domestic jet.
 AIR_CRUISE_SPEED_KMH = 800.0
 
-# Fixed door-to-door overhead for a flight: check-in, security, boarding,
-# taxi at both ends — on top of the great-circle distance's flight time.
+# Door-to-door overhead on top of flight time: check-in, security, boarding,
+# taxi at both ends.
 AIR_OVERHEAD_HOURS = 2.5
 
 # A pair where neither ground nor air travel gets under this many hours is
@@ -61,8 +56,8 @@ class TravelModel(Protocol):
 
 
 def great_circle_km(a: Venue, b: Venue) -> float:
-    """Straight-line distance. Not a road-travel proxy — this is the actual
-    distance a flight covers, so it only feeds the air-time estimate."""
+    """Straight-line distance — what a flight actually covers, so it feeds the
+    air-time estimate only, never a road one."""
     lat1, lon1, lat2, lon2 = map(math.radians, (a.lat, a.lon, b.lat, b.lon))
     dlat, dlon = lat2 - lat1, lon2 - lon1
     h = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2

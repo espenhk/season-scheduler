@@ -1,19 +1,14 @@
 """Compare the shipped venue/club data against a live API, without touching it.
 
-This deliberately never writes to `data/*.yml`. A capacity or a coordinate
-feeding into the scheduler is worth a human glance before it changes, so the
-output here is a diff report — what the API says versus what's on file —
-for `cli.py refresh-reference-data` to print. Folding an accepted diff into
-the YAML is still a hand edit, same as any other data correction; this tool
-only replaces "go search the web for it" with "here's what a structured
-source says right now."
+Never writes to `data/*.yml`: a capacity or coordinate feeding the scheduler
+deserves a human glance before it changes, so the output is a diff report for
+`cli.py refresh-reference-data` to print. Folding an accepted diff in is still
+a hand edit; this only replaces "go search the web for it" with "here's what a
+structured source says right now."
 
-Caching (`cache.py`) is what makes that safe to run often: a cold cache or
-an unreachable API degrades to "no diffs to show" rather than a crash, so
-this can sit in a Makefile target or a periodic check without becoming a
-liability the day the API is down — which, inside this project's own
-sandboxed dev environment, it always is (the egress proxy only allows a
-fixed host allowlist; see README).
+A cold cache or an unreachable API degrades to "no diffs to show" rather than
+a crash, so this is safe to run often — including inside this project's own
+sandbox, where the egress allowlist means the API is always unreachable.
 """
 
 from __future__ import annotations
@@ -27,10 +22,8 @@ from .client import FetchError, TeamRecord, fetch_teams
 
 DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "data" / ".refdata_cache"
 
-# Capacity is allowed to drift a little before it's worth flagging — grounds
-# get temporary seating for one match, and different providers round
-# differently. Anything named at all is worth a look; anything numeric only
-# past this margin is.
+# Capacity may drift a little before it's worth flagging: grounds add
+# temporary seating, and providers round differently.
 CAPACITY_TOLERANCE = 50
 
 
@@ -118,10 +111,9 @@ def _load_records(
 def _records_from_payload(payload: object) -> list[TeamRecord] | None:
     """Deserialize a cached payload, or `None` if its shape isn't usable.
 
-    A cache file that's valid JSON but the wrong shape — hand-edited, or
-    left over from an older, incompatible version of this cache — must
-    never crash the refresh path; it's exactly as unusable as a missing
-    file, so it's treated the same way: fall through to the next fallback.
+    Valid JSON of the wrong shape — hand-edited, or left over from an older
+    cache version — is exactly as unusable as a missing file, and treated the
+    same rather than crashing the refresh path.
     """
     if not isinstance(payload, list):
         return None
