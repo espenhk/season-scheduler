@@ -19,7 +19,6 @@ rules responsible instead of returning a bare INFEASIBLE.
 
 from __future__ import annotations
 
-import math
 import time
 from collections import defaultdict
 from datetime import date, timedelta
@@ -31,7 +30,12 @@ from ..rounds.european_schedule import european_conflict
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import evaluate
 from .base import Candidate, SearchStats, SolveRequest, SolverResult, select_diverse
-from .greedy import align_dual_clubs, align_home_teams_to_round_pins, plan_competitions, resolve_round_pins
+from .greedy import (
+    align_dual_clubs,
+    align_home_teams_to_round_pins,
+    plan_competitions,
+    resolve_round_pins,
+)
 
 _ONE_DAY = timedelta(days=1)
 
@@ -572,7 +576,7 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
 
 def _extract(solver, placement, fixtures, request) -> list[Match]:
     matches: list[Match] = []
-    for index, (fixture, competition, venue) in enumerate(fixtures):
+    for index, (fixture, _competition, venue) in enumerate(fixtures):
         chosen = next(
             (day for day, var in placement[index].items() if solver.Value(var)),
             None,

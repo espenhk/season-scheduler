@@ -83,7 +83,7 @@ def assign_kickoff_times(
     Non-destructive: returns a new list, leaving the input untouched.
     """
     by_competition = {c.id: c for c in competitions}
-    explicit: dict[tuple[str, str, "object"], str] = {
+    explicit: dict[tuple[str, str, object], str] = {
         (r.competition, r.home_team, r.date): r.kickoff_time
         for r in requirements or []
         if r.kickoff_time is not None

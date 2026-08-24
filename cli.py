@@ -31,12 +31,18 @@ SCHEDULES_ROOT = PROJECT_ROOT / "schedules"
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from terminliste.external_schedule import ExternalScheduleError, load_external_schedule  # noqa: E402
+from terminliste.external_schedule import (  # noqa: E402
+    ExternalScheduleError,
+    load_external_schedule,
+)
 from terminliste.model.loader import DataError, load_world  # noqa: E402
 from terminliste.model.travel import ApiTravelModel  # noqa: E402
 from terminliste.refdata import refresh_competition, refresh_travel_times  # noqa: E402
 from terminliste.report.render import render_report, write_json  # noqa: E402
-from terminliste.rounds.cup_schedule import CupSchedulingError, schedule_cups  # noqa: E402
+from terminliste.rounds.cup_schedule import (  # noqa: E402
+    CupSchedulingError,
+    schedule_cups,
+)
 from terminliste.rounds.european_schedule import (  # noqa: E402
     EuropeanCascadeError,
     build_main_tournament_rounds_for_display,
@@ -45,7 +51,14 @@ from terminliste.rounds.european_schedule import (  # noqa: E402
 )
 from terminliste.scoring.base import EvalContext, Score, evaluate  # noqa: E402
 from terminliste.scoring.registry import build_constraints  # noqa: E402
-from terminliste.solvers import Candidate, ProgressUpdate, SearchStats, SolveRequest, SolverResult, get_scheduler  # noqa: E402
+from terminliste.solvers import (  # noqa: E402
+    Candidate,
+    ProgressUpdate,
+    SearchStats,
+    SolveRequest,
+    SolverResult,
+    get_scheduler,
+)
 
 # TheSportsDB's league-name string per competition. Unconfirmed against a live
 # call — this sandbox's egress policy blocks the API host — so verify these the

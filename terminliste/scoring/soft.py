@@ -375,7 +375,7 @@ class RestComfort:
             if config is None:
                 continue
             minimum, comfortable, weight = config
-            for earlier, later in zip(matches, matches[1:]):
+            for earlier, later in zip(matches, matches[1:], strict=False):
                 rest_days = (later.date - earlier.date).days - 1
                 # Below the minimum is min_rest_days' business, not ours.
                 if rest_days < minimum or rest_days >= comfortable:

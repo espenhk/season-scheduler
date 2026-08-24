@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from terminliste.external_schedule import ExternalScheduleError, load_external_schedule
 from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.registry import build_constraints
@@ -120,13 +119,13 @@ def test_coverage_warning_text_is_stable_across_hash_seeds(tmp_path, world):
     )
     script = (
         "import sys, json;"
-        "sys.path.insert(0, %r);"
+        "sys.path.insert(0, {!r});"
         "from pathlib import Path;"
         "from terminliste.model.loader import load_world;"
         "from terminliste.external_schedule import load_external_schedule;"
-        "w = load_world(Path(%r));"
-        "print(json.dumps(load_external_schedule(Path(%r), w)[1]))"
-    ) % (str(PROJECT_ROOT), str(PROJECT_ROOT / "data"), str(path))
+        "w = load_world(Path({!r}));"
+        "print(json.dumps(load_external_schedule(Path({!r}), w)[1]))"
+    ).format(str(PROJECT_ROOT), str(PROJECT_ROOT / "data"), str(path))
 
     outputs = set()
     for seed in ("0", "1", "2"):

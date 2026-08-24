@@ -105,7 +105,7 @@ class _DateSpec(BaseModel):
     granularity: RoundGranularity | None = None
 
     @model_validator(mode="after")
-    def _forced_xor_window(self) -> "_DateSpec":
+    def _forced_xor_window(self) -> _DateSpec:
         has_forced = self.forced_date is not None
         has_window = self.window_start is not None or self.window_end is not None
         if has_forced and has_window:
@@ -212,7 +212,7 @@ class EuropeanRound(BaseModel):
     drop_to_round: str | None = None
 
     @model_validator(mode="after")
-    def _drop_to_is_paired(self) -> "EuropeanRound":
+    def _drop_to_is_paired(self) -> EuropeanRound:
         has_competition = self.drop_to_competition is not None
         has_round = self.drop_to_round is not None
         if has_competition != has_round:
@@ -263,7 +263,7 @@ class MainTournamentRound(BaseModel):
     note: str = ""
 
     @model_validator(mode="after")
-    def _venue_only_for_single_match(self) -> "MainTournamentRound":
+    def _venue_only_for_single_match(self) -> MainTournamentRound:
         if self.venue_name is not None and self.second_leg is not None:
             raise ValueError(
                 f"main tournament round {self.id!r}: venue_name is only meaningful for a "
@@ -446,13 +446,13 @@ class Competition(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _window_is_ordered(self) -> "Competition":
+    def _window_is_ordered(self) -> Competition:
         if self.start is not None and self.end is not None and self.end < self.start:
             raise ValueError(f"{self.id}: end ({self.end}) is before start ({self.start})")
         return self
 
     @model_validator(mode="after")
-    def _non_league_is_not_movable(self) -> "Competition":
+    def _non_league_is_not_movable(self) -> Competition:
         """A cup or European competition claiming `movable: true` is a data
         error: the solver never dates its fixtures, so the flag would be
         lying. A league may still set `movable: false` deliberately."""
@@ -515,7 +515,7 @@ class _DateRangeNote(BaseModel):
     reason: str = ""
 
     @model_validator(mode="after")
-    def _end_not_before_start(self) -> "_DateRangeNote":
+    def _end_not_before_start(self) -> _DateRangeNote:
         if self.end < self.start:
             raise ValueError(f"date range end ({self.end}) is before start ({self.start})")
         return self

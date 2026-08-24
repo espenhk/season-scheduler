@@ -11,11 +11,14 @@ import json
 import time
 import urllib.error
 
-import pytest
-
 import factories as f
+import pytest
 from terminliste.refdata import cache
-from terminliste.refdata.travel_client import FetchError, RouteRecord, fetch_ground_route
+from terminliste.refdata.travel_client import (
+    FetchError,
+    RouteRecord,
+    fetch_ground_route,
+)
 from terminliste.refdata.travel_refresh import refresh_travel_times
 
 

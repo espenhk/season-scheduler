@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from datetime import date
 
-from terminliste.model.calendar import anchor_dates, build_calendar, calendars_by_competition
+from terminliste.model.calendar import (
+    anchor_dates,
+    build_calendar,
+    calendars_by_competition,
+)
 
 
 def test_global_blackout_is_not_allowed(world, season):
@@ -146,7 +150,7 @@ def test_global_blackout_range_blocks_every_day_inside_it():
 
 def test_hard_fixed_requirement_overrides_a_global_blackout_range():
     import factories as f
-    from terminliste.model.schema import GlobalBlackoutRange, FixedRequirement
+    from terminliste.model.schema import FixedRequirement, GlobalBlackoutRange
 
     clash_date = date(2026, 6, 7)
     requirement = FixedRequirement(

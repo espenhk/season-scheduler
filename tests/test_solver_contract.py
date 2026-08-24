@@ -12,11 +12,10 @@ from datetime import date, timedelta
 
 import factories as f
 import pytest
-
 from terminliste.model.travel import ApiTravelModel
 from terminliste.rounds.cup_schedule import schedule_cups
-from terminliste.scoring.registry import build_constraints
 from terminliste.scoring.base import EvalContext
+from terminliste.scoring.registry import build_constraints
 from terminliste.solvers.base import SolveRequest, divergence
 from terminliste.solvers.local_search import LocalSearchScheduler
 

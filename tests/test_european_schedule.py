@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 
-import pytest
-
 import factories as f
+import pytest
 from terminliste.rounds.european_schedule import (
     EuropeanCascadeError,
     resolve_all_legs,

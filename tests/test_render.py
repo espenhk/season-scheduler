@@ -3,11 +3,10 @@ HTML page's new controls (issues #21-25, #39)."""
 
 from __future__ import annotations
 
-from collections import Counter
-from datetime import date
-
 import html
 import json
+from collections import Counter
+from datetime import date
 
 import factories as f
 import pytest
@@ -319,8 +318,8 @@ def test_combined_calendar_interleaves_both_competitions_in_the_same_week():
     candidate = _candidate(world, season, same_week, [])
 
     result = SolverResult(candidates=[candidate], solver="test")
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         out = render_report(world, season, result, Path(tmp) / "out.html")
@@ -382,8 +381,8 @@ def test_combined_views_include_cup_rounds_alongside_league_matches():
     )
     result = SolverResult(candidates=[candidate], solver="test")
 
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         out = render_report(world, season, result, Path(tmp) / "out.html", cup_schedules=[schedule])
@@ -466,7 +465,9 @@ def test_main_tournament_renders_via_the_display_adapter():
     matchdays and knockout legs like a qualifying competition's — without
     splitting a same-date round into two fixture rows."""
     from terminliste.report.render import _european_views
-    from terminliste.rounds.european_schedule import build_main_tournament_rounds_for_display
+    from terminliste.rounds.european_schedule import (
+        build_main_tournament_rounds_for_display,
+    )
 
     world, season, comp_m, comp_w = _two_dual_clubs_world()
     club_colors = {c.id: c.color for c in world.clubs.values()}
@@ -543,8 +544,8 @@ def test_combined_views_include_european_rounds_alongside_league_matches():
     resolved_legs = {("cl", "q3"): (date(2026, 6, 6), date(2026, 6, 6))}
     result = SolverResult(candidates=[candidate], solver="test")
 
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         out = render_report(
@@ -692,8 +693,8 @@ def test_render_report_includes_month_calendar_with_a_dot_and_tappable_day():
     candidate = _candidate(world, season, matches, [])
     result = SolverResult(candidates=[candidate], solver="test")
 
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         out = render_report(world, season, result, Path(tmp) / "out.html")
@@ -715,8 +716,8 @@ def test_render_report_month_calendar_carries_club_ids_and_a_color_legend():
     candidate = _candidate(world, season, matches, [])
     result = SolverResult(candidates=[candidate], solver="test")
 
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         out = render_report(world, season, result, Path(tmp) / "out.html")
@@ -741,8 +742,8 @@ def test_render_report_month_calendar_day_detail_uses_the_competition_short_name
     candidate = _candidate(world, season, matches, [])
     result = SolverResult(candidates=[candidate], solver="test")
 
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         out = render_report(world, season, result, Path(tmp) / "out.html")
@@ -790,8 +791,8 @@ def test_render_report_shows_search_difficulty_section_when_stats_present():
                          hard_violation_counts=Counter({"min_rest_days": 9}))
     result = SolverResult(candidates=[candidate], solver="test", iterations=10, search_stats=stats)
 
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         out = render_report(world, season, result, Path(tmp) / "out.html")
@@ -808,8 +809,8 @@ def test_render_report_omits_search_difficulty_section_when_no_stats():
     candidate = _candidate(world, season, matches, [])
     result = SolverResult(candidates=[candidate], solver="test")
 
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         out = render_report(world, season, result, Path(tmp) / "out.html")
@@ -835,8 +836,8 @@ def test_render_report_shows_season_exclusions_with_their_reasons():
     candidate = _candidate(world, season, matches, [])
     result = SolverResult(candidates=[candidate], solver="test")
 
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         out = render_report(world, season, result, Path(tmp) / "out.html")
@@ -854,8 +855,8 @@ def test_render_report_omits_season_exclusions_section_when_none_configured():
     candidate = _candidate(world, season, matches, [])
     result = SolverResult(candidates=[candidate], solver="test")
 
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         out = render_report(world, season, result, Path(tmp) / "out.html")
@@ -881,8 +882,8 @@ def test_render_report_shows_venue_scoped_exclusions_with_the_venue_name():
     candidate = _candidate(world, season, matches, [])
     result = SolverResult(candidates=[candidate], solver="test")
 
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         out = render_report(world, season, result, Path(tmp) / "out.html")
@@ -913,8 +914,8 @@ def test_render_report_sorts_season_exclusions_by_start_date_across_all_four_sou
     candidate = _candidate(world, season, matches, [])
     result = SolverResult(candidates=[candidate], solver="test")
 
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
         out = render_report(world, season, result, Path(tmp) / "out.html")

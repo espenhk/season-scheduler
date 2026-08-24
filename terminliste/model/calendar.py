@@ -56,7 +56,7 @@ class SeasonCalendar:
                 candidates.append(day)
         return candidates
 
-    def narrowed(self, start: date, end: date) -> "SeasonCalendar":
+    def narrowed(self, start: date, end: date) -> SeasonCalendar:
         """A calendar restricted to a tighter [start, end] window inside the
         season, for a competition whose fixture window is shorter.
 
@@ -183,7 +183,7 @@ def _insert_into_widest_gap(
 
     best_day: date | None = None
     best_gap = 2 * min_gap_days - 1
-    for earlier, later in zip(chosen, chosen[1:]):
+    for earlier, later in zip(chosen, chosen[1:], strict=False):
         gap = (later - earlier).days
         if gap <= best_gap:
             continue

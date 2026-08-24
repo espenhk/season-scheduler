@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-import pytest
-
 import factories as f
+import pytest
 from terminliste.model.schema import Competition, CupRound, DatedNote
 from terminliste.rounds.cup_schedule import (
     CupSchedulingError,
@@ -14,7 +13,6 @@ from terminliste.rounds.cup_schedule import (
     schedule_cup,
     schedule_cups,
 )
-
 
 # -- CupRound itself: forced_date XOR window ---------------------------------
 

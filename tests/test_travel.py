@@ -8,8 +8,8 @@ import time
 
 from terminliste.model.travel import (
     AIR_OVERHEAD_HOURS,
-    ApiTravelModel,
     UNTRAVELABLE_THRESHOLD_HOURS,
+    ApiTravelModel,
     great_circle_km,
 )
 

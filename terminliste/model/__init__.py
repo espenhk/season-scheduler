@@ -9,8 +9,8 @@ from .loader import DataError, World, load_world, validate_world
 from .schema import (
     Club,
     Competition,
-    Fixture,
     FixedRequirement,
+    Fixture,
     Match,
     Season,
     Team,

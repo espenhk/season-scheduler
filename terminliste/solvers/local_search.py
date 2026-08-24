@@ -38,8 +38,21 @@ from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_compet
 from ..model.loader import World
 from ..model.schema import Competition, Match
 from ..rounds.kickoff import assign_kickoff_times
-from ..scoring.base import HARD_PENALTY, Constraint, EvalContext, ScheduleIndex, evaluate
-from .base import Candidate, ProgressUpdate, SearchStats, SolveRequest, SolverResult, select_diverse
+from ..scoring.base import (
+    HARD_PENALTY,
+    Constraint,
+    EvalContext,
+    ScheduleIndex,
+    evaluate,
+)
+from .base import (
+    Candidate,
+    ProgressUpdate,
+    SearchStats,
+    SolveRequest,
+    SolverResult,
+    select_diverse,
+)
 from .greedy import build_initial_schedule
 
 

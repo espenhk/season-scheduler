@@ -51,7 +51,7 @@ class MinRestDays:
             minimum = self._minimum_by_team.get(team_id)
             if minimum is None:
                 continue
-            for earlier, later in zip(matches, matches[1:]):
+            for earlier, later in zip(matches, matches[1:], strict=False):
                 rest_days = (later.date - earlier.date).days - 1
                 if rest_days >= minimum:
                     continue

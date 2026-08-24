@@ -11,7 +11,6 @@ knowledge of each other would look like.
 from __future__ import annotations
 
 from terminliste.model.calendar import build_calendar
-from terminliste.model.travel import ApiTravelModel
 from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.registry import build_constraints
 from terminliste.solvers.greedy import build_initial_schedule

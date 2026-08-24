@@ -9,7 +9,6 @@ from __future__ import annotations
 from collections import Counter
 
 import pytest
-
 from terminliste.rounds.round_robin import (
     circle_method_rounds,
     generate_fixtures,

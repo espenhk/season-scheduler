@@ -17,7 +17,12 @@ import random
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from ..model.calendar import SeasonCalendar, anchor_dates, build_calendar, calendars_by_competition
+from ..model.calendar import (
+    SeasonCalendar,
+    anchor_dates,
+    build_calendar,
+    calendars_by_competition,
+)
 from ..model.loader import World
 from ..model.schema import WEEKDAYS, Competition, Fixture, Match, Season
 from ..rounds.cup_schedule import CupSchedule, cup_conflict, resolved_cup_windows
@@ -111,7 +116,7 @@ def plan_competitions(
             PlannedCompetition(
                 competition=competition,
                 fixtures=fixtures,
-                anchors=dict(zip(round_indexes, dates)),
+                anchors=dict(zip(round_indexes, dates, strict=False)),
             )
         )
     return planned

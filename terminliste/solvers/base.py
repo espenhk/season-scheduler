@@ -9,8 +9,9 @@ what a schedule is or how it is judged.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Protocol
+from typing import Protocol
 
 from ..model.loader import World
 from ..model.schema import Competition, Match, Season
@@ -49,14 +50,14 @@ class SearchStats:
     hard_violation_scenarios: int = 0
     hard_violation_counts: Counter[str] = field(default_factory=Counter)
 
-    def __iadd__(self, other: "SearchStats") -> "SearchStats":
+    def __iadd__(self, other: SearchStats) -> SearchStats:
         self.investigated += other.investigated
         self.feasible += other.feasible
         self.hard_violation_scenarios += other.hard_violation_scenarios
         self.hard_violation_counts.update(other.hard_violation_counts)
         return self
 
-    def copy(self) -> "SearchStats":
+    def copy(self) -> SearchStats:
         """An independent snapshot: the search loop mutates one `SearchStats`
         in place, so a `ProgressUpdate` callback needs its own frozen copy."""
         return SearchStats(
