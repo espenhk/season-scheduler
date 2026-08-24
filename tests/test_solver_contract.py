@@ -393,3 +393,78 @@ def _all_dates(start, end):
 
     days = (end - start).days
     return [start + timedelta(days=i) for i in range(days + 1)]
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_relaxes_min_rest_days_rather_than_reporting_zero_candidates():
+    """Issue #95: CP-SAT's real-2026-data failure was `min_rest_days` alone
+    making the whole assumption-literal model infeasible, so the backend gave
+    up with zero candidates instead of a best-effort schedule — unlike local
+    search, which always returns *something* even when it can't clear every
+    hard rule. Two fixed requirements pin the same team's home fixtures 2
+    days apart (`min_rest_days=3` needs 4), a conflict nothing but relaxing
+    `min_rest_days` can resolve — see the FixedRequirement docstring for why
+    a hard requirement forces its fixture's date outright."""
+    from terminliste.model.schema import FixedRequirement
+
+    world, season, competitions = _small_world()
+    reqs = [
+        FixedRequirement(id="r1", date=date(2026, 3, 18), home_team="m0", competition="men"),
+        FixedRequirement(id="r2", date=date(2026, 3, 20), home_team="m0", competition="men"),
+    ]
+    season = f.season(
+        competitions=season.competitions, start=season.start, end=season.end,
+        fixed_requirements=reqs,
+    )
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=1, top_n=1, time_budget_s=15.0,
+    )
+    result = _get_scheduler("cpsat").solve(request)
+
+    assert result.best is not None, result.notes
+    assert any("min_rest_days relaxed" in note for note in result.notes)
+    assert not result.best.score.feasible
+    violated = [r.constraint_id for r in result.best.score.hard_results() if r.count]
+    assert violated == ["min_rest_days"]
+    stats = result.search_stats
+    assert stats.feasible + stats.hard_violation_scenarios == stats.investigated
+    # A rescued pass reports only what the scorer found genuinely broken —
+    # not the discarded first attempt's culprits, which name whatever
+    # `SufficientAssumptionsForInfeasibility` echoed back rather than the
+    # real conflict (the fixed requirements above are a red herring here).
+    assert not any(k.startswith("fixed_requirement:") for k in stats.hard_violation_counts)
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_still_reports_zero_candidates_when_relaxing_min_rest_days_is_not_enough():
+    """The counterpart to the test above: a conflict `min_rest_days` isn't
+    party to at all (two teams sharing a venue forced onto the same home
+    date) must still fail the way it always has, not silently mask an
+    unrelated impossibility behind the new relaxation retry."""
+    from terminliste.model.schema import FixedRequirement
+
+    world, season, competitions = _small_world()
+    # m0 and m7 share venue v0 (`v{i % 7}`) — forcing both home on one date
+    # is a venue double-booking no rest-day relaxation can fix.
+    reqs = [
+        FixedRequirement(id="r1", date=date(2026, 3, 18), home_team="m0", competition="men"),
+        FixedRequirement(id="r2", date=date(2026, 3, 18), home_team="m7", competition="men"),
+    ]
+    season = f.season(
+        competitions=season.competitions, start=season.start, end=season.end,
+        fixed_requirements=reqs,
+    )
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=1, top_n=1, time_budget_s=15.0,
+    )
+    result = _get_scheduler("cpsat").solve(request)
+
+    assert result.best is None
+    assert result.notes
+    assert not any("min_rest_days relaxed" in note for note in result.notes)

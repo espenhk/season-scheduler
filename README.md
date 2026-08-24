@@ -348,8 +348,54 @@ which is what let a 120s `cli.py generate --solver cpsat` run stop naming
 `european_commitment_conflict` among its infeasibility culprits at all,
 where it used to dominate. Closing the *remaining* gap on the real 2026 data
 (Bodø/Glimt's and Viking's dense, non-branching Champions League qualifying
-calendar — see the companion issue) is unrelated to cascade branching and
-not attempted here.
+calendar) is unrelated to cascade branching — see below for how issue #95
+handles it instead.
+
+**A fundamentally tight month (issue #95).** Even with cascade branching
+handled, `cli.py generate --season 2026 --solver cpsat` still came back
+`FAIL: solver produced no candidates` — CP-SAT proved the model
+`INFEASIBLE` almost immediately, not a search-ran-out-of-time result.
+Testing each hard rule's relaxation individually against the real 2026 data
+narrowed it to one: relaxing `min_rest_days` alone (every other hard rule
+still forced) solves `OPTIMAL`; relaxing any other single rule alone stays
+`INFEASIBLE`. The real culprit is Bodø/Glimt's and Viking's Champions
+League qualifying calendar (`champions_league_2026.yml`) — Q3 legs 4/5 and
+11 August, play-off legs 18/19 and 25/26 August — which blocks a ±2-day
+window around each date and leaves Bodø/Glimt open gaps of one or two days
+across most of August, too narrow to also fit weekly Eliteserien play; a
+handful of other clubs pick up knock-on congestion from those two teams'
+matches landing on unusual dates. This is real-world tightness, not a
+modelling bug: a club playing deep into continental qualifying genuinely
+has very little free August.
+
+The chosen fix is to accept partial infeasibility rather than force full
+feasibility: `solvers/cpsat.py`'s `_solve_pass` now retries a pass that
+comes back *proven* infeasible (`cp_model.INFEASIBLE` specifically, not a
+mere `UNKNOWN` timeout — retrying on a timeout could relax a rule a
+perfectly feasible model just needed more time for, and would spend that
+pass's time budget twice over) with `min_rest_days` rebuilt as a penalised
+objective term instead of an `AddAssumption`-pinned hard constraint (see
+`_build_model`'s `relax_rules` parameter). The penalty is a per-window
+indicator weighted well above any real soft weight, not a single global
+switch — an earlier version left the whole rule's literal a free, unpenalised
+boolean, which cost the solver nothing to drop everywhere at once and cut
+short rest by rather more than the crunch actually required; scoping the
+penalty to each window individually keeps the same fix but roughly halves
+the violations on the real 2026 data (6 down to 3-4, depending on the
+option) since the solver now only pays it where a window genuinely has no
+legal alternative. `min_rest_days` is the one hard rule this backend treats
+as negotiable at all — short rest is a real inconvenience, unlike a
+double-booked venue or a return leg played before the first, which stay
+hard requirements no retry relaxes. This mirrors local search, which was
+never all-or-nothing about hard rules to begin with: both backends now
+publish their best-effort schedule with whatever hard-rule violations
+remain called out in the score breakdown, rather than one of them refusing
+to answer at all. Loosening `match_window_days` specifically for teams with
+active European commitments was considered as a more surgical alternative
+but not pursued — it would need per-team scheduling flexibility the model
+doesn't have anywhere else, for a conflict that's a real, once-in-a-while
+calendar squeeze rather than a recurring modelling gap worth that extra
+machinery.
 
 `resolve_main_tournament_commitments` (`rounds/european_schedule.py`)
 resolves each main tournament's own dates once — no branching to walk, since
