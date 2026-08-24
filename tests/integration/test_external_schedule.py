@@ -14,7 +14,7 @@ from terminliste.external_schedule import ExternalScheduleError, load_external_s
 from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.registry import build_constraints
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def _write_csv(path: Path, rows: list[dict]) -> None:

@@ -198,7 +198,7 @@ rule out.
   Conference League Q1 (no Norwegian entrant this cycle, so it's omitted
   rather than added as an inert empty round).
 - **Mechanism generality — proven by tests, not just by the real data.**
-  `tests/test_european_schedule.py` exercises multi-hop cascades, branch
+  `tests/rounds/test_european_schedule.py` exercises multi-hop cascades, branch
   merging at a shared depth, and the error paths on synthetic data, so the
   code path is verified independent of whether the current season's real
   UEFA rules happen to exercise every hop.

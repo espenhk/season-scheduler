@@ -25,7 +25,7 @@ from terminliste.baseline import (
 from terminliste.model.loader import load_world
 from terminliste.rounds.cup_schedule import CupSchedulingError
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 SOURCES_DIR = PROJECT_ROOT / "baselines" / "sources"
 REPORTS_DIR = PROJECT_ROOT / "baselines" / "reports"
 

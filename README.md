@@ -498,7 +498,7 @@ python scripts/refresh_baselines.py --check    # non-zero exit if stale
 Re-run it after any change that could move the number — a new constraint, a
 re-weighted old one, a correction to `data/` — and commit the report diff
 with the change. That diff is the artefact worth having: it says in points
-what the edit did to a schedule nobody made up. `tests/test_baselines.py`
+what the edit did to a schedule nobody made up. `tests/integration/test_baselines.py`
 fails if the committed reports are stale, so this cannot be forgotten
 quietly.
 

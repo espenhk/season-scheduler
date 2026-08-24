@@ -126,7 +126,7 @@ python scripts/refresh_baselines.py
 ```
 
 Commit `baselines/sources/` and `baselines/reports/` together.
-`tests/test_baselines.py` will fail the build if the committed reports drift
+`tests/integration/test_baselines.py` will fail the build if the committed reports drift
 from what a fresh run produces, or if the baseline reports a hard violation
 its sidecar hasn't declared — both are meant to catch exactly the kind of
 mistake ("I regenerated the CSV but forgot to update the sidecar's

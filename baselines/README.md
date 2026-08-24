@@ -45,7 +45,7 @@ meaningful for a partial baseline as well as a complete one.
 fails every rule keyed to a date it never reaches — not because the real
 schedule is broken, but because the data stops early. That is why each
 sidecar carries `expected_hard_violations` spelling out which failures are
-artefacts, and why `tests/test_baselines.py` asserts that a baseline breaks
+artefacts, and why `tests/integration/test_baselines.py` asserts that a baseline breaks
 *only* rules its sidecar owns up to. An undeclared hard violation is a test
 failure, which forces a decision: either the fixture data is wrong, or the
 sidecar owes the reader an explanation. Left to prose alone, that paragraph
@@ -94,7 +94,7 @@ can reach the data.
 3. **Re-score.** `python scripts/refresh_baselines.py`, then commit
    `sources/` and `reports/` together.
 4. **Check the new hard violations.** If the run reports a rule the sidecar
-   does not mention, `tests/test_baselines.py` will fail. Work out which side
+   does not mention, `tests/integration/test_baselines.py` will fail. Work out which side
    is wrong before silencing it — that failure is the baseline earning its
    keep.
 

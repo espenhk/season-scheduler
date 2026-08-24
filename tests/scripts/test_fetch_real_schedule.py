@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT_PATH = PROJECT_ROOT / "scripts" / "fetch_real_schedule.py"
 
 sys.path.insert(0, str(PROJECT_ROOT))

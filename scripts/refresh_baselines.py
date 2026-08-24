@@ -11,7 +11,7 @@ points, what the ruleset edit did to a schedule nobody made up.
 
 `--check` is the same run with the writes withheld and a non-zero exit if the
 output would have differed. It is what a CI job or a pre-commit hook should
-call, and it is what `tests/test_baselines.py` asserts.
+call, and it is what `tests/integration/test_baselines.py` asserts.
 
 Offline and deterministic, like `validate` and `score` — it reads `data/` and
 `baselines/sources/` and nothing else.
