@@ -64,6 +64,15 @@ cheap:
   `rounds/competitions/` (cup + european), since the latter two are in the
   "run all" tier anyway.
 
+## CI
+
+Each row of the table above has a caller workflow, `.github/workflows/fs-tests-<area>.yml`
+(`all`, `rounds`, `scoring`, `solvers`, `report`, `refdata`, `integration`), that runs the
+listed folders through `football-scheduler-tests-reusable.yml` when a PR touches the
+matching paths. Keep the `paths:` in those files in sync with the table. They are
+deliberately not required status checks: a path-filtered workflow that doesn't match
+reports nothing, which would block unrelated PRs.
+
 ## A note on `import factories`
 
 Every test file that needs a small hand-built world does `import factories

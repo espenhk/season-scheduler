@@ -1,0 +1,23 @@
+# Path -> suites mapping is documented in football-scheduler/tests/README.md.
+name: football-scheduler tests (refdata)
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+    paths:
+      - "football-scheduler/terminliste/refdata/**"
+      - "football-scheduler/tests/refdata/**"
+      - "football-scheduler/tests/scripts/**"
+      - ".github/workflows/fs-tests-refdata.yml"
+
+jobs:
+  test:
+    # Skip draft PRs, but always run when a draft is converted to ready for review.
+    if: github.event.action == 'ready_for_review' || !github.event.pull_request.draft
+    uses: ./.github/workflows/football-scheduler-tests-reusable.yml
+    with:
+      suites: "refdata scripts"

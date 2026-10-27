@@ -1,0 +1,30 @@
+# Path -> suites mapping is documented in football-scheduler/tests/README.md.
+name: football-scheduler tests (all)
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+    paths:
+      - "football-scheduler/terminliste/model/**"
+      - "football-scheduler/terminliste/rounds/cup_schedule.py"
+      - "football-scheduler/terminliste/rounds/european_schedule.py"
+      - "football-scheduler/data/**"
+      - "football-scheduler/tests/conftest.py"
+      - "football-scheduler/tests/factories.py"
+      - "football-scheduler/conftest.py"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - ".github/workflows/football-scheduler-tests-reusable.yml"
+      - ".github/workflows/fs-tests-all.yml"
+
+jobs:
+  test:
+    # Skip draft PRs, but always run when a draft is converted to ready for review.
+    if: github.event.action == 'ready_for_review' || !github.event.pull_request.draft
+    uses: ./.github/workflows/football-scheduler-tests-reusable.yml
+    with:
+      suites: "."
