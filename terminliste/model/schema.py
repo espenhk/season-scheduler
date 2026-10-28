@@ -528,7 +528,23 @@ class _DateRangeNote(BaseModel):
 class GlobalBlackoutRange(_DateRangeNote):
     """A closed span of dates off-limits season-wide — holiday periods, FIFA
     international breaks. `Season.blacked_out_dates` expands it into the same
-    date->reason mapping every global-blackout consumer reads."""
+    date->reason mapping every global-blackout consumer reads.
+
+    With `gender` and/or `competitions` set it blocks only matching
+    competitions (men's and women's FIFA windows differ), and is read through
+    `Season.scoped_blackout_dates` instead."""
+
+    gender: Gender | None = None
+    competitions: list[str] = Field(default_factory=list)
+
+    @property
+    def is_scoped(self) -> bool:
+        return self.gender is not None or bool(self.competitions)
+
+    def applies_to(self, competition: Competition) -> bool:
+        if self.gender is not None and competition.gender != self.gender:
+            return False
+        return not self.competitions or competition.id in self.competitions
 
 
 class VenueBlackoutRange(_DateRangeNote):
@@ -640,10 +656,22 @@ class Season(BaseModel):
         """
         result: dict[date, str] = {}
         for excluded in self.global_blackout_ranges:
+            if excluded.is_scoped:
+                continue
             for day in excluded.dates:
                 result[day] = excluded.reason
         for blackout in self.global_blackouts:
             result[blackout.date] = blackout.reason
+        return result
+
+    def scoped_blackout_dates(self, competition: Competition) -> dict[date, str]:
+        """Dates blacked out for `competition` only, by gender- or
+        competition-scoped ranges; `blacked_out_dates` excludes these."""
+        result: dict[date, str] = {}
+        for excluded in self.global_blackout_ranges:
+            if excluded.is_scoped and excluded.applies_to(competition):
+                for day in excluded.dates:
+                    result[day] = excluded.reason
         return result
 
     @cached_property

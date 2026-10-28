@@ -102,14 +102,26 @@ class BlackoutDates:
         penalty = 0.0
         events: list[Event] = []
 
+        scoped_by_competition = {
+            competition_id: {
+                day: reason
+                for day, reason in season.scoped_blackout_dates(competition).items()
+                if day not in required_dates
+            }
+            for competition_id, competition in ctx.world.competitions.items()
+        }
+
         for match in index.matches:
             reason = global_blackouts.get(match.date)
             if reason is None:
+                reason = scoped_by_competition.get(match.competition_id, {}).get(match.date)
+            if reason is not None:
+                if reason:
+                    reason = f"season blackout: {reason}"
+            else:
                 reason = venue_blackouts.get((match.venue, match.date))
                 if reason is not None:
                     reason = f"{ctx.world.venue(match.venue).name} unavailable: {reason}"
-            elif reason:
-                reason = f"season blackout: {reason}"
 
             if reason is None:
                 competition = ctx.world.competitions.get(match.competition_id)

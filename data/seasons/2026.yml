@@ -47,6 +47,16 @@ global_blackouts:
   - {date: 2026-06-23, reason: "Sankthansaften"}
   - {date: 2026-12-24, reason: "Julaften"}
 
+# International windows and the World Cup break, scoped to the competitions
+# they actually stop. Men's windows are per the FIFA calendar; the Eliteserien
+# pauses for the World Cup. Women's windows are approximate (verified: false)
+# until FIFA's exact dates are confirmed.
+global_blackout_ranges:
+  - {start: 2026-03-23, end: 2026-03-31, gender: men, reason: "FIFA window (men)"}
+  - {start: 2026-05-26, end: 2026-07-03, competitions: [eliteserien_2026], reason: "World Cup break (Eliteserien)"}
+  - {start: 2026-09-21, end: 2026-10-06, gender: men, reason: "FIFA window (men)"}
+  - {start: 2026-11-09, end: 2026-11-17, gender: men, reason: "FIFA window (men)"}
+
 # Dates that are legal but discouraged; scheduling here costs
 # `soft_venue_preference` points rather than being rejected outright.
 discouraged_dates:

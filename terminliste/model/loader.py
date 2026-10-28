@@ -22,6 +22,7 @@ from .schema import (
     Club,
     Competition,
     FixedRequirement,
+    GlobalBlackoutRange,
     Season,
     Team,
     TravelOverride,
@@ -336,6 +337,7 @@ def validate_world(world: World) -> list[str]:
                     f"season {season.id!r} blacks out unknown venue {blackout_range.venue!r} "
                     f"(date range {blackout_range.start}..{blackout_range.end})"
                 )
+        errors.extend(_validate_blackout_range_scopes(world, season))
         errors.extend(_validate_fixed_requirements(world, season))
         errors.extend(_validate_full_round_requirements(world, season))
         errors.extend(_validate_rivalry_fixtures(world, season))
@@ -631,12 +633,32 @@ def _validate_fixed_requirements(world: World, season: Season) -> list[str]:
                 f"requirement {requirement.id!r} demands a match on {requirement.date}, which is "
                 f"also a global blackout — these cannot both hold"
             )
-        if any(r.start <= requirement.date <= r.end for r in season.global_blackout_ranges):
+        if any(
+            r.start <= requirement.date <= r.end and _range_applies(r, competition)
+            for r in season.global_blackout_ranges
+        ):
             errors.append(
                 f"requirement {requirement.id!r} demands a match on {requirement.date}, which "
                 f"falls inside a global blackout range — these cannot both hold"
             )
     return errors
+
+
+def _range_applies(blackout_range: GlobalBlackoutRange, competition: Competition | None) -> bool:
+    """Whether a blackout range bites `competition`; an unscoped range always
+    does, and any range does when the competition is unknown."""
+    if competition is None or not blackout_range.is_scoped:
+        return True
+    return blackout_range.applies_to(competition)
+
+
+def _validate_blackout_range_scopes(world: World, season: Season) -> list[str]:
+    return [
+        f"global blackout range {r.start}..{r.end} names unknown competition {competition_id!r}"
+        for r in season.global_blackout_ranges
+        for competition_id in r.competitions
+        if competition_id not in world.competitions
+    ]
 
 
 def _validate_full_round_requirements(world: World, season: Season) -> list[str]:
@@ -672,7 +694,10 @@ def _validate_full_round_requirements(world: World, season: Season) -> list[str]
                 f"full-round requirement {requirement.id!r} demands a round on "
                 f"{requirement.date}, which is also a global blackout — these cannot both hold"
             )
-        if any(r.start <= requirement.date <= r.end for r in season.global_blackout_ranges):
+        if any(
+            r.start <= requirement.date <= r.end and _range_applies(r, competition)
+            for r in season.global_blackout_ranges
+        ):
             errors.append(
                 f"full-round requirement {requirement.id!r} demands a round on "
                 f"{requirement.date}, which falls inside a global blackout range — these cannot "

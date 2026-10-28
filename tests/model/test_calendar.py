@@ -186,3 +186,35 @@ def test_venue_blackout_range_blocks_only_that_venue_across_every_day():
         assert calendar.is_allowed(day, "v2")
         assert calendar.is_allowed(day)
     assert calendar.is_allowed(date(2026, 6, 4), "v1")
+
+
+def _scoped_range_setup(**scope):
+    import factories as f
+    from terminliste.model.schema import GlobalBlackoutRange
+
+    men = f.competition("men_league", [], gender="men")
+    women = f.competition("women_league", [], gender="women")
+    season = f.season(
+        global_blackout_ranges=[
+            GlobalBlackoutRange(
+                start=date(2026, 6, 1), end=date(2026, 6, 14), reason="window", **scope
+            )
+        ],
+    )
+    calendar = build_calendar(f.world([], [], [men, women]), season)
+    return calendar, calendars_by_competition(calendar, [men, women])
+
+
+def test_gender_scoped_range_blocks_only_that_gender():
+    calendar, by_competition = _scoped_range_setup(gender="men")
+    day = date(2026, 6, 7)
+    assert calendar.is_allowed(day)
+    assert not by_competition["men_league"].is_allowed(day)
+    assert by_competition["women_league"].is_allowed(day)
+
+
+def test_competition_scoped_range_blocks_only_that_competition():
+    _, by_competition = _scoped_range_setup(competitions=["women_league"])
+    day = date(2026, 6, 7)
+    assert by_competition["men_league"].is_allowed(day)
+    assert not by_competition["women_league"].is_allowed(day)

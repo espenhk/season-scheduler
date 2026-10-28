@@ -72,6 +72,24 @@ class SeasonCalendar:
             _venue_blocked=self._venue_blocked,
         )
 
+    def without(self, blocked: dict[date, str]) -> SeasonCalendar:
+        """A calendar with `blocked` dates removed, except dates a hard
+        requirement pins (the loader already rejects those clashing)."""
+        if not blocked:
+            return self
+        required = {r.date for r in self.season.fixed_requirements if r.hard} | {
+            r.date for r in self.season.full_round_requirements if r.hard
+        }
+        return SeasonCalendar(
+            season=self.season,
+            all_dates=self.all_dates,
+            global_allowed=frozenset(
+                d for d in self.global_allowed if d not in blocked or d in required
+            ),
+            discouraged=self.discouraged,
+            _venue_blocked=self._venue_blocked,
+        )
+
 
 def competition_window(season: Season, competition: Competition) -> tuple[date, date]:
     """A competition's effective start/end: its own if set, else the season's."""
@@ -86,10 +104,11 @@ def calendars_by_competition(
     result: dict[str, SeasonCalendar] = {}
     for competition in competitions:
         start, end = competition_window(calendar.season, competition)
-        if start == calendar.season.start and end == calendar.season.end:
+        scoped = calendar.season.scoped_blackout_dates(competition)
+        if start == calendar.season.start and end == calendar.season.end and not scoped:
             result[competition.id] = calendar
         else:
-            result[competition.id] = calendar.narrowed(start, end)
+            result[competition.id] = calendar.narrowed(start, end).without(scoped)
     return result
 
 
