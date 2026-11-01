@@ -50,43 +50,76 @@ def test_windowed_leg_falls_back_to_window_start_when_every_day_is_blacked_out()
     assert blacked_out is True
 
 
-# -- resolve_leg_date: preferred_weekday (issue #79) --------------------------
+# -- resolve_leg_date: matchday_weekdays (#79, #112) -------------------------
 
 
-def test_preferred_weekday_is_picked_over_the_plain_earliest_day():
-    # 2026-08-04 is a Tuesday, 2026-08-06 a Thursday — without a preference
+def test_matchday_weekday_is_picked_over_the_plain_earliest_day():
+    # 2026-08-04 is a Tuesday, 2026-08-06 a Thursday — without a matchday
     # the earliest day (Tuesday) would win.
     leg = f.european_leg(window_start=date(2026, 8, 4), window_end=date(2026, 8, 7))
-    resolved, blacked_out = resolve_leg_date(leg, blackouts=set(), preferred_weekday="thursday")
+    resolved, blacked_out = resolve_leg_date(leg, blackouts=set(), matchday_weekdays=["thursday"])
     assert resolved == date(2026, 8, 6)
     assert blacked_out is False
 
 
-def test_preferred_weekday_falls_back_to_earliest_day_when_absent_from_window():
+def test_matchday_weekdays_are_tried_in_preference_order():
+    # Tue 4 - Thu 6 Aug: Tuesday is listed first, so it wins over Wednesday.
+    leg = f.european_leg(window_start=date(2026, 8, 4), window_end=date(2026, 8, 6))
+    resolved, _ = resolve_leg_date(leg, set(), matchday_weekdays=["tuesday", "wednesday"])
+    assert resolved == date(2026, 8, 4)
+
+
+def test_a_blacked_out_first_matchday_falls_to_the_next_listed_weekday():
+    leg = f.european_leg(window_start=date(2026, 8, 4), window_end=date(2026, 8, 6))
+    resolved, blacked_out = resolve_leg_date(
+        leg, {date(2026, 8, 4)}, matchday_weekdays=["tuesday", "wednesday"]
+    )
+    assert resolved == date(2026, 8, 5)
+    assert blacked_out is False
+
+
+def test_matchday_weekday_falls_back_to_earliest_day_when_absent_from_window():
     # Tuesday-Wednesday only — no Thursday in this window at all.
     leg = f.european_leg(window_start=date(2026, 8, 4), window_end=date(2026, 8, 5))
-    resolved, blacked_out = resolve_leg_date(leg, blackouts=set(), preferred_weekday="thursday")
+    resolved, blacked_out = resolve_leg_date(leg, blackouts=set(), matchday_weekdays=["thursday"])
     assert resolved == date(2026, 8, 4)
     assert blacked_out is False
 
 
-def test_preferred_weekday_skips_a_blacked_out_occurrence_for_a_later_one():
+def test_matchday_weekday_skips_a_blacked_out_occurrence_for_a_later_one():
     # Two Thursdays in range: 2026-08-06 and 2026-08-13.
     leg = f.european_leg(window_start=date(2026, 8, 4), window_end=date(2026, 8, 13))
     resolved, blacked_out = resolve_leg_date(
-        leg, blackouts={date(2026, 8, 6)}, preferred_weekday="thursday"
+        leg, blackouts={date(2026, 8, 6)}, matchday_weekdays=["thursday"]
     )
     assert resolved == date(2026, 8, 13)
     assert blacked_out is False
 
 
-def test_preferred_weekday_never_overrides_a_forced_date():
+def test_matchday_weekday_never_overrides_a_forced_date():
     # 2026-08-04 is a Tuesday, not a Thursday — a forced date is used
-    # exactly regardless of any weekday preference.
+    # exactly regardless of the competition's matchday.
     leg = f.european_leg(forced_date=date(2026, 8, 4))
-    resolved, blacked_out = resolve_leg_date(leg, blackouts=set(), preferred_weekday="thursday")
+    resolved, blacked_out = resolve_leg_date(leg, blackouts=set(), matchday_weekdays=["thursday"])
     assert resolved == date(2026, 8, 4)
     assert blacked_out is False
+
+
+def test_resolve_all_legs_applies_the_competition_matchday():
+    # A Tue-Thu Conference League window resolves to its Thursday (#112).
+    comp = f.competition(
+        "uecl",
+        ["brann"],
+        format="european",
+        matchday_weekdays=["thursday"],
+        european_rounds=[
+            f.european_round(
+                "q2", entrants=["brann"], window_start=date(2026, 7, 21), window_end=date(2026, 7, 23)
+            )
+        ],
+    )
+    resolved, _ = resolve_all_legs([comp], blackouts=set())
+    assert resolved[("uecl", "q2")] == (date(2026, 7, 23), date(2026, 7, 23))
 
 
 # -- resolve_team_cascade: a single competition, no cascade ------------------
@@ -645,12 +678,12 @@ def test_resolve_main_tournament_dates_labels_matchdays_and_knockout_legs():
     assert warnings == []
 
 
-def test_resolve_main_tournament_dates_applies_preferred_weekday():
+def test_resolve_main_tournament_dates_applies_matchday_weekdays():
     main = f.competition(
         "cl_main",
         [],
         format="european",
-        preferred_weekday="thursday",
+        matchday_weekdays=["thursday"],
         is_main_tournament=True,
         league_phase_matchdays=[
             f.european_matchday("md1", window_start=date(2026, 8, 4), window_end=date(2026, 8, 7))

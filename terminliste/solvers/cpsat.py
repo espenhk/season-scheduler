@@ -249,14 +249,7 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
     model = cp_model.CpModel()
     by_competition = calendars_by_competition(calendar, request.competitions)
     cup_windows = resolved_cup_windows(request.cup_schedules)
-    # Only `certain` commitments narrow the candidate domain (#93): one
-    # reachable solely via a mutually-exclusive cascade branch isn't a
-    # guaranteed fixture, so `EuropeanCommitmentSoftConflict` discourages its
-    # date instead of this excluding it outright.
-    european_commitments = {
-        team_id: [c for c in commitments if c.certain]
-        for team_id, commitments in request.european_commitments.items()
-    }
+    european_commitments = request.european_commitments
 
     # -- decision variables: one boolean per (fixture, candidate date) --------
     fixtures: list[tuple[object, object, str]] = []  # (fixture, competition, venue)
@@ -644,7 +637,9 @@ def _cup_clear(window: list[date], fixture, cup_windows: dict[str, list[tuple[da
 
 
 def _european_clear(window: list[date], fixture, european_commitments) -> list[date]:
-    """`_cup_clear`'s counterpart for resolved European qualifying windows."""
+    """`_cup_clear`'s counterpart for European dates. Only binding ones narrow
+    the domain (#93, #112); `EuropeanCommitmentSoftConflict` discourages the
+    rest instead of this excluding them outright."""
     return [
         day
         for day in window

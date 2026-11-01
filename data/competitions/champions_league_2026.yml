@@ -64,6 +64,10 @@ teams:
 
 min_rest_days: 2
 
+# Champions League qualifying plays Tuesday/Wednesday — see
+# champions_league_main_2026.yml's header (#112).
+matchday_weekdays: [tuesday, wednesday]
+
 european_rounds:
   - id: q3
     name: Third qualifying round

@@ -757,7 +757,7 @@ class EuropeanCommitmentSoftConflict:
         for team_id, commitments in self.commitments_by_team.items():
             for match in index.by_team.get(team_id, ()):
                 for commitment in commitments:
-                    if commitment.certain:
+                    if commitment.binding:
                         continue
                     rest_days = abs((match.date - commitment.date).days) - 1
                     if rest_days >= commitment.min_rest_days:

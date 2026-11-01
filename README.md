@@ -404,11 +404,18 @@ every reachable team blocks the same list — and merges them into the same
 from the qualifying cascade, so `EuropeanCommitmentConflict` and both
 solvers' cup/European candidate-date pruning need no changes at all to cover
 main tournaments too. The one genuinely new piece of resolution logic is
-`preferred_weekday`-biased date selection: `resolve_leg_date` now prefers the
-first occurrence of a competition's `preferred_weekday` inside a window
-(falling back to the plain earliest day when the window doesn't contain
-one), so Champions League's dates lean Thursday and Europa/Conference
-League's lean Tuesday/Wednesday, per the issue.
+matchday-aware date selection: `resolve_leg_date` resolves a window to the
+first occurrence of the competition's `matchday_weekdays`, in preference
+order (falling back to the plain earliest day when the window doesn't
+contain one). Champions League plays Tuesday/Wednesday and Europa/Conference
+League Thursday, qualifying and main tournament alike (#112).
+
+The resolved legs form the season frame's UEFA weeks (`terminliste/frame.py`):
+one `uefa_week` entry per leg, listing every team that might play it and
+the subset for whom it binds. `cli.py validate` prints them. Which dates
+bind is defined once, by `EuropeanCommitmentDate.binding`, and the greedy
+placer, CP-SAT's candidate domains, round pinning and the hard/soft rules
+all read it, so the solvers agree on which European dates are hard.
 
 Because main tournament competitions are `movable: false` and resolved
 before the domestic solver ever runs (same as qualifying), "European games

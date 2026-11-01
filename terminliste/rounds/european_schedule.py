@@ -21,6 +21,7 @@ branch not taken, or narrow a leg's window to a `forced_date`, and regenerate.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -64,6 +65,13 @@ class EuropeanCommitmentDate:
     competition_id: str
     certain: bool = True
 
+    @property
+    def binding(self) -> bool:
+        """Whether this date is a hard reservation. The one definition every
+        solver and the hard/soft rules share, so they agree on which European
+        dates are hard (#112)."""
+        return self.certain
+
 
 ResolvedLegs = dict[tuple[str, str], tuple[date, date]]
 
@@ -71,28 +79,29 @@ ResolvedLegs = dict[tuple[str, str], tuple[date, date]]
 def resolve_leg_date(
     leg: EuropeanLeg | EuropeanMatchday,
     blackouts: set[date],
-    preferred_weekday: Weekday | None = None,
+    matchday_weekdays: Sequence[Weekday] = (),
 ) -> tuple[date, bool]:
     """One leg's window (or forced date) resolved to an actual date.
 
     A `forced_date` is used exactly; the second return value flags one that
     happens to be blacked out, which is a data conflict worth a warning rather
-    than something to paper over. A window resolves to its earliest
-    non-blackout day, falling back to `window_start` (flagged) if every day is
-    blacked out.
+    than something to paper over.
 
-    `preferred_weekday` (#79) biases a *window* towards its first matching
-    non-blacked-out day — a confirmed date is confirmed whatever weekday it
-    falls on, so a `forced_date` ignores it, as does a window with no matching
-    day.
+    A window resolves to the competition's matchday (#112): the first
+    non-blackout day on the most preferred of `matchday_weekdays` it contains,
+    since UEFA windows span several nights but each competition plays on its
+    own. With no matching day it falls back to the earliest non-blackout day,
+    then to `window_start` (flagged) if every day is blacked out. A confirmed
+    date is confirmed whatever weekday it falls on, so a `forced_date` ignores
+    the weekdays.
     """
     if leg.is_forced:
         anchor = leg.forced_date
         return anchor, anchor in blackouts
 
     span = (leg.window_end - leg.window_start).days
-    if preferred_weekday is not None:
-        target = WEEKDAYS.index(preferred_weekday)
+    for weekday in matchday_weekdays:
+        target = WEEKDAYS.index(weekday)
         for offset in range(span + 1):
             candidate = leg.window_start + timedelta(days=offset)
             if candidate.weekday() == target and candidate not in blackouts:
@@ -118,8 +127,12 @@ def resolve_all_legs(
     warnings: list[str] = []
     for competition in competitions:
         for round_ in competition.european_rounds:
-            first_date, first_blacked_out = resolve_leg_date(round_.first_leg, blackouts)
-            second_date, second_blacked_out = resolve_leg_date(round_.second_leg, blackouts)
+            first_date, first_blacked_out = resolve_leg_date(
+                round_.first_leg, blackouts, competition.matchday_weekdays
+            )
+            second_date, second_blacked_out = resolve_leg_date(
+                round_.second_leg, blackouts, competition.matchday_weekdays
+            )
             resolved[(competition.id, round_.id)] = (first_date, second_date)
             if first_blacked_out:
                 warnings.append(
@@ -268,7 +281,7 @@ def resolve_main_tournament_dates(
     warnings: list[str] = []
 
     for matchday in competition.league_phase_matchdays:
-        resolved, blacked_out = resolve_leg_date(matchday, blackouts, competition.preferred_weekday)
+        resolved, blacked_out = resolve_leg_date(matchday, blackouts, competition.matchday_weekdays)
         dated.append((f"{competition.name}: {matchday.name}", resolved))
         if blacked_out:
             warnings.append(
@@ -278,7 +291,7 @@ def resolve_main_tournament_dates(
 
     for round_ in competition.knockout_rounds:
         first_date, first_blacked_out = resolve_leg_date(
-            round_.first_leg, blackouts, competition.preferred_weekday
+            round_.first_leg, blackouts, competition.matchday_weekdays
         )
         first_label = (
             f"{competition.name}: {round_.name}"
@@ -293,7 +306,7 @@ def resolve_main_tournament_dates(
             )
         if round_.second_leg is not None:
             second_date, second_blacked_out = resolve_leg_date(
-                round_.second_leg, blackouts, competition.preferred_weekday
+                round_.second_leg, blackouts, competition.matchday_weekdays
             )
             dated.append((f"{competition.name}: {round_.name} (second leg)", second_date))
             if second_blacked_out:
@@ -404,7 +417,7 @@ def build_main_tournament_rounds_for_display(
     resolved_legs: ResolvedLegs = {}
 
     for matchday in competition.league_phase_matchdays:
-        resolved_date, _ = resolve_leg_date(matchday, blackouts, competition.preferred_weekday)
+        resolved_date, _ = resolve_leg_date(matchday, blackouts, competition.matchday_weekdays)
         resolved_legs[(competition.id, matchday.id)] = (resolved_date, resolved_date)
         rounds.append(
             EuropeanRound(
@@ -418,12 +431,12 @@ def build_main_tournament_rounds_for_display(
         )
 
     for round_ in competition.knockout_rounds:
-        first_date, _ = resolve_leg_date(round_.first_leg, blackouts, competition.preferred_weekday)
+        first_date, _ = resolve_leg_date(round_.first_leg, blackouts, competition.matchday_weekdays)
         if round_.second_leg is None:
             second_date = first_date
         else:
             second_date, _ = resolve_leg_date(
-                round_.second_leg, blackouts, competition.preferred_weekday
+                round_.second_leg, blackouts, competition.matchday_weekdays
             )
         resolved_legs[(competition.id, round_.id)] = (first_date, second_date)
         note = round_.note
@@ -506,17 +519,23 @@ def resolve_european_commitments(
 
 
 def european_conflict(
-    commitments_by_team: dict[str, list[EuropeanCommitmentDate]], team_id: str, day: date
+    commitments_by_team: dict[str, list[EuropeanCommitmentDate]],
+    team_id: str,
+    day: date,
+    *,
+    binding: bool = True,
 ) -> bool:
     """Whether `day` falls within `min_rest_days` of one of `team_id`'s
-    resolved European commitment dates.
+    resolved European commitment dates whose `binding` flag matches.
 
-    `cup_conflict`'s counterpart, used by the greedy placer to steer initial
-    placement; `EuropeanCommitmentConflict` is the authoritative check.
+    `cup_conflict`'s counterpart, used by both solvers to steer placement;
+    `EuropeanCommitmentConflict` (binding) and `EuropeanCommitmentSoftConflict`
+    (non-binding) are the authoritative checks.
     """
     return any(
         abs((day - commitment.date).days) - 1 < commitment.min_rest_days
         for commitment in commitments_by_team.get(team_id, ())
+        if commitment.binding == binding
     )
 
 

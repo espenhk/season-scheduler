@@ -50,6 +50,10 @@ teams:
 
 min_rest_days: 2
 
+# Europa League qualifying plays Thursday — see
+# champions_league_main_2026.yml's header (#112).
+matchday_weekdays: [thursday]
+
 european_rounds:
   - id: q2
     name: Second qualifying round

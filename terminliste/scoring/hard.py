@@ -447,9 +447,9 @@ class EuropeanCommitmentConflict:
     than a span covering a whole tie (#29), so a normal Thu-Sun-Thu European
     week stays legal.
 
-    Only `commitment.certain` dates count (#93): one reachable solely via a
-    mutually-exclusive cascade branch isn't a guaranteed fixture, so it lands
-    in `EuropeanCommitmentSoftConflict` as a penalty instead.
+    Only `commitment.binding` dates count (#93, #112): one reachable solely
+    via a mutually-exclusive cascade branch isn't a guaranteed fixture, so it
+    lands in `EuropeanCommitmentSoftConflict` as a penalty instead.
     """
 
     commitments_by_team: dict[str, list[EuropeanCommitmentDate]]
@@ -465,7 +465,7 @@ class EuropeanCommitmentConflict:
         for team_id, commitments in self.commitments_by_team.items():
             for match in index.by_team.get(team_id, ()):
                 for commitment in commitments:
-                    if not commitment.certain:
+                    if not commitment.binding:
                         continue
                     rest_days = abs((match.date - commitment.date).days) - 1
                     if rest_days >= commitment.min_rest_days:

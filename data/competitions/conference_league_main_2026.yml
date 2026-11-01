@@ -16,9 +16,9 @@
 # made a feasible schedule practically unreachable within `cli.py
 # generate`'s time budget.
 #
-# preferred_weekday: tuesday — see europa_league_main_2026.yml's header for
-# why this and Wednesday split the issue's "Tuesday/Wednesday" pair between
-# the two competitions rather than picking one arbitrarily for both.
+# matchday_weekdays: Thursday — see champions_league_main_2026.yml's header
+# (#112). The final is a confirmed Wednesday `forced_date`, which a
+# matchday weekday never overrides.
 #
 # verified: false — see champions_league_main_2026.yml's header for
 # sourcing and channel; the Conference League league phase only runs 6
@@ -41,7 +41,7 @@ team_count: 0
 teams: []
 
 min_rest_days: 2
-preferred_weekday: tuesday
+matchday_weekdays: [thursday]
 
 reachable_from:
   - europa_league_2026

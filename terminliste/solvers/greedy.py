@@ -37,6 +37,9 @@ _VENUE_CLASH = 1e6
 _CLUB_HOME_CLASH = 1e6
 _CUP_CONFLICT = 1e6
 _EUROPEAN_CONFLICT = 1e6
+# A non-binding European date is only a soft penalty in scoring, so placement
+# leans away from it without treating it as forbidden.
+_EUROPEAN_SOFT_CONFLICT = 30.0
 _OFF_PREFERRED_WEEKDAY = 12.0
 _DISCOURAGED_DATE = 20.0
 _CONSECUTIVE_HOME_BONUS = 40.0
@@ -251,10 +254,7 @@ def resolve_round_pins(
     clear date; a `FullRoundRequirement`'s date is fixed and can only be
     flagged.
     """
-    certain_commitments = {
-        team_id: [c for c in commitments if c.certain]
-        for team_id, commitments in (european_commitments or {}).items()
-    }
+    european_commitments = european_commitments or {}
     cup_windows = cup_windows or {}
 
     pins: dict[tuple[str, int], date] = {}
@@ -269,7 +269,7 @@ def resolve_round_pins(
             continue
         calendar = (by_competition or {}).get(plan.competition.id)
         chosen, warning = _clear_pin_date(
-            anchor, plan, calendar, cup_windows, certain_commitments, movable=True
+            anchor, plan, calendar, cup_windows, european_commitments, movable=True
         )
         pins[(plan.competition.id, final_round)] = chosen
         if warning:
@@ -285,7 +285,7 @@ def resolve_round_pins(
             plan.anchors, key=lambda r: abs((plan.anchors[r] - requirement.date).days)
         )
         _, warning = _clear_pin_date(
-            requirement.date, plan, None, cup_windows, certain_commitments, movable=False
+            requirement.date, plan, None, cup_windows, european_commitments, movable=False
         )
         pins[(plan.competition.id, round_index)] = requirement.date
         if warning:
@@ -626,10 +626,7 @@ def _placement_cost(
     ):
         cost += _CUP_CONFLICT
 
-    if european_conflict(european_commitments, fixture.home_team, day) or european_conflict(
-        european_commitments, fixture.away_team, day
-    ):
-        cost += _EUROPEAN_CONFLICT
+    cost += european_cost(european_commitments, fixture, day)
 
     if (venue, day) in state.venue_dates:
         cost += _VENUE_CLASH
@@ -651,3 +648,16 @@ def _placement_cost(
 
     cost += _DRIFT_FROM_ANCHOR * abs((day - anchor).days)
     return cost
+
+
+def european_cost(
+    european_commitments: dict[str, list[EuropeanCommitmentDate]], fixture: Fixture, day: date
+) -> float:
+    """Placement cost of `fixture` on `day` from either team's European dates:
+    forbidding for a binding one, a nudge for a non-binding one (#112)."""
+    teams = (fixture.home_team, fixture.away_team)
+    if any(european_conflict(european_commitments, team, day) for team in teams):
+        return _EUROPEAN_CONFLICT
+    if any(european_conflict(european_commitments, team, day, binding=False) for team in teams):
+        return _EUROPEAN_SOFT_CONFLICT
+    return 0.0

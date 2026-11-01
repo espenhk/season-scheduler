@@ -20,13 +20,9 @@
 # schedule even at the full 180s default budget in practice — see
 # README.md's "Main tournaments" section.
 #
-# preferred_weekday: wednesday, per issue #79's "Europa League/Conference
-# League on Tuesday/Wednesday" — this project's own qualifiers all block
-# specific leg dates rather than a whole weekday, so there was no existing
-# precedent to match; Wednesday here and Tuesday for
-# conference_league_main_2026.yml simply split the issue's given pair
-# between the two, and either can be swapped in the data if the real
-# broadcast calendar (unreachable from this sandbox) turns out to disagree.
+# matchday_weekdays: Thursday — see champions_league_main_2026.yml's header
+# (#112). The final is a confirmed Wednesday `forced_date`, which a
+# matchday weekday never overrides.
 #
 # verified: false — see champions_league_main_2026.yml's header for
 # sourcing and channel; the Europa League final's venue and date come from
@@ -48,7 +44,7 @@ team_count: 0
 teams: []
 
 min_rest_days: 2
-preferred_weekday: wednesday
+matchday_weekdays: [thursday]
 
 reachable_from:
   - europa_league_2026

@@ -23,10 +23,10 @@
 # is a deliberate over-approximation, not a mistake: which teams finish
 # where isn't known ahead of time either.
 #
-# preferred_weekday: thursday, per issue #79's "follow the desired matchday
-# approach of the qualifiers: Champions League on Thursdays" — this is the
-# issue's own convention, not independently re-verified against UEFA's real
-# broadcast calendar (unreachable from this sandbox; see README.md).
+# matchday_weekdays (#112): Champions League nights are Tuesday and
+# Wednesday; Europa and Conference League share Thursday. This is UEFA's
+# long-standing weekday split, also how the qualifying rounds here are
+# dated; a window resolves to its first Tuesday, then Wednesday.
 #
 # verified: false — league phase and knockout dates assembled via web
 # search (UEFA.com's 2026-27 Champions League "teams, dates, draws, format,
@@ -56,7 +56,7 @@ team_count: 0
 teams: []
 
 min_rest_days: 2
-preferred_weekday: thursday
+matchday_weekdays: [tuesday, wednesday]
 
 # Every entrant of champions_league_2026's qualifying rounds — Bodø/Glimt
 # and Viking — is reachable here. See schema.py's `reachable_from`

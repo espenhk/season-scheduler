@@ -354,6 +354,9 @@ class Competition(BaseModel):
     end: date | None = None
 
     preferred_weekday: Weekday = "sunday"
+    # A European competition's real match nights, most preferred first: a
+    # windowed leg resolves to the first of these it contains (#112).
+    matchday_weekdays: list[Weekday] = Field(default_factory=list)
     # Days strictly between two of a team's matchdays, counting neither:
     # Thursday to Sunday is two.
     min_rest_days: int = 2
