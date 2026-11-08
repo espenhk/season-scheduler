@@ -11,6 +11,7 @@ import json
 import time
 
 import pytest
+
 from terminliste.refdata import cache
 from terminliste.refdata.client import FetchError, TeamRecord, fetch_teams
 from terminliste.refdata.refresh import FieldDiff, refresh_competition

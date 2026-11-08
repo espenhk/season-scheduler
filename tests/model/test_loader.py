@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+
 from terminliste.model.loader import validate_world
 from terminliste.model.schema import CupRound, FixedRequirement
 
@@ -85,6 +86,7 @@ def test_wrong_gender_team_in_competition_is_caught():
 
 def test_hard_requirement_on_a_blackout_date_is_caught():
     import factories as f
+
     from terminliste.model.loader import _validate_fixed_requirements
 
     v = f.venue("v1")
@@ -110,6 +112,7 @@ def test_hard_requirement_on_a_blackout_date_is_caught():
 
 def test_hard_requirement_inside_a_global_blackout_range_is_caught():
     import factories as f
+
     from terminliste.model.loader import _validate_fixed_requirements
     from terminliste.model.schema import GlobalBlackoutRange
 
@@ -151,6 +154,7 @@ def test_venue_blackout_range_end_before_start_is_rejected_by_the_schema():
 
 def test_venue_blackout_range_referencing_unknown_venue_is_caught():
     import factories as f
+
     from terminliste.model.loader import validate_world
     from terminliste.model.schema import VenueBlackoutRange
 
@@ -174,6 +178,7 @@ def test_venue_blackout_range_referencing_unknown_venue_is_caught():
 
 def test_season_shorter_than_required_rounds_is_caught():
     import factories as f
+
     from terminliste.model.loader import _validate_calendar_capacity
 
     v = f.venue("v1")
@@ -737,6 +742,7 @@ def test_calendar_capacity_uses_the_competitions_own_narrower_window():
     competition whose own window is narrower — e.g. Toppserien's real 2026
     window is a season within the season."""
     import factories as f
+
     from terminliste.model.loader import _validate_calendar_capacity
 
     v = f.venue("v1")
@@ -850,6 +856,7 @@ def test_capacity_check_uses_a_tight_lower_bound_not_rounds_times_rest():
     clean: the first round needs no rest before it, so only the gaps between
     rounds count."""
     import factories as f
+
     from terminliste.model.loader import _validate_calendar_capacity
 
     v = f.venue("v1")

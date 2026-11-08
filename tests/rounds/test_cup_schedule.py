@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 import factories as f
 import pytest
+
 from terminliste.model.schema import Competition, CupRound, DatedNote
 from terminliste.rounds.cup_schedule import (
     CupSchedulingError,

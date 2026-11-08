@@ -6,6 +6,7 @@ from datetime import date
 
 import factories as f
 import pytest
+
 from terminliste.rounds.european_schedule import (
     EuropeanCascadeError,
     resolve_all_legs,

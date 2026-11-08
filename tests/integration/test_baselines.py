@@ -14,8 +14,9 @@ import sys
 from pathlib import Path
 
 import pytest
-import terminliste.baseline as baseline_module
 import yaml
+
+import terminliste.baseline as baseline_module
 from terminliste.baseline import (
     BaselineError,
     discover_baselines,

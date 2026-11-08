@@ -12,6 +12,7 @@ from datetime import date, timedelta
 
 import factories as f
 import pytest
+
 from terminliste.model.travel import ApiTravelModel
 from terminliste.rounds.cup_schedule import schedule_cups
 from terminliste.scoring.base import EvalContext

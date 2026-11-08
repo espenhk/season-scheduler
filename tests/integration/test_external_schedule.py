@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from terminliste.external_schedule import ExternalScheduleError, load_external_schedule
 from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.registry import build_constraints

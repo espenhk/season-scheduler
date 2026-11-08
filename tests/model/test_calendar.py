@@ -131,6 +131,7 @@ def test_anchor_dates_falls_back_to_midweek_when_short_on_preferred_days():
 
 def test_global_blackout_range_blocks_every_day_inside_it():
     import factories as f
+
     from terminliste.model.schema import GlobalBlackoutRange
 
     season = f.season(
@@ -150,6 +151,7 @@ def test_global_blackout_range_blocks_every_day_inside_it():
 
 def test_hard_fixed_requirement_overrides_a_global_blackout_range():
     import factories as f
+
     from terminliste.model.schema import FixedRequirement, GlobalBlackoutRange
 
     clash_date = date(2026, 6, 7)
@@ -170,6 +172,7 @@ def test_hard_fixed_requirement_overrides_a_global_blackout_range():
 
 def test_venue_blackout_range_blocks_only_that_venue_across_every_day():
     import factories as f
+
     from terminliste.model.schema import VenueBlackoutRange
 
     season = f.season(
@@ -190,6 +193,7 @@ def test_venue_blackout_range_blocks_only_that_venue_across_every_day():
 
 def _scoped_range_setup(**scope):
     import factories as f
+
     from terminliste.model.schema import GlobalBlackoutRange
 
     men = f.competition("men_league", [], gender="men")

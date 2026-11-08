@@ -8,7 +8,7 @@ on:
     inputs:
       suites:
         description: >
-          Space-separated list of folders under football-scheduler/tests/
+          Space-separated list of folders under tests/
           to run, e.g. "solvers integration". Use "." to run everything.
         required: true
         type: string
@@ -48,6 +48,6 @@ jobs:
         run: |
           paths=""
           for suite in $SUITES; do
-            paths="$paths football-scheduler/tests/$suite"
+            paths="$paths tests/$suite"
           done
           poetry run python -m pytest $paths -v

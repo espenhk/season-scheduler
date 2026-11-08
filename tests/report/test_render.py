@@ -10,6 +10,7 @@ from datetime import date
 
 import factories as f
 import pytest
+
 from terminliste.report.render import (
     _club_headlines,
     _cup_entries,

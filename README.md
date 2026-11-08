@@ -6,22 +6,22 @@ result as a browsable HTML page. Built around Eliteserien (men) and
 Toppserien (women) 2026 — six clubs field a team in both, which is the
 coupling this project exists to handle well.
 
-See `/CLAUDE.md` at the repo root for how this project fits alongside the
-others sharing this Poetry environment.
+The latest generated season report is published at
+<https://espenhk.github.io/season-scheduler/>, rebuilt by CI on every merge to
+`main` (see `scripts/publish_web.py`).
 
 ## Quickstart
 
 ```bash
 poetry install                     # or: pip install pydantic pyyaml jinja2 pytest
 
-cd football-scheduler
 python cli.py validate                              # data integrity, no solving
 python cli.py generate --season 2026                 # solve, write schedules/2026.html
 python cli.py score my_schedule.csv --season 2026     # score a real/proposed schedule
 python cli.py refresh-reference-data                  # diff data/*.yml against a live API
 python cli.py refresh-travel-times                    # fetch real ground travel times
 python scripts/refresh_baselines.py                   # re-score the committed real-schedule baselines
-python -m pytest ..                                   # -m pytest tests/ from the repo root
+python -m pytest tests/
 ```
 
 `generate` defaults to the local-search solver (no extra dependencies).

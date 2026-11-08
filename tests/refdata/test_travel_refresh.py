@@ -13,6 +13,7 @@ import urllib.error
 
 import factories as f
 import pytest
+
 from terminliste.refdata import cache
 from terminliste.refdata.travel_client import (
     FetchError,
