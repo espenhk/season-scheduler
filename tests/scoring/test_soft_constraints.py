@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 import factories as f
+
 from terminliste.model.schema import TvTimeSpread as TvTimeSpreadConfig
 from terminliste.rounds.european_schedule import EuropeanCommitmentDate
 from terminliste.scoring.base import EvalContext, evaluate

@@ -1,4 +1,4 @@
-# Path -> suites mapping is documented in football-scheduler/tests/README.md.
+# Path -> suites mapping is documented in tests/README.md.
 name: football-scheduler tests (rounds)
 
 permissions:
@@ -9,11 +9,11 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
     paths:
-      - "football-scheduler/terminliste/rounds/round_robin.py"
-      - "football-scheduler/terminliste/rounds/kickoff.py"
-      - "football-scheduler/tests/rounds/**"
-      - "football-scheduler/tests/solvers/**"
-      - "football-scheduler/tests/integration/**"
+      - "terminliste/rounds/round_robin.py"
+      - "terminliste/rounds/kickoff.py"
+      - "tests/rounds/**"
+      - "tests/solvers/**"
+      - "tests/integration/**"
       - ".github/workflows/fs-tests-rounds.yml"
 
 jobs:

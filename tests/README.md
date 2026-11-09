@@ -43,7 +43,7 @@ tests having run first.
 | `cli.py` | `integration` — nothing under `tests/` imports `cli.py` directly; this is a placeholder so the path isn't silently untested, not real coverage |
 | `data/**` | **all** |
 | `baselines/**` | `integration` |
-| `tests/conftest.py`, `tests/factories.py`, `football-scheduler/conftest.py` | **all** |
+| `tests/conftest.py`, `tests/factories.py`, `conftest.py` (repo root) | **all** |
 | `pyproject.toml`, `poetry.lock` | **all** |
 
 `model/schema.py`, `model/loader.py`, `data/**`, and `tests/conftest.py`/

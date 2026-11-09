@@ -1,4 +1,4 @@
-# Path -> suites mapping is documented in football-scheduler/tests/README.md.
+# Path -> suites mapping is documented in tests/README.md.
 name: football-scheduler tests (all)
 
 permissions:
@@ -9,13 +9,13 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
     paths:
-      - "football-scheduler/terminliste/model/**"
-      - "football-scheduler/terminliste/rounds/cup_schedule.py"
-      - "football-scheduler/terminliste/rounds/european_schedule.py"
-      - "football-scheduler/data/**"
-      - "football-scheduler/tests/conftest.py"
-      - "football-scheduler/tests/factories.py"
-      - "football-scheduler/conftest.py"
+      - "terminliste/model/**"
+      - "terminliste/rounds/cup_schedule.py"
+      - "terminliste/rounds/european_schedule.py"
+      - "data/**"
+      - "tests/conftest.py"
+      - "tests/factories.py"
+      - "conftest.py"
       - "pyproject.toml"
       - "poetry.lock"
       - ".github/workflows/football-scheduler-tests-reusable.yml"

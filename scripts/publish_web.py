@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Generate the season schedule report and publish it as this project's mobile POC.
+"""Build the season schedule report into site/ for the GitHub Pages deploy.
 
-    python football-scheduler/scripts/publish_web.py [--season 2026] [--solver local]
+    python scripts/publish_web.py [--season 2026] [--solver local]
 
-Runs the same solve-and-render path as `cli.py generate`, then copies the
-resulting self-contained HTML report to docs/football-scheduler/index.html —
-the path GitHub Pages serves (see docs/README.md for the convention).
+Runs the same solve-and-render path as `cli.py generate`, then renames the
+resulting self-contained HTML report to site/index.html. site/ is gitignored;
+the publish-pages workflow uploads it as the Pages artifact.
 """
 
 from __future__ import annotations
@@ -16,8 +16,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = PROJECT_ROOT.parent
-DOCS_DIR = REPO_ROOT / "docs" / "football-scheduler"
+SITE_DIR = PROJECT_ROOT / "site"
 
 
 def main() -> int:
@@ -28,7 +27,7 @@ def main() -> int:
     parser.add_argument("--time-budget", type=float, default=60.0, help="seconds")
     args = parser.parse_args()
 
-    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    SITE_DIR.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [
             sys.executable,
@@ -43,16 +42,16 @@ def main() -> int:
             "--time-budget",
             str(args.time_budget),
             "--out",
-            str(DOCS_DIR),
+            str(SITE_DIR),
         ],
         cwd=PROJECT_ROOT,
         check=True,
     )
 
-    generated_html = DOCS_DIR / f"{args.season}.html"
-    index_html = DOCS_DIR / "index.html"
+    generated_html = SITE_DIR / f"{args.season}.html"
+    index_html = SITE_DIR / "index.html"
     generated_html.replace(index_html)
-    print(f"\nPublished {index_html} (kept {DOCS_DIR / f'{args.season}.json'} alongside it)")
+    print(f"\nPublished {index_html} (kept {SITE_DIR / f'{args.season}.json'} alongside it)")
     return 0
 
 

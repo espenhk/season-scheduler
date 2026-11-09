@@ -14,8 +14,8 @@ import sys
 from pathlib import Path
 
 import pytest
-import terminliste.baseline as baseline_module
 import yaml
+
 from terminliste.baseline import (
     BaselineError,
     discover_baselines,
@@ -209,7 +209,7 @@ def test_cup_scheduling_failure_is_wrapped_as_baseline_error(world, sources, mon
     def _boom(*args, **kwargs):
         raise CupSchedulingError("no room for round 1")
 
-    monkeypatch.setattr(baseline_module, "schedule_cups", _boom)
+    monkeypatch.setattr("terminliste.baseline.schedule_cups", _boom)
     with pytest.raises(BaselineError, match="cup scheduling failed"):
         evaluate_baseline(sources[0], world)
 

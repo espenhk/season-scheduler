@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import factories as f
+
 from terminliste.model.calendar import build_calendar, calendars_by_competition
 from terminliste.rounds.cup_schedule import cup_conflict
 from terminliste.rounds.european_schedule import (

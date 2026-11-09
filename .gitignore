@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+.env
+.vscode/
+.idea/
+
+# Claude Code: ignore everything local/generated, keep shareable definitions tracked
+.claude/*
+!.claude/commands/
+!.claude/agents/
+!.claude/skills/
+
+# Generated season/score reports, regenerate with cli.py
+schedules/
+
+# Pages build output from scripts/publish_web.py, deployed by CI only
+site/
+
+# Cached API responses from `cli.py refresh-reference-data` and `cli.py refresh-travel-times`
+data/.refdata_cache/

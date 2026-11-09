@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import date
 
 import factories as f
+
 from terminliste.rounds.european_schedule import EuropeanCommitmentDate
 from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.hard import (

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 import factories as f
+
 from terminliste.model.schema import FixedRequirement, TvTimeSpread
 from terminliste.rounds.kickoff import assign_kickoff_times, final_round_index
 

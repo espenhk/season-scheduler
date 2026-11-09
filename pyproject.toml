@@ -1,0 +1,38 @@
+[tool.poetry]
+name = "season-scheduler"
+version = "0.1.0"
+description = "Football league season scheduler (terminliste) for Eliteserien and Toppserien"
+authors = []
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+[tool.poetry.group.football-scheduler.dependencies]
+pydantic = ">=2.5"
+pyyaml = ">=6.0"
+jinja2 = ">=3.1"
+
+[tool.poetry.group.football-scheduler-test.dependencies]
+pytest = ">=8.0"
+
+[tool.poetry.group.football-scheduler-cpsat]
+optional = true
+
+[tool.poetry.group.football-scheduler-cpsat.dependencies]
+ortools = ">=9.9"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]  # pycodestyle, pyflakes, isort, pyupgrade, bugbear
+ignore = [
+    "E501",  # line-too-long: no formatter yet; not worth a wholesale reformat
+    "B017",  # assert-raises-exception: tests assert bare Exception on purpose
+]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

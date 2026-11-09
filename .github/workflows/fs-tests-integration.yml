@@ -1,4 +1,4 @@
-# Path -> suites mapping is documented in football-scheduler/tests/README.md.
+# Path -> suites mapping is documented in tests/README.md.
 name: football-scheduler tests (integration)
 
 permissions:
@@ -9,13 +9,13 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
     paths:
-      - "football-scheduler/terminliste/external_schedule.py"
-      - "football-scheduler/terminliste/baseline.py"
-      - "football-scheduler/cli.py"
-      - "football-scheduler/baselines/**"
-      - "football-scheduler/scripts/**"
-      - "football-scheduler/tests/scripts/**"
-      - "football-scheduler/tests/integration/**"
+      - "terminliste/external_schedule.py"
+      - "terminliste/baseline.py"
+      - "cli.py"
+      - "baselines/**"
+      - "scripts/**"
+      - "tests/scripts/**"
+      - "tests/integration/**"
       - ".github/workflows/fs-tests-integration.yml"
 
 jobs:

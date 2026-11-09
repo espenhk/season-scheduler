@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+
 from terminliste.model.loader import load_world
 from terminliste.model.travel import ApiTravelModel
 
