@@ -56,7 +56,7 @@ gitignored `data/.refdata_cache/`, never to `data/*.yml`. See
   outside Norway), not factual ones. `cli.py refresh-reference-data` is a
   real (if unproven, in this sandbox) path to closing this out — see below.
 - **`terminliste/model/`** — Pydantic schema + loader (`World`), the season
-  calendar (blackout resolution, anchor-date selection), and the travel-time
+  calendar (blackout resolution), typed round slots, and the travel-time
   model.
 - **`terminliste/rounds/`** — the circle-method round-robin generator (pure
   combinatorics, no dates: who plays whom, home or away, is decided here and
@@ -187,8 +187,8 @@ another date. When no such date exists the round settles for the least bad
 one and warns rather than failing. Each resolved date becomes a `CupDay` in
 the season frame (`terminliste/frame.py`): `cup_week` when midweek,
 `cup_weekend` when it falls Fri-Mon, queryable per gender, competition and
-team. `validate` warns when a forced date sits in a UEFA week. League anchors
-don't yet skip `cup_weekend` dates; that comes with slot planning. See
+team. `validate` warns when a forced date sits in a UEFA week. Slot planning
+skips any league weekend holding a `cup_weekend` day of the league's gender. See
 `data/competitions/cup_men_2027.yml` and `cup_women_2027.yml` for the
 2026-27 Norwegian Cup, and `cup_men_2026.yml` / `cup_women_2026.yml` for the
 spring 2026 rounds of the previous edition.
@@ -209,9 +209,28 @@ league solver treats the result as fixed input. `CupRoundConflict` then keeps le
 rest days clear of each team's own resolved cup dates; CP-SAT additionally excludes a
 conflicting date from a fixture's candidate set outright, rather than
 modelling it as a constraint to satisfy after the fact, since its fixtures
-each have a small, fixed candidate window around a round anchor chosen
-without cup awareness and would otherwise have no way to route around a
-conflict discovered too late.
+each have a small, fixed candidate window around a round anchor and would
+otherwise have no way to route around a conflict discovered too late.
+
+### Round slots (Stage 2/3)
+
+Each league's rounds are planned into typed slots before any match is dated
+(`terminliste/model/slots.py`, `terminliste/slot_planner.py`, #6): a `weekend`
+slot spans Fri-Mon, and `holiday` / `midweek` slots are single days declared
+under `extra_round_slots` in the season file (Easter Monday, Ascension Day,
+Whit Monday, plus placeholder midweeks). Blackouts, the World Cup break and
+FIFA windows remove slots per league; a weekend holding a cup day of the
+league's gender is dropped. A small exact DP then picks one slot per round:
+a full-round requirement date must be covered, a clash (a team with a binding
+cup or UEFA date too close to the slot's default day) costs far more than
+anything else, so the plan is clear wherever a clear slot exists and
+otherwise takes the least-clashing one and warns, and the rest spreads rounds
+evenly over the weeks that can host one. A slot's default day is the day
+fewest teams clash on, nearest the league's preferred weekday. The solvers
+take their round anchors from the plan; `validate` and the report list slots
+against rounds and the size of the search space, and `validate` fails when a
+league has fewer usable slots than rounds. Matches may still drift up to
+`match_window_days` from the anchor until days are confined to the slot.
 
 ### European qualifying cascade
 

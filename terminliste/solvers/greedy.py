@@ -17,17 +17,19 @@ import random
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from ..frame import SeasonFrame
 from ..model.calendar import (
     SeasonCalendar,
-    anchor_dates,
     build_calendar,
     calendars_by_competition,
 )
 from ..model.loader import World
 from ..model.schema import WEEKDAYS, Competition, Fixture, Match, Season
+from ..model.slots import RoundSlot
 from ..rounds.cup_schedule import CupSchedule, cup_conflict, resolved_cup_windows
 from ..rounds.european_schedule import EuropeanCommitmentDate, european_conflict
 from ..rounds.round_robin import generate_fixtures
+from ..slot_planner import SlotPlan, plan_slots
 
 # Local-heuristic weights. Deliberately crude — the real scoring lives in
 # terminliste/scoring/, and these only have to rank candidate dates sensibly.
@@ -79,6 +81,8 @@ class PlannedCompetition:
     competition: Competition
     fixtures: list[Fixture]
     anchors: dict[int, date]
+    # Each round's planned slot, for the day-within-slot step (#7).
+    slots: dict[int, RoundSlot] = field(default_factory=dict)
 
 
 def plan_competitions(
@@ -87,39 +91,35 @@ def plan_competitions(
     competitions: list[Competition],
     calendar: SeasonCalendar,
     rng: random.Random | None = None,
+    slot_plans: dict[str, SlotPlan] | None = None,
 ) -> list[PlannedCompetition]:
-    """Generate fixtures and pick a target date per round, per competition.
+    """Generate fixtures and take each round's slot and anchor from the plan.
 
     An `rng` shuffles the team order before the circle method runs — the only
     lever producing structurally different tournaments rather than the same
     fixture list with nudged dates. Without it every restart converges on
     near-identical schedules and the options offered at the end aren't a real
     choice.
+
+    `slot_plans` come from the season frame; without them the slots are
+    planned against blackouts alone. Raises `SlotPlanningError` (a
+    `ValueError`) when a league has fewer slots than rounds.
     """
+    if slot_plans is None:
+        slot_plans = plan_slots(world, season, competitions, calendar)
     planned: list[PlannedCompetition] = []
-    by_competition = calendars_by_competition(calendar, competitions)
     for competition in competitions:
         teams = list(competition.teams)
         if rng is not None:
             rng.shuffle(teams)
         fixtures = generate_fixtures(competition.id, teams, competition.rounds_per_pairing)
-        round_indexes = sorted({f.round_index for f in fixtures})
-        dates = anchor_dates(
-            by_competition[competition.id],
-            competition.preferred_weekday,
-            count=len(round_indexes),
-            min_gap_days=competition.min_gap_days,
-        )
-        if len(dates) < len(round_indexes):
-            raise ValueError(
-                f"{competition.id}: season has room for only {len(dates)} of "
-                f"{len(round_indexes)} rounds"
-            )
+        slot_plan = slot_plans[competition.id]
         planned.append(
             PlannedCompetition(
                 competition=competition,
                 fixtures=fixtures,
-                anchors=dict(zip(round_indexes, dates, strict=False)),
+                anchors=slot_plan.anchors,
+                slots=dict(enumerate(slot_plan.chosen)),
             )
         )
     return planned
@@ -427,6 +427,7 @@ def build_initial_schedule(
     align: bool = True,
     cup_schedules: list[CupSchedule] | None = None,
     european_commitments: dict[str, list[EuropeanCommitmentDate]] | None = None,
+    slot_plans: dict[str, SlotPlan] | None = None,
 ) -> tuple[list[Match], set[str], list[str]]:
     """Return a complete schedule, the keys of fixtures pinned to a date, and
     any warnings from resolving those pins.
@@ -442,11 +443,17 @@ def build_initial_schedule(
     team's resolved commitment dates up front, so the local search starts from
     a schedule that mostly already respects `CupRoundConflict` and
     `EuropeanCommitmentConflict`.
+
+    `slot_plans` fix which slot each round sits in; without them they are
+    planned from the same cups and commitments.
     """
     rng = random.Random(seed)
     calendar = calendar or build_calendar(world, season)
     by_competition = calendars_by_competition(calendar, competitions)
-    planned = plan_competitions(world, season, competitions, calendar, rng)
+    if slot_plans is None:
+        frame = SeasonFrame.from_resolved(world, cup_schedules or [], european_commitments or {})
+        slot_plans = plan_slots(world, season, competitions, calendar, frame)
+    planned = plan_competitions(world, season, competitions, calendar, rng, slot_plans)
     if align:
         align_dual_clubs(world, planned)
     cup_windows = resolved_cup_windows(cup_schedules or [])

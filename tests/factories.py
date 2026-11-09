@@ -308,6 +308,7 @@ def season(
     full_round_requirements: list[FullRoundRequirement] | None = None,
     rivalry_fixtures: list[RivalryFixture] | None = None,
     discouraged_dates=None,
+    extra_round_slots=None,
     start: date = date(2026, 1, 1),
     end: date = date(2026, 12, 31),
     year: int = 2026,
@@ -328,6 +329,7 @@ def season(
         full_round_requirements=full_round_requirements or [],
         rivalry_fixtures=rivalry_fixtures or [],
         discouraged_dates=discouraged_dates or [],
+        extra_round_slots=extra_round_slots or [],
     )
 
 

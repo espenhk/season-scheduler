@@ -37,6 +37,7 @@ from datetime import date, timedelta
 from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
 from ..model.loader import World
 from ..model.schema import Competition, Match
+from ..model.slots import RoundSlot
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import (
     HARD_PENALTY,
@@ -45,12 +46,14 @@ from ..scoring.base import (
     ScheduleIndex,
     evaluate,
 )
+from ..slot_planner import SlotPlan
 from .base import (
     Candidate,
     ProgressUpdate,
     SearchStats,
     SolveRequest,
     SolverResult,
+    resolve_slot_plans,
     select_diverse,
 )
 from .greedy import build_initial_schedule
@@ -75,6 +78,9 @@ class WorkingMatch:
     # Never mutated by a move — kickoff is assigned once dates are final, not
     # searched. Here only so constraints like `FinalRoundSameSlot` can read it.
     kickoff_time: str | None = None
+    # Default day of the slot this match's round currently sits in. Moves of
+    # whole rounds rewrite it, so it follows the round rather than its index.
+    anchor: date | None = None
 
     @property
     def key(self) -> str:
@@ -93,7 +99,7 @@ class WorkingMatch:
 
 
 # A snapshot of one match's mutable state, for undo.
-_Snapshot = tuple[int, str, str, date, str]
+_Snapshot = tuple[int, str, str, date, str, date | None]
 
 
 class LocalSearchScheduler:
@@ -131,6 +137,8 @@ class LocalSearchScheduler:
         started = time.perf_counter()
         calendar = build_calendar(request.world, request.season)
         by_competition = calendars_by_competition(calendar, request.competitions)
+        slot_plans = resolve_slot_plans(request, calendar)
+        request = replace(request, slot_plans=slot_plans)
         explore_budget_s = request.time_budget_s * (1 - self.polish_fraction)
         polish_budget_s = request.time_budget_s * self.polish_fraction
         budget_per_restart = explore_budget_s / max(1, self.restarts)
@@ -156,6 +164,7 @@ class LocalSearchScheduler:
                     calendar,
                     cup_schedules=request.cup_schedules,
                     european_commitments=request.european_commitments,
+                    slot_plans=slot_plans,
                 )
             except ValueError as exc:
                 notes.append(f"restart {restart}: {exc}")
@@ -173,6 +182,7 @@ class LocalSearchScheduler:
                     round_index=m.round_index,
                     date=m.date,
                     venue=m.venue,
+                    anchor=slot_plans[m.competition_id].slot_of(m.round_index).default_day,
                 )
                 for m in initial
             ]
@@ -205,6 +215,7 @@ class LocalSearchScheduler:
                     score=score,
                     label=f"Candidate (seed {seed})",
                     seed=seed,
+                    round_slots=_round_slots(best, slot_plans),
                 )
             )
             restart_states.append((best, pinned))
@@ -243,7 +254,54 @@ class LocalSearchScheduler:
             elapsed_s=time.perf_counter() - started,
             notes=notes,
             search_stats=overall_stats,
+            slot_plans=slot_plans,
         )
+
+
+def _round_slots(
+    matches: list[WorkingMatch], slot_plans: dict[str, SlotPlan]
+) -> dict[tuple[str, int], RoundSlot]:
+    """Where each round ended up: round-swap moves reorder rounds across slots."""
+    by_anchor = {
+        (competition_id, slot.default_day): slot
+        for competition_id, plan in slot_plans.items()
+        for slot in plan.chosen
+    }
+    return {
+        (m.competition_id, m.round_index): by_anchor[(m.competition_id, m.anchor)]
+        for m in matches
+        if (m.competition_id, m.anchor) in by_anchor
+    }
+
+
+def _assign_missing_anchors(
+    matches: list[WorkingMatch], slot_plans: dict[str, SlotPlan] | None
+) -> None:
+    """Give matches with no anchor their round's slot, read off the dates.
+
+    Only for states built outside `solve`, which sets anchors exactly. Without
+    plans the anchor is the earliest date the round occupies.
+    """
+    dates_by_round: dict[tuple[str, int], list[date]] = {}
+    for match in matches:
+        if match.anchor is None:
+            dates_by_round.setdefault((match.competition_id, match.round_index), []).append(
+                match.date
+            )
+    anchors: dict[tuple[str, int], date] = {}
+    for (competition_id, round_index), dates in dates_by_round.items():
+        earliest = min(dates)
+        plan = (slot_plans or {}).get(competition_id)
+        if plan is None:
+            anchors[(competition_id, round_index)] = earliest
+        else:
+            anchors[(competition_id, round_index)] = min(
+                (slot.default_day for slot in plan.chosen),
+                key=lambda day: abs((day - earliest).days),
+            )
+    for match in matches:
+        if match.anchor is None:
+            match.anchor = anchors[(match.competition_id, match.round_index)]
 
 
 def _polish_candidates(
@@ -299,6 +357,7 @@ def _polish_candidates(
         if score.sort_key < candidate.score.sort_key:
             candidate.matches = matches
             candidate.score = score
+            candidate.round_slots = _round_slots(polished, request.slot_plans or {})
             improved += 1
 
     if improved:
@@ -354,6 +413,7 @@ def _anneal(
 ) -> tuple[list[WorkingMatch], int, SearchStats]:
     ctx = request.ctx
     constraints = request.constraints
+    _assign_missing_anchors(matches, request.slot_plans)
 
     # Cooling follows iteration progress rather than the clock, so the draws
     # taken from the seeded RNG depend only on the seed and the calibrated
@@ -460,16 +520,21 @@ def _iterations_per_second(
 
 
 def _capture_all(matches: list[WorkingMatch]) -> list[_Snapshot]:
-    return [(i, m.home_team, m.away_team, m.date, m.venue) for i, m in enumerate(matches)]
+    return [_snap(i, m) for i, m in enumerate(matches)]
+
+
+def _snap(index: int, match: WorkingMatch) -> _Snapshot:
+    return (index, match.home_team, match.away_team, match.date, match.venue, match.anchor)
 
 
 def _restore(matches: list[WorkingMatch], snapshot: list[_Snapshot]) -> None:
-    for index, home, away, day, venue in snapshot:
+    for index, home, away, day, venue, anchor in snapshot:
         match = matches[index]
         match.home_team = home
         match.away_team = away
         match.date = day
         match.venue = venue
+        match.anchor = anchor
 
 
 class _MoveSet:
@@ -494,29 +559,16 @@ class _MoveSet:
         self._pinned_indexes = {i for i, m in enumerate(matches) if m.key in pinned}
         self._movable = [i for i in range(len(matches)) if i not in self._pinned_indexes]
 
-        # Round anchor = the earliest date the round occupies, used as the
-        # centre of each match's allowed window.
-        self._anchors: dict[tuple[str, int], date] = {}
-        for match in matches:
-            key = (match.competition_id, match.round_index)
-            current = self._anchors.get(key)
-            if current is None or match.date < current:
-                self._anchors[key] = match.date
-
-        self._rounds_by_leg: dict[tuple[str, int], list[int]] = {}
-        for (competition_id, round_index), _ in self._anchors.items():
-            leg = next(
-                m.leg
-                for m in matches
-                if m.competition_id == competition_id and m.round_index == round_index
-            )
-            self._rounds_by_leg.setdefault((competition_id, leg), []).append(round_index)
-
         self._indexes_by_round: dict[tuple[str, int], list[int]] = {}
         for i, match in enumerate(matches):
             self._indexes_by_round.setdefault(
                 (match.competition_id, match.round_index), []
             ).append(i)
+
+        self._rounds_by_leg: dict[tuple[str, int], list[int]] = {}
+        for (competition_id, round_index), indexes in self._indexes_by_round.items():
+            leg = matches[indexes[0]].leg
+            self._rounds_by_leg.setdefault((competition_id, leg), []).append(round_index)
 
         self._indexes_by_competition: dict[str, list[int]] = {}
         for i, match in enumerate(matches):
@@ -557,14 +609,16 @@ class _MoveSet:
         if competition is None:
             return None
 
-        anchor = self._anchors[(match.competition_id, match.round_index)]
+        anchor = match.anchor
+        if anchor is None:
+            return None
         calendar = self._calendars[match.competition_id]
         window = calendar.window(anchor, competition.match_window_days, match.venue)
         window = [d for d in window if d != match.date]
         if not window:
             return None
 
-        snapshot = [(index, match.home_team, match.away_team, match.date, match.venue)]
+        snapshot = [_snap(index, match)]
         match.date = rng.choice(window)
         return snapshot
 
@@ -578,25 +632,28 @@ class _MoveSet:
         rounds = self._rounds_by_leg[(competition_id, leg)]
         round_a, round_b = rng.sample(rounds, 2)
 
-        anchor_a = self._anchors[(competition_id, round_a)]
-        anchor_b = self._anchors[(competition_id, round_b)]
+        indexes_a = self._indexes_by_round[(competition_id, round_a)]
+        indexes_b = self._indexes_by_round[(competition_id, round_b)]
+        anchor_a = self._matches[indexes_a[0]].anchor
+        anchor_b = self._matches[indexes_b[0]].anchor
+        if anchor_a is None or anchor_b is None:
+            return None
         offset = (anchor_b - anchor_a).days
         if offset == 0:
             return None
 
         snapshot: list[_Snapshot] = []
-        for round_index, shift in ((round_a, offset), (round_b, -offset)):
-            for index in self._indexes_by_round[(competition_id, round_index)]:
+        for indexes, shift, new_anchor in ((indexes_a, offset, anchor_b), (indexes_b, -offset, anchor_a)):
+            for index in indexes:
                 match = self._matches[index]
                 if index in self._pinned_indexes:
                     # A pinned match anchors its round; moving the round would
                     # break the requirement it satisfies.
                     return self._abort(snapshot)
-                snapshot.append((index, match.home_team, match.away_team, match.date, match.venue))
+                snapshot.append(_snap(index, match))
                 match.date = match.date + timedelta(days=shift)
+                match.anchor = new_anchor
 
-        self._anchors[(competition_id, round_a)] = anchor_b
-        self._anchors[(competition_id, round_b)] = anchor_a
         return snapshot
 
     def _abort(self, snapshot: list[_Snapshot]) -> None:
@@ -621,8 +678,8 @@ class _MoveSet:
         mirror = self._matches[mirror_index]
 
         snapshot = [
-            (index, match.home_team, match.away_team, match.date, match.venue),
-            (mirror_index, mirror.home_team, mirror.away_team, mirror.date, mirror.venue),
+            _snap(index, match),
+            _snap(mirror_index, mirror),
         ]
         for target in (match, mirror):
             target.home_team, target.away_team = target.away_team, target.home_team
@@ -651,7 +708,7 @@ class _MoveSet:
                 continue
             if index in self._pinned_indexes:
                 return self._abort(snapshot)
-            snapshot.append((index, match.home_team, match.away_team, match.date, match.venue))
+            snapshot.append(_snap(index, match))
             match.home_team = _swap(match.home_team, team_a, team_b)
             match.away_team = _swap(match.away_team, team_a, team_b)
             match.venue = self._world.team(match.home_team).home_venue

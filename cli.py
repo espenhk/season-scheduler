@@ -36,6 +36,7 @@ from terminliste.external_schedule import (  # noqa: E402
     load_external_schedule,
 )
 from terminliste.frame import build_season_frame  # noqa: E402
+from terminliste.model.calendar import build_calendar, calendars_by_competition  # noqa: E402
 from terminliste.model.loader import DataError, load_world  # noqa: E402
 from terminliste.model.travel import ApiTravelModel  # noqa: E402
 from terminliste.refdata import refresh_competition, refresh_travel_times  # noqa: E402
@@ -48,6 +49,13 @@ from terminliste.rounds.european_schedule import (  # noqa: E402
 )
 from terminliste.scoring.base import EvalContext, Score, evaluate  # noqa: E402
 from terminliste.scoring.registry import build_constraints  # noqa: E402
+from terminliste.slot_planner import (  # noqa: E402
+    SlotPlan,
+    SlotPlanningError,
+    plan_slots,
+    search_space_log10,
+    slot_table_lines,
+)
 from terminliste.solvers import (  # noqa: E402
     Candidate,
     ProgressUpdate,
@@ -105,12 +113,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
             )
 
     for season in world.seasons.values():
+        try:
+            frame, frame_warnings = build_season_frame(world, season)
+        except (CupSchedulingError, EuropeanCascadeError) as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
         if season.cup_competitions or season.european_competitions:
-            try:
-                frame, frame_warnings = build_season_frame(world, season)
-            except (CupSchedulingError, EuropeanCascadeError) as exc:
-                print(f"FAIL: {exc}", file=sys.stderr)
-                return 1
             for schedule in frame.cup_schedules:
                 print(f"     {schedule.competition_name} resolves cleanly:")
                 for placement in schedule.rounds:
@@ -130,7 +138,51 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 print(f"       {week.date} {week.weekday[:3]} {week.label}: {teams}")
             for warning in frame_warnings:
                 print(f"     ⚠ {warning}")
+
+        leagues = [world.competition(c) for c in season.competitions]
+        try:
+            plans = plan_slots(world, season, leagues, build_calendar(world, season), frame)
+        except SlotPlanningError as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+        print(f"     Round slots, season {season.id}:")
+        for plan in plans.values():
+            kinds = _slot_kind_counts(plan)
+            print(
+                f"       {plan.competition_id}: {len(plan.candidates)} slots ({kinds}) "
+                f"for {plan.rounds} rounds"
+            )
     return 0
+
+
+def _slot_kind_counts(plan: SlotPlan) -> str:
+    counts: dict[str, int] = {}
+    for slot in plan.candidates:
+        counts[slot.kind] = counts.get(slot.kind, 0) + 1
+    return ", ".join(f"{n} {kind}" for kind, n in counts.items())
+
+
+def _print_slot_plans(world, season, competitions, plans: dict[str, SlotPlan]) -> None:
+    """The slot table and search-space size for each league."""
+    by_competition = calendars_by_competition(build_calendar(world, season), competitions)
+    for competition in competitions:
+        plan = plans[competition.id]
+        calendar = by_competition[competition.id]
+        print(
+            f"\n{competition.name}: {plan.rounds} rounds in {len(plan.candidates)} candidate "
+            f"slots ({_slot_kind_counts(plan)})"
+        )
+        for line in slot_table_lines(plan, world.team_label):
+            print(f"  {line}")
+        print(
+            f"  Search space: {plan.combinations:,} ways to pick the slots; per-match dates "
+            f"~10^{search_space_log10(plan, competition, calendar):.0f} within "
+            f"±{competition.match_window_days} days of each slot, "
+            f"~10^{search_space_log10(plan, competition, calendar, within_slot=True):.0f} "
+            f"within the slot's own days"
+        )
+        for warning in plan.warnings:
+            print(f"  ⚠ {warning}")
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
@@ -145,6 +197,13 @@ def cmd_generate(args: argparse.Namespace) -> int:
     travel = ApiTravelModel(world)
     ctx = EvalContext(world=world, season=season, travel=travel)
 
+    try:
+        slot_plans = plan_slots(world, season, competitions, build_calendar(world, season), frame)
+    except SlotPlanningError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+    _print_slot_plans(world, season, competitions, slot_plans)
+
     scheduler = get_scheduler(args.solver)
     # Terminal only (#34): piped output would fill a CI log with
     # carriage-return updates that mean nothing once flattened to lines.
@@ -155,6 +214,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
         competitions=competitions,
         cup_schedules=cup_schedules,
         european_commitments=european_commitments,
+        frame=frame,
+        slot_plans=slot_plans,
         constraints=constraints,
         ctx=ctx,
         seed=args.seed,
@@ -163,7 +224,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         progress=_print_progress if live else None,
     )
 
-    print(f"Solving with {scheduler.name} (budget {args.time_budget:.0f}s, seed {args.seed})...")
+    print(f"\nSolving with {scheduler.name} (budget {args.time_budget:.0f}s, seed {args.seed})...")
     for warning in frame_warnings:
         print(f"  ⚠ {warning}")
     try:

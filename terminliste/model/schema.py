@@ -581,6 +581,21 @@ class FullRoundRequirement(BaseModel):
     reason: str = ""
 
 
+class ExtraRoundSlot(BaseModel):
+    """A single-day round slot outside the Fri-Mon weekends: a public holiday
+    (Easter Monday, Ascension Day) or a declared midweek round. Empty
+    `competitions` means every league may use it.
+
+    It is only a candidate; the slot planner takes it when the weekends alone
+    run short or it fits better (#6).
+    """
+
+    date: date
+    kind: Literal["holiday", "midweek"] = "holiday"
+    competitions: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+
 class RivalryFixture(BaseModel):
     """A specific pairing that should land on a fixed date, home side
     alternating by year parity.
@@ -653,6 +668,7 @@ class Season(BaseModel):
     fixed_requirements: list[FixedRequirement] = Field(default_factory=list)
     full_round_requirements: list[FullRoundRequirement] = Field(default_factory=list)
     rivalry_fixtures: list[RivalryFixture] = Field(default_factory=list)
+    extra_round_slots: list[ExtraRoundSlot] = Field(default_factory=list)
 
     @cached_property
     def blacked_out_dates(self) -> dict[date, str]:

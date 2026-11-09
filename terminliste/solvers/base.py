@@ -13,11 +13,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from ..frame import SeasonFrame
+from ..model.calendar import SeasonCalendar
 from ..model.loader import World
 from ..model.schema import Competition, Match, Season
+from ..model.slots import RoundSlot
 from ..rounds.cup_schedule import CupSchedule
 from ..rounds.european_schedule import EuropeanCommitmentDate
 from ..scoring.base import Constraint, EvalContext, Score
+from ..slot_planner import SlotPlan, plan_slots
 
 # Two candidates must differ on at least this share of their match dates to
 # count as genuinely different schedules. Three near-identical options are not
@@ -103,6 +107,9 @@ class Candidate:
     score: Score
     label: str = ""
     seed: int = 0
+    # Each round's slot, keyed by (competition_id, round_index), so the
+    # day-within-slot step can read it without re-deriving it from dates.
+    round_slots: dict[tuple[str, int], RoundSlot] = field(default_factory=dict)
 
     def assignment(self) -> dict[str, object]:
         """Fixture key -> date, the fingerprint used for diversity checks."""
@@ -117,6 +124,7 @@ class SolverResult:
     elapsed_s: float = 0.0
     notes: list[str] = field(default_factory=list)
     search_stats: SearchStats = field(default_factory=SearchStats)
+    slot_plans: dict[str, SlotPlan] = field(default_factory=dict)
 
     @property
     def best(self) -> Candidate | None:
@@ -140,9 +148,23 @@ class SolveRequest:
     cup_schedules: list[CupSchedule] = field(default_factory=list)
     # Same, for resolved UEFA qualifying leg dates.
     european_commitments: dict[str, list[EuropeanCommitmentDate]] = field(default_factory=dict)
+    # The season frame and the round slots planned from it. Left unset, the
+    # solver rebuilds the frame from the cups and commitments above.
+    frame: SeasonFrame | None = None
+    slot_plans: dict[str, SlotPlan] | None = None
     # Called periodically with a running `SearchStats` snapshot so the CLI can
     # print live progress. `None` means don't bother.
     progress: Callable[[ProgressUpdate], None] | None = None
+
+
+def resolve_slot_plans(request: SolveRequest, calendar: SeasonCalendar) -> dict[str, SlotPlan]:
+    """The request's slot plans, planning them from its frame if not given."""
+    if request.slot_plans is not None:
+        return request.slot_plans
+    frame = request.frame or SeasonFrame.from_resolved(
+        request.world, request.cup_schedules, request.european_commitments
+    )
+    return plan_slots(request.world, request.season, request.competitions, calendar, frame)
 
 
 class Scheduler(Protocol):

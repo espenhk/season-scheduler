@@ -746,29 +746,34 @@ def _validate_rivalry_fixtures(world: World, season: Season) -> list[str]:
 
 
 def _validate_calendar_capacity(world: World, season: Season) -> list[str]:
-    """Catch a season window too short for the rounds it has to hold.
+    """Catch a league with fewer usable round slots than rounds.
 
-    Cheap arithmetic, but it turns 'the solver ran for a minute and gave up'
-    into 'this season is three weeks too short'.
+    Counts slots, not days: a Fri-Mon weekend hosts one round however many
+    days it has, and the World Cup break or a FIFA window removes whole
+    slots. Cup weekends need the resolved cups, so `cli.py validate` checks
+    those afterwards through the slot planner.
     """
+    # Local imports: the calendar and slot modules import this one.
+    from .calendar import build_calendar, calendars_by_competition
+    from .slots import candidate_slots, max_compatible_slots
+
     errors: list[str] = []
+    calendar = build_calendar(world, season)
     for competition_id in season.competitions:
         competition = world.competitions.get(competition_id)
-        if competition is None:
+        if competition is None or competition.format != "league":
             continue
-        window_start = competition.start or season.start
-        window_end = competition.end or season.end
-        available_days = (window_end - window_start).days + 1
-        # Tight lower bound: the first round lands on day 1 and each later one
-        # clears min_gap_days from its predecessor — (rounds - 1) gaps, not
-        # `rounds` of them.
-        needed = (competition.rounds - 1) * competition.min_gap_days + 1
-        if needed > available_days:
+        scoped = calendars_by_competition(calendar, [competition])[competition.id]
+        slots = candidate_slots(season, competition, scoped)
+        usable = max_compatible_slots(slots, competition.min_gap_days)
+        if usable < competition.rounds:
+            window_start = competition.start or season.start
+            window_end = competition.end or season.end
             errors.append(
-                f"{competition_id!r} spans {available_days} days ({window_start}..{window_end}) "
-                f"but needs at least {needed} ({competition.rounds} rounds, "
-                f"{competition.min_rest_days} days rest between each) — widen the window or "
-                f"reduce rounds"
+                f"{competition_id!r} has {usable} usable round slots in "
+                f"{window_start}..{window_end} but needs {competition.rounds} "
+                f"(slots at least {competition.min_gap_days} days apart, after blackouts) — "
+                f"widen the window, declare `extra_round_slots`, or reduce rounds"
             )
     return errors
 
