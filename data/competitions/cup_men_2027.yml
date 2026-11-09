@@ -5,8 +5,9 @@
 #
 # Rounds are schedulable, not fixed: each one is either a `forced_date`
 # (already announced, cannot move) or a `window_start`/`window_end` the
-# scheduler may place it inside, honouring round order and the "same week"
-# preference — see `terminliste/rounds/cup_schedule.py`.
+# scheduler resolves to ONE date for all entrants, on `preferred_weekday`
+# (default Wednesday), clear of blackouts and UEFA legs. `team_overrides`
+# pins a single team to another date — see `terminliste/rounds/cup_schedule.py`.
 #
 # verified: false — Round 1 and the "ordinary rounds start in August, final in
 # spring 2027" framing come from NFF's own pages via web search; NFF has not
@@ -61,13 +62,6 @@ teams:
 # real spacing. Also how close a league match may land to a team's cup date.
 min_rest_days: 2
 
-# How many days forward from a windowed round's earliest legal date its teams'
-# placements may spread across (3 gives a 4-day span, well inside a calendar
-# week — matching the "all games of round X in the same week" preference). A
-# forced round ignores this entirely: every team lands on the exact confirmed
-# date, not spread near it.
-match_window_days: 3
-
 cup_rounds:
   - id: r1
     name: Round 1
@@ -75,12 +69,14 @@ cup_rounds:
     note: "Confirmed — NFF terminliste. Eliteserien enters from Round 1 under the 2027 format."
   - id: r2
     name: Round 2
+    preferred_weekday: wednesday
     window_start: 2026-09-01
     window_end: 2026-09-30
     granularity: month
     note: "NFF has confirmed only that Round 2 is played midweek in September 2026; exact date not yet published."
   - id: r3
     name: Round 3
+    preferred_weekday: wednesday
     window_start: 2026-10-01
     window_end: 2026-10-31
     granularity: month
@@ -105,6 +101,7 @@ cup_rounds:
     note: "Estimated — spring 2027, no NFF window published yet; assumed early-to-mid May 2027, ahead of the final."
   - id: final
     name: Final
+    preferred_weekday: sunday
     window_start: 2027-05-24
     window_end: 2027-05-31
     granularity: week

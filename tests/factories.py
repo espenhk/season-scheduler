@@ -145,6 +145,8 @@ def cup_round(
     granularity: str | None = None,
     name: str | None = None,
     note: str = "",
+    preferred_weekday: str = "wednesday",
+    team_overrides: dict[str, date] | None = None,
 ) -> CupRound:
     return CupRound(
         id=id,
@@ -154,6 +156,8 @@ def cup_round(
         window_end=window_end,
         granularity=granularity,
         note=note,
+        preferred_weekday=preferred_weekday,
+        team_overrides=team_overrides or {},
     )
 
 

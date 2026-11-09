@@ -2,9 +2,11 @@
 
 A cup's "fixtures" are never modelled as pairings: who plays whom is drawn
 round by round. What is known per round is either an exact date
-(`forced_date`) or a window it must fall inside, so resolving a round means
-picking one placement per entered team inside that constraint, assuming every
-team survives through the final.
+(`forced_date`) or a window it must fall inside. A windowed round resolves to
+ONE date shared by every entrant, assuming every team survives through the
+final: NFF lays the cup weeks before the season, midweek and clear of UEFA
+weeks, and the league is fitted around them (#5). `team_overrides` move
+individual teams off that date, e.g. a club still in Europe.
 
 A separate one-shot pass rather than another dimension of the league's
 annealing: month- or quarter-wide windows are far too coarse to need a search,
@@ -17,20 +19,14 @@ top-division side is assumed to draw a lower-division one and travel), then
 alternates, except the final, which is always neutral ground. See
 `_venue_type`.
 
-Two rules hold by construction rather than being discovered as violations
-later:
+Round N is fully placed before round N+1 starts, leaving `min_gap_days`
+between them. `CupSchedulingError` is raised when a round's window (or a
+forced round's confirmed date) leaves no room; a forced round never moves
+to make room, so that is the data's problem to fix.
 
-- Round N is fully placed before round N+1 starts, leaving `min_gap_days`
-  between them. `CupSchedulingError` is raised when a round's window (or a
-  forced round's confirmed date) leaves no room; a forced round never moves
-  to make room, so that is the data's problem to fix.
-- Every team's placement for a round falls inside one calendar week: a
-  windowed round runs forward from its earliest legal start across at most
-  `match_window_days` days, and a forced round has no spread at all.
-
-What can't be guaranteed either way is a *legal* date surviving blackouts. If
-none does, placement falls back to the round's anchor with a warning rather
-than an error.
+A date is chosen by preference, not guaranteed: a round whose window offers no
+date clear of blackouts, midweek and UEFA legs settles for the least bad one
+and says so in a warning rather than failing.
 """
 
 from __future__ import annotations
@@ -39,13 +35,18 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Literal
 
-from ..model.schema import Competition, CupRound, Season
+from ..model.schema import WEEKDAYS, Competition, CupRound, Season
+from .european_schedule import EuropeanCommitmentDate
 
 VenueType = Literal["home", "away", "neutral"]
 
 # The final of both the men's and women's Norwegian Cup is played at neutral
 # ground, not either finalist's home venue — Ullevål stadion, Oslo.
 NEUTRAL_CUP_VENUE = "Ullevål stadion"
+
+# Days a windowed round may use when its preferred weekday is unavailable.
+_MIDWEEK = ("tuesday", "wednesday", "thursday")
+_WEEKEND = ("saturday", "sunday")
 
 
 class CupSchedulingError(Exception):
@@ -88,7 +89,11 @@ class CupSchedule:
     rounds: list[CupRoundPlacement] = field(default_factory=list)
 
 
-def schedule_cup(competition: Competition, blackouts: set[date]) -> tuple[CupSchedule, list[str]]:
+def schedule_cup(
+    competition: Competition,
+    blackouts: set[date],
+    european_commitments: dict[str, list[EuropeanCommitmentDate]] | None = None,
+) -> tuple[CupSchedule, list[str]]:
     """Resolve one cup competition's rounds to dates.
 
     Returns the schedule plus any warnings (empty in the normal case). Raises
@@ -101,7 +106,7 @@ def schedule_cup(competition: Competition, blackouts: set[date]) -> tuple[CupSch
         raise CupSchedulingError(f"cup competition {competition.id!r} declares no cup_rounds")
 
     gap = max(competition.min_gap_days, 1)
-    spread = max(competition.match_window_days, 0)
+    uefa = _uefa_legs(competition.teams, european_commitments)
 
     placements: list[CupRoundPlacement] = []
     warnings: list[str] = []
@@ -109,11 +114,23 @@ def schedule_cup(competition: Competition, blackouts: set[date]) -> tuple[CupSch
     total_rounds = len(competition.cup_rounds)
 
     for index, round_ in enumerate(competition.cup_rounds):
-        anchor, lower_bound, upper_bound = _resolve_anchor(
-            competition, round_, previous_latest, gap
-        )
-        team_dates, blacked_out = _spread_teams(
-            competition.teams, anchor, spread, blackouts, lower_bound, upper_bound
+        main_teams = [t for t in competition.teams if t not in round_.team_overrides]
+        if round_.is_forced:
+            main_date = _check_forced(competition, round_, previous_latest, gap)
+            if main_date in blackouts:
+                warnings.append(
+                    f"{competition.name}: {round_.name} has no legal (non-blackout) date in its "
+                    f"window — placed on {main_date} anyway"
+                )
+        else:
+            main_date, round_warnings = _pick_date(
+                competition, round_, previous_latest, gap, blackouts, uefa, set(main_teams)
+            )
+            warnings.extend(round_warnings)
+
+        team_dates = {team: main_date for team in main_teams}
+        team_dates.update(
+            {t: d for t, d in round_.team_overrides.items() if t in competition.teams}
         )
         placement = CupRoundPlacement(
             round_id=round_.id,
@@ -123,11 +140,8 @@ def schedule_cup(competition: Competition, blackouts: set[date]) -> tuple[CupSch
             note=round_.note,
         )
         placements.append(placement)
-        if blacked_out:
-            warnings.append(
-                f"{competition.name}: {round_.name} has no legal (non-blackout) date in its "
-                f"window — placed on {anchor} anyway"
-            )
+        if round_.is_forced:
+            warnings.extend(_uefa_warnings(competition, round_, team_dates, uefa))
         previous_latest = placement.latest_date
 
     return (
@@ -157,29 +171,82 @@ def _venue_type(index: int, total_rounds: int) -> VenueType:
     return "home" if (index - 3) % 2 == 0 else "away"
 
 
-def _resolve_anchor(
+def _check_forced(
+    competition: Competition, round_: CupRound, previous_latest: date | None, gap: int
+) -> date:
+    """A forced round's confirmed date, after the same rest-gap check a
+    windowed round faces: a date too close to the previous round is a real
+    conflict for the data to fix."""
+    forced = round_.forced_date
+    if previous_latest is not None and (forced - previous_latest).days < gap:
+        raise CupSchedulingError(
+            f"{competition.id!r}: {round_.name} is forced to {forced}, which does not "
+            f"leave room after the previous round's last date ({previous_latest}) — needs "
+            f"at least {gap} day(s)"
+        )
+    return forced
+
+
+@dataclass(frozen=True)
+class _UefaLeg:
+    team_id: str
+    date: date
+    min_rest_days: int
+    binding: bool
+
+
+def _uefa_legs(
+    teams: list[str], commitments: dict[str, list[EuropeanCommitmentDate]] | None
+) -> list[_UefaLeg]:
+    return [
+        _UefaLeg(team, c.date, c.min_rest_days, c.binding)
+        for team in teams
+        for c in (commitments or {}).get(team, ())
+    ]
+
+
+def _clashes(day: date, rest: int, leg: _UefaLeg) -> bool:
+    return abs((day - leg.date).days) - 1 < max(rest, leg.min_rest_days)
+
+
+def _uefa_level(day: date, rest: int, uefa: list[_UefaLeg], teams: set[str]) -> int:
+    """0 clear, 1 clashes only with legs a team might reach, 2 clashes with a
+    leg some team is certain to play."""
+    level = 0
+    for leg in uefa:
+        if leg.team_id in teams and _clashes(day, rest, leg):
+            if leg.binding:
+                return 2
+            level = 1
+    return level
+
+
+def _binding_clashes(day: date, rest: int, uefa: list[_UefaLeg], teams: set[str]) -> list[str]:
+    return sorted(
+        {
+            leg.team_id
+            for leg in uefa
+            if leg.team_id in teams and leg.binding and _clashes(day, rest, leg)
+        }
+    )
+
+
+def _pick_date(
     competition: Competition,
     round_: CupRound,
     previous_latest: date | None,
     gap: int,
-) -> tuple[date, date | None, date | None]:
-    """The round's anchor date, plus the bounds team placements must respect.
+    blackouts: set[date],
+    uefa: list[_UefaLeg],
+    teams: set[str],
+) -> tuple[date, list[str]]:
+    """The one date a windowed round is played on for `teams`.
 
-    A forced round's bounds collapse to the confirmed date at both ends, so
-    `_spread_teams` cannot drift off it. It still faces the same rest-gap
-    check a windowed round does: a confirmed date too close to the previous
-    round is a real conflict for the data to fix.
+    Candidates are ranked: inside the preferred weekday's class (midweek, or
+    Sat/Sun for a weekend preference), then UEFA-clear, then the preferred
+    weekday itself, then earliest. The window's earliest legal day is the
+    last resort when blackouts leave nothing.
     """
-    if round_.is_forced:
-        anchor = round_.forced_date
-        if previous_latest is not None and (anchor - previous_latest).days < gap:
-            raise CupSchedulingError(
-                f"{competition.id!r}: {round_.name} is forced to {anchor}, which does not "
-                f"leave room after the previous round's last date ({previous_latest}) — needs "
-                f"at least {gap} day(s)"
-            )
-        return anchor, anchor, anchor
-
     earliest = round_.window_start
     if previous_latest is not None:
         earliest = max(earliest, previous_latest + timedelta(days=gap))
@@ -189,62 +256,84 @@ def _resolve_anchor(
             f"{round_.window_end}) leaves no room after the previous round's last date "
             f"({previous_latest}) — it would need to start on or after {earliest}"
         )
-    return earliest, earliest, round_.window_end
+
+    preferred = WEEKDAYS.index(round_.preferred_weekday)
+    day_class = _WEEKEND if round_.preferred_weekday in _WEEKEND else _MIDWEEK
+    class_days = {WEEKDAYS.index(w) for w in day_class} | {preferred}
+    rest = competition.min_rest_days
+
+    ranked: list[tuple[tuple[int, int, int, date], date, int]] = []
+    day = earliest
+    while day <= round_.window_end:
+        if day not in blackouts:
+            level = _uefa_level(day, rest, uefa, teams)
+            key = (
+                0 if day.weekday() in class_days else 1,
+                level,
+                0 if day.weekday() == preferred else 1,
+                day,
+            )
+            ranked.append((key, day, level))
+        day += timedelta(days=1)
+
+    if not ranked:
+        return earliest, [
+            f"{competition.name}: {round_.name} has no legal (non-blackout) date in its "
+            f"window — placed on {earliest} anyway"
+        ]
+
+    key, chosen, level = min(ranked)
+    warnings: list[str] = []
+    if key[0]:
+        warnings.append(
+            f"{competition.name}: {round_.name} has no {round_.preferred_weekday}-class date "
+            f"in its window — placed on {chosen} ({chosen.strftime('%A')})"
+        )
+    if level == 2:
+        clashing = ", ".join(_binding_clashes(chosen, rest, uefa, teams))
+        warnings.append(
+            f"{competition.name}: {round_.name} on {chosen} sits inside a UEFA week for {clashing}"
+        )
+    return chosen, warnings
 
 
-def _spread_teams(
-    teams: list[str],
-    anchor: date,
-    spread: int,
-    blackouts: set[date],
-    lower_bound: date | None,
-    upper_bound: date | None,
-) -> tuple[dict[str, date], bool]:
-    """Distribute `teams` round-robin over the days from `anchor` onward.
-
-    Candidates run forward only, `anchor` to `anchor + spread`: the anchor is
-    either a confirmed date or a window's earliest legal start, so nothing
-    should land before it. The spread reflects a real cup round playing out
-    over a few days — a forced round has its bounds collapsed to the anchor
-    and gets none.
-
-    Blackouts are dropped from whatever survives the bounds; if nothing is
-    left every team falls back onto the bare anchor, flagged by the second
-    return value, since that beats failing outright over one clashing day.
-    """
-    candidates: list[date] = []
-    for offset in range(0, spread + 1):
-        day = anchor + timedelta(days=offset)
-        if lower_bound is not None and day < lower_bound:
-            continue
-        if upper_bound is not None and day > upper_bound:
-            continue
-        if day in blackouts:
-            continue
-        candidates.append(day)
-
-    blacked_out = False
-    if not candidates:
-        candidates = [anchor]
-        blacked_out = anchor in blackouts
-
-    dates = {team_id: candidates[i % len(candidates)] for i, team_id in enumerate(sorted(teams))}
-    return dates, blacked_out
+def _uefa_warnings(
+    competition: Competition,
+    round_: CupRound,
+    team_dates: dict[str, date],
+    uefa: list[_UefaLeg],
+) -> list[str]:
+    """One warning per forced-round date that sits in a UEFA week of an
+    entrant: the date cannot move, so the clash is surfaced rather than fixed."""
+    warnings: list[str] = []
+    for day in sorted(set(team_dates.values())):
+        teams = {t for t, d in team_dates.items() if d == day}
+        clashing = _binding_clashes(day, competition.min_rest_days, uefa, teams)
+        if clashing:
+            warnings.append(
+                f"{competition.name}: {round_.name} is forced to {day}, inside a UEFA week "
+                f"for {', '.join(clashing)}"
+            )
+    return warnings
 
 
 def schedule_cups(
-    competitions: list[Competition], season: Season
+    competitions: list[Competition],
+    season: Season,
+    european_commitments: dict[str, list[EuropeanCommitmentDate]] | None = None,
 ) -> tuple[list[CupSchedule], list[str]]:
     """Resolve every cup competition, pooling their warnings.
 
-    Only global blackouts are consulted: cups book no venues, so
-    venue-specific blackouts don't apply to them.
+    Global blackouts plus the ranges scoped to the cup's gender apply, so a
+    FIFA window stops the matching cup. Venue blackouts don't: cups book no
+    venues. Blackouts are plain dates, so they cover rounds outside the
+    season's own start..end too (the cup runs into 2027).
     """
-    blackouts = set(season.blacked_out_dates)
     schedules: list[CupSchedule] = []
     warnings: list[str] = []
     for competition in competitions:
-        schedule, round_warnings = schedule_cup(competition, blackouts)
+        blackouts = set(season.blacked_out_dates) | set(season.scoped_blackout_dates(competition))
+        schedule, round_warnings = schedule_cup(competition, blackouts, european_commitments)
         schedules.append(schedule)
         warnings.extend(round_warnings)
     return schedules, warnings

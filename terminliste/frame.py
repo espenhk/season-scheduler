@@ -2,8 +2,9 @@
 around, resolved before any league match is placed (#110).
 
 UEFA match weeks come first (#112): each leg of each European round, with
-the teams that might play it. Later stages add cup weeks and league slots
-alongside them.
+the teams that might play it. Cup days follow (#5): each cup round's resolved
+date, midweek (`cup_week`) or on a league weekend (`cup_weekend`). Later
+stages add league slots alongside them.
 """
 
 from __future__ import annotations
@@ -13,8 +14,13 @@ from datetime import date
 from typing import Literal
 
 from .model.loader import World
-from .model.schema import WEEKDAYS, Season, Weekday
+from .model.schema import WEEKDAYS, Gender, Season, Weekday
+from .rounds.cup_schedule import CupSchedule, schedule_cups
 from .rounds.european_schedule import EuropeanCommitmentDate, resolve_european_commitments
+
+# Fri-Mon is the span a league round occupies, so a cup date inside it
+# competes with league slots.
+_LEAGUE_WEEKEND = {"friday", "saturday", "sunday", "monday"}
 
 
 @dataclass(frozen=True)
@@ -43,10 +49,65 @@ class UefaWeek:
         return year, week
 
 
+@dataclass(frozen=True)
+class CupDay:
+    """One cup round's date for the teams playing it that day.
+
+    A round yields one entry per distinct date, so a round with
+    `team_overrides` yields several. `kind` is `cup_weekend` when the date
+    falls Fri-Mon, where league rounds live, else `cup_week`.
+    """
+
+    competition_id: str
+    gender: Gender
+    round_id: str
+    label: str
+    date: date
+    min_rest_days: int
+    teams: tuple[str, ...]
+
+    @property
+    def weekday(self) -> Weekday:
+        return WEEKDAYS[self.date.weekday()]
+
+    @property
+    def kind(self) -> Literal["cup_week", "cup_weekend"]:
+        return "cup_weekend" if self.weekday in _LEAGUE_WEEKEND else "cup_week"
+
+
 @dataclass
 class SeasonFrame:
     uefa_weeks: list[UefaWeek] = field(default_factory=list)
     european_commitments: dict[str, list[EuropeanCommitmentDate]] = field(default_factory=dict)
+    cup_schedules: list[CupSchedule] = field(default_factory=list)
+    cup_days: list[CupDay] = field(default_factory=list)
+
+    def cup_days_of(
+        self,
+        *,
+        gender: Gender | None = None,
+        competition_id: str | None = None,
+        kind: Literal["cup_week", "cup_weekend"] | None = None,
+        team_id: str | None = None,
+    ) -> list[CupDay]:
+        """Cup days matching every given filter, in date order."""
+        return [
+            day
+            for day in self.cup_days
+            if (gender is None or day.gender == gender)
+            and (competition_id is None or day.competition_id == competition_id)
+            and (kind is None or day.kind == kind)
+            and (team_id is None or team_id in day.teams)
+        ]
+
+    def cup_weekend_dates(self, *, gender: Gender | None = None) -> frozenset[date]:
+        """Dates a league round must not use: the Fri-Mon cup days."""
+        return frozenset(d.date for d in self.cup_days_of(gender=gender, kind="cup_weekend"))
+
+    def cup_weekend_blocks(self, *, gender: Gender | None = None) -> dict[date, str]:
+        """`cup_weekend_dates` with a reason per date, in the shape
+        `SeasonCalendar.without` takes."""
+        return {d.date: d.label for d in self.cup_days_of(gender=gender, kind="cup_weekend")}
 
 
 def build_uefa_weeks(
@@ -74,15 +135,60 @@ def build_uefa_weeks(
     return sorted(weeks, key=lambda w: (w.date, w.competition_id, w.label))
 
 
+def build_cup_days(
+    schedules: list[CupSchedule], genders: dict[str, Gender]
+) -> list[CupDay]:
+    """Group every cup round's per-team dates into one entry per date."""
+    days: list[CupDay] = []
+    for schedule in schedules:
+        for placement in schedule.rounds:
+            by_date: dict[date, list[str]] = {}
+            for team_id, day in placement.dates.items():
+                by_date.setdefault(day, []).append(team_id)
+            for day, teams in by_date.items():
+                days.append(
+                    CupDay(
+                        competition_id=schedule.competition_id,
+                        gender=genders[schedule.competition_id],
+                        round_id=placement.round_id,
+                        label=f"{schedule.competition_name}: {placement.round_name}",
+                        date=day,
+                        min_rest_days=schedule.min_rest_days,
+                        teams=tuple(sorted(teams)),
+                    )
+                )
+    return sorted(days, key=lambda d: (d.date, d.competition_id, d.round_id))
+
+
 def build_season_frame(world: World, season: Season) -> tuple[SeasonFrame, list[str]]:
-    """Resolve the season's UEFA weeks. Raises `EuropeanCascadeError` on a
-    data problem in the European cascade."""
-    if not season.european_competitions:
-        return SeasonFrame(), []
-    competitions = [world.competition(c) for c in season.european_competitions]
-    commitments, warnings = resolve_european_commitments(competitions, season)
-    frame = SeasonFrame(uefa_weeks=build_uefa_weeks(commitments), european_commitments=commitments)
+    """Resolve the season's UEFA weeks, then its cup rounds around them.
+
+    Raises `EuropeanCascadeError` on a data problem in the European cascade
+    and `CupSchedulingError` on one in the cup rounds.
+    """
+    frame = SeasonFrame()
+    warnings: list[str] = []
+    if season.european_competitions:
+        competitions = [world.competition(c) for c in season.european_competitions]
+        commitments, warnings = resolve_european_commitments(competitions, season)
+        frame = SeasonFrame(
+            uefa_weeks=build_uefa_weeks(commitments), european_commitments=commitments
+        )
+    if season.cup_competitions:
+        cups = [world.competition(c) for c in season.cup_competitions]
+        frame.cup_schedules, cup_warnings = schedule_cups(
+            cups, season, frame.european_commitments
+        )
+        frame.cup_days = build_cup_days(frame.cup_schedules, {c.id: c.gender for c in cups})
+        warnings = [*warnings, *cup_warnings]
     return frame, warnings
 
 
-__all__ = ["SeasonFrame", "UefaWeek", "build_season_frame", "build_uefa_weeks"]
+__all__ = [
+    "CupDay",
+    "SeasonFrame",
+    "UefaWeek",
+    "build_cup_days",
+    "build_season_frame",
+    "build_uefa_weeks",
+]

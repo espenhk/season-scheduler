@@ -177,13 +177,21 @@ round-robin generator decides who plays whom, the solver decides when. A
 `window_start`/`window_end` it may fall inside — a week, month or quarter,
 per `granularity` — since the real Norwegian Cup often isn't more precise
 than that for rounds more than a few weeks out. `terminliste/rounds/
-cup_schedule.py` resolves a cup's rounds to a `CupSchedule` (an actual date
-per entered team) in one pass, honouring round order as a hard rule — round
-N is fully placed before round N+1 can start — and keeping each round's
-placements inside one calendar week as far as the data allows, degrading to
-a warning rather than a failure when it can't. See
+cup_schedule.py` resolves a cup's rounds to a `CupSchedule` in one pass,
+honouring round order as a hard rule — round N is fully placed before round
+N+1 can start. A windowed round resolves to ONE date for every entrant, on its
+`preferred_weekday` (Wednesday by default) in a week clear of blackouts and
+UEFA legs, the way NFF lays the cup weeks before fitting the league around
+them; `team_overrides` moves a single team (say, a club still in Europe) to
+another date. When no such date exists the round settles for the least bad
+one and warns rather than failing. Each resolved date becomes a `CupDay` in
+the season frame (`terminliste/frame.py`): `cup_week` when midweek,
+`cup_weekend` when it falls Fri-Mon, queryable per gender, competition and
+team. `validate` warns when a forced date sits in a UEFA week. League anchors
+don't yet skip `cup_weekend` dates; that comes with slot planning. See
 `data/competitions/cup_men_2027.yml` and `cup_women_2027.yml` for the
-2026-27 Norwegian Cup.
+2026-27 Norwegian Cup, and `cup_men_2026.yml` / `cup_women_2026.yml` for the
+spring 2026 rounds of the previous edition.
 
 Cup pairings are still drawn round by round and never modelled as fixtures
 — nobody knows who plays whom yet — so a `CupSchedule` records only *when*

@@ -40,10 +40,7 @@ from terminliste.model.loader import DataError, load_world  # noqa: E402
 from terminliste.model.travel import ApiTravelModel  # noqa: E402
 from terminliste.refdata import refresh_competition, refresh_travel_times  # noqa: E402
 from terminliste.report.render import render_report, write_json  # noqa: E402
-from terminliste.rounds.cup_schedule import (  # noqa: E402
-    CupSchedulingError,
-    schedule_cups,
-)
+from terminliste.rounds.cup_schedule import CupSchedulingError  # noqa: E402
 from terminliste.rounds.european_schedule import (  # noqa: E402
     EuropeanCascadeError,
     build_main_tournament_rounds_for_display,
@@ -108,14 +105,13 @@ def cmd_validate(args: argparse.Namespace) -> int:
             )
 
     for season in world.seasons.values():
-        if season.cup_competitions:
-            cup_competitions = [world.competition(c) for c in season.cup_competitions]
+        if season.cup_competitions or season.european_competitions:
             try:
-                schedules, warnings = schedule_cups(cup_competitions, season)
-            except CupSchedulingError as exc:
+                frame, frame_warnings = build_season_frame(world, season)
+            except (CupSchedulingError, EuropeanCascadeError) as exc:
                 print(f"FAIL: {exc}", file=sys.stderr)
                 return 1
-            for schedule in schedules:
+            for schedule in frame.cup_schedules:
                 print(f"     {schedule.competition_name} resolves cleanly:")
                 for placement in schedule.rounds:
                     span = (
@@ -124,23 +120,15 @@ def cmd_validate(args: argparse.Namespace) -> int:
                         else f"{placement.earliest_date} – {placement.latest_date}"
                     )
                     print(f"       {placement.round_name}: {span}")
-            for warning in warnings:
-                print(f"     ⚠ {warning}")
-
-        if season.european_competitions:
-            try:
-                frame, european_warnings = build_season_frame(world, season)
-            except EuropeanCascadeError as exc:
-                print(f"FAIL: {exc}", file=sys.stderr)
-                return 1
-            print("     UEFA weeks:")
+            if frame.uefa_weeks:
+                print("     UEFA weeks:")
             for week in frame.uefa_weeks:
                 teams = ", ".join(
                     world.team_label(t) + ("" if t in week.binding_teams else " (if reached)")
                     for t in week.teams
                 )
                 print(f"       {week.date} {week.weekday[:3]} {week.label}: {teams}")
-            for warning in european_warnings:
+            for warning in frame_warnings:
                 print(f"     ⚠ {warning}")
     return 0
 
@@ -149,8 +137,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
     world = _load_world_or_exit()
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
-    cup_schedules, cup_warnings = _schedule_cups_or_exit(world, season)
-    european_commitments, european_warnings = _resolve_european_or_exit(world, season)
+    frame, frame_warnings = _build_frame_or_exit(world, season)
+    cup_schedules, european_commitments = frame.cup_schedules, frame.european_commitments
     constraints = build_constraints(
         world, season, competitions, cup_schedules, european_commitments
     )
@@ -176,7 +164,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     )
 
     print(f"Solving with {scheduler.name} (budget {args.time_budget:.0f}s, seed {args.seed})...")
-    for warning in [*cup_warnings, *european_warnings]:
+    for warning in frame_warnings:
         print(f"  ⚠ {warning}")
     try:
         result = scheduler.solve(request)
@@ -206,7 +194,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         result,
         html_path,
         title=f"{season.year} season schedule",
-        warnings=[*cup_warnings, *european_warnings],
+        warnings=frame_warnings,
         cup_schedules=cup_schedules,
         european_competitions=european_competitions,
         resolved_legs=resolved_legs,
@@ -222,8 +210,8 @@ def cmd_score(args: argparse.Namespace) -> int:
     world = _load_world_or_exit()
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
-    cup_schedules, cup_warnings = _schedule_cups_or_exit(world, season)
-    european_commitments, european_warnings = _resolve_european_or_exit(world, season)
+    frame, frame_warnings = _build_frame_or_exit(world, season)
+    cup_schedules, european_commitments = frame.cup_schedules, frame.european_commitments
     constraints = build_constraints(
         world, season, competitions, cup_schedules, european_commitments
     )
@@ -239,7 +227,7 @@ def cmd_score(args: argparse.Namespace) -> int:
         print("FAIL: schedule file contained no matches.", file=sys.stderr)
         return 1
 
-    warnings = [*warnings, *cup_warnings, *european_warnings]
+    warnings = [*warnings, *frame_warnings]
     ctx = EvalContext(world=world, season=season, travel=travel, detail=True)
     score = evaluate(matches, constraints, ctx)
 
@@ -435,23 +423,12 @@ def _season_or_exit(world, season_id: str):
         sys.exit(1)
 
 
-def _schedule_cups_or_exit(world, season):
-    """Resolve the season's cups to dates, or exit with a clear reason why not."""
-    cup_competitions = [world.competition(c) for c in season.cup_competitions]
+def _build_frame_or_exit(world, season):
+    """Resolve the season frame (UEFA weeks, then the cups around them), or
+    exit with a clear reason why not."""
     try:
-        return schedule_cups(cup_competitions, season)
-    except CupSchedulingError as exc:
-        print(f"FAIL: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-
-def _resolve_european_or_exit(world, season):
-    """Resolve the season's UEFA weeks up front and return the per-team
-    commitments the solvers consume, or exit with a clear reason why not."""
-    try:
-        frame, warnings = build_season_frame(world, season)
-        return frame.european_commitments, warnings
-    except EuropeanCascadeError as exc:
+        return build_season_frame(world, season)
+    except (CupSchedulingError, EuropeanCascadeError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -459,7 +436,7 @@ def _resolve_european_or_exit(world, season):
 def _european_report_data(world, season):
     """The season's European competitions with their rounds resolved to real
     leg dates — what `render_report` needs, as opposed to
-    `_resolve_european_or_exit`'s flattened commitment list, which is shaped
+    the frame's flattened commitment list, which is shaped
     for conflict-checking.
 
     A main tournament (#79) has no `european_rounds`, which is all the report

@@ -152,7 +152,14 @@ class CupRound(_ScheduledRound):
 
     Pairings are drawn round by round, so this only describes *when*;
     `rounds/cup_schedule.py` resolves it to a per-team date.
+
+    A windowed round resolves to one date for every entrant, on
+    `preferred_weekday` when the window offers it. `team_overrides` pins a
+    team elsewhere, e.g. a later date for a club busy in Europe.
     """
+
+    preferred_weekday: Weekday = "wednesday"
+    team_overrides: dict[str, date] = Field(default_factory=dict)
 
 
 class EuropeanLeg(_DateSpec):

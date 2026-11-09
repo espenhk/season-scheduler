@@ -209,7 +209,7 @@ def test_cup_scheduling_failure_is_wrapped_as_baseline_error(world, sources, mon
     def _boom(*args, **kwargs):
         raise CupSchedulingError("no room for round 1")
 
-    monkeypatch.setattr("terminliste.baseline.schedule_cups", _boom)
+    monkeypatch.setattr("terminliste.baseline.build_season_frame", _boom)
     with pytest.raises(BaselineError, match="cup scheduling failed"):
         evaluate_baseline(sources[0], world)
 

@@ -194,7 +194,12 @@ def test_season_shorter_than_required_rounds_is_caught():
 
 
 def test_cup_competitions_are_present_and_shaped_correctly(world):
-    for cup_id, team_count in (("cup_men_2027", 16), ("cup_women_2027", 12)):
+    for cup_id, team_count in (
+        ("cup_men_2026", 16),
+        ("cup_women_2026", 12),
+        ("cup_men_2027", 16),
+        ("cup_women_2027", 12),
+    ):
         cup = world.competition(cup_id)
         assert cup.format == "cup"
         assert cup.team_count == team_count
@@ -203,7 +208,12 @@ def test_cup_competitions_are_present_and_shaped_correctly(world):
         assert earliest_bounds == sorted(earliest_bounds), f"{cup_id} rounds are not in order"
 
     season = world.season("2026")
-    assert set(season.cup_competitions) == {"cup_men_2027", "cup_women_2027"}
+    assert set(season.cup_competitions) == {
+        "cup_men_2026",
+        "cup_women_2026",
+        "cup_men_2027",
+        "cup_women_2027",
+    }
 
 
 def test_cup_schedules_resolve_cleanly_from_the_shipped_data(world):
@@ -214,16 +224,35 @@ def test_cup_schedules_resolve_cleanly_from_the_shipped_data(world):
     season = world.season("2026")
     cup_competitions = [world.competition(c) for c in season.cup_competitions]
     schedules, warnings = schedule_cups(cup_competitions, season)
-    assert len(schedules) == 2
+    assert len(schedules) == 4
     for schedule in schedules:
         previous_latest = None
         for placement in schedule.rounds:
             if previous_latest is not None:
                 assert placement.earliest_date > previous_latest
             previous_latest = placement.latest_date
-    # Every round is expected to fit inside its own week given the shipped
-    # match_window_days=3, so a clean resolve should carry no warnings.
+    # Without UEFA commitments in play, every shipped round has a legal date.
     assert warnings == []
+
+
+def test_cup_round_override_for_a_non_entrant_is_caught():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    cup = f.competition(
+        "cup",
+        ["t1"],
+        format="cup",
+        cup_rounds=[
+            f.cup_round(
+                "r1", forced_date=date(2026, 9, 1), team_overrides={"ghost": date(2026, 9, 9)}
+            )
+        ],
+    )
+    errors = validate_world(f.world(clubs, [v], [cup]))
+    assert any("overrides 'ghost'" in e for e in errors)
 
 
 def test_cup_with_no_rounds_is_caught():

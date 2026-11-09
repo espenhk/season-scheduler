@@ -1,0 +1,66 @@
+# The 2025-26 Norwegian Football Cup (NM menn), spring 2026 part. The edition
+# started in August 2025; only the rounds that overlap this season's league
+# calendar are modelled: Round 4 onward, which Eliteserien clubs reach after
+# the autumn rounds.
+#
+# verified: false — dates come from web-search snippets (fotball.no's NM menn
+# 2026 page, sportsidioten.no) and have not been checked against the NFF
+# terminliste. Round 4 was actually spread over Thu 5 – Sun 8 Mar; it is
+# modelled as one date, the Thursday.
+# sources:
+#   - "fotball.no: NM Menn 2026 — Round 4 Thu 5 Mar, Sat 7 Mar, Sun 8 Mar 2026"
+#   - "sportsidioten.no: Fotball NM menn 2025-2026 — 4. runde 7./8. mars, kvartfinale 18. mars, semifinale 22. april, finale 9. mai"
+id: cup_men_2026
+name: NM Cupen 2026 (menn)
+short_name: "NM26(m)"
+season: 2026
+gender: men
+format: cup
+
+color: "#e67e22"
+
+movable: false
+
+# Same 16 clubs as eliteserien_2026; the model assumes every one of them
+# survives to the final.
+team_count: 16
+teams:
+  - aalesund_m
+  - bodo_glimt_m
+  - brann_m
+  - fredrikstad_m
+  - hamkam_m
+  - kfum_oslo_m
+  - kristiansund_m
+  - lillestrom_m
+  - molde_m
+  - rosenborg_m
+  - sandefjord_m
+  - sarpsborg08_m
+  - start_m
+  - tromso_m
+  - valerenga_m
+  - viking_m
+
+min_rest_days: 2
+
+cup_rounds:
+  - id: r4
+    name: Round 4
+    preferred_weekday: thursday
+    window_start: 2026-03-04
+    window_end: 2026-03-08
+    granularity: week
+    note: "Played Thu 5 – Sun 8 Mar 2026; modelled as the Thursday for all entrants."
+  - id: qf
+    name: Quarter-final
+    forced_date: 2026-03-18
+    note: "Wednesday 18 Mar 2026 (search snippet, unverified)."
+  - id: sf
+    name: Semi-final
+    forced_date: 2026-04-22
+    note: "Wednesday 22 Apr 2026 (search snippet, unverified)."
+  - id: final
+    name: Final
+    forced_date: 2026-05-09
+    note: "Saturday 9 May 2026, 18:00, Ullevaal (search snippet, unverified)."

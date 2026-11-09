@@ -374,6 +374,12 @@ def _validate_cup_rounds(competition: Competition) -> list[str]:
                 f"competition {competition.id!r} has duplicate cup round id {round_.id!r}"
             )
         seen_ids.add(round_.id)
+        for team_id in round_.team_overrides:
+            if team_id not in competition.teams:
+                errors.append(
+                    f"competition {competition.id!r} cup round {round_.id!r} overrides "
+                    f"{team_id!r}, which is not one of its teams"
+                )
         if previous_round is not None and round_.latest < previous_round.earliest:
             errors.append(
                 f"competition {competition.id!r} cup round {round_.id!r} "
