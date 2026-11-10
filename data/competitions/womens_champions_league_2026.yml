@@ -1,0 +1,82 @@
+# 2026-27 UEFA Women's Champions League qualifying — Norway's two entrants (#14).
+#
+# format: european, movable: false — UEFA fixes these dates; the domestic
+# solver only avoids them (see champions_league_2026.yml for the shape).
+#
+# Brann (Champions Path, 2025 Toppserien champion) and Vålerenga (League
+# Path, runner-up) both enter the second qualifying round, a four-team
+# mini-tournament hosted by one club: two semi-finals, then a final and a
+# third-place play-off. Every entrant plays both dates, so a round's
+# `first_leg` is the semi-final day and its `second_leg` the final/third-place
+# day. Only the winner goes on to the third qualifying round; the other
+# three drop into the Women's Europa Cup. A third-placed side enters the
+# Europa Cup first qualifying round, a runner-up its second round, a fourth
+# place goes out — one `drop_to_*` per round can't tell these apart, so a
+# mini-tournament loss routes to the first round, the wider of the two
+# footprints.
+#
+# The league phase (winner of the third qualifying round) isn't modelled; a
+# Q3 win simply ends the tree here.
+#
+# Sources (verified: false — dates cross-checked between UEFA.com and
+# Wikipedia, entrants and results only from Wikipedia):
+#   https://en.wikipedia.org/wiki/2026%E2%80%9327_UEFA_Women%27s_Champions_League_qualifying_rounds
+#   https://www.uefa.com/womenseuropacup/fixtures-results/format/
+id: womens_champions_league_2026
+name: UEFA Women's Champions League qualifying
+short_name: "UWCL(q)"
+season: 2026
+gender: women
+format: european
+movable: false
+
+color: "#7d6608"
+
+team_count: 2
+teams:
+  - brann_w
+  - valerenga_w
+
+min_rest_days: 2
+
+# Q3 plays Tuesday/Wednesday; the mini-tournament finals are on a Saturday.
+matchday_weekdays: [tuesday, wednesday, saturday]
+
+european_rounds:
+  - id: q2
+    name: Second qualifying round (mini-tournament)
+    note: >-
+      Semi-finals 5 August, final and third-place play-off 8 August 2026.
+      Champions Path (Brann) and League Path (Vålerenga) are separate
+      tournaments. The winner goes to Q3; a loss drops to the Women's Europa
+      Cup.
+    first_leg:
+      forced_date: 2026-08-05
+    second_leg:
+      forced_date: 2026-08-08
+    drop_to_competition: womens_europa_cup_2026
+    drop_to_round: q1
+    ties:
+      - team: brann_w
+        win_probability: 0.3
+      - team: valerenga_w
+        win_probability: 0.25
+
+  - id: q3
+    name: Third qualifying round
+    note: >-
+      Two-legged ties, first legs 25/26 August and second legs 1/2 September
+      2026. A loss drops to the Women's Europa Cup second qualifying round.
+    first_leg:
+      window_start: 2026-08-25
+      window_end: 2026-08-26
+      granularity: week
+    second_leg:
+      window_start: 2026-09-01
+      window_end: 2026-09-02
+      granularity: week
+    drop_to_competition: womens_europa_cup_2026
+    drop_to_round: q2
+    ties:
+      - team: brann_w
+      - team: valerenga_w

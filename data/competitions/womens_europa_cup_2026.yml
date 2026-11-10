@@ -1,0 +1,82 @@
+# 2026-27 UEFA Women's Europa Cup — second edition, Norwegian entrants (#14).
+#
+# format: european, movable: false — see womens_champions_league_2026.yml for
+# the shared shape and sourcing. All rounds are two-legged.
+#
+# Rosenborg (2025 Toppserien third place; Norway is ranked 8-13) enter the
+# first qualifying round directly, so their path is certain from there.
+# Brann and Vålerenga arrive by dropping out of Women's Champions League
+# qualifying (womens_champions_league_2026.yml): a mini-tournament loss lands
+# in q1, a third-qualifying-round loss in q2. The tie in q1 for those two is
+# therefore contingent, not an entry.
+#
+# Only rounds that touch the Toppserien season are modelled: the quarter-finals
+# onwards fall in February-May 2027.
+#
+# Sources (verified: false):
+#   https://www.uefa.com/womenseuropacup/fixtures-results/format/
+#   https://en.wikipedia.org/wiki/2026%E2%80%9327_UEFA_Women%27s_Europa_Cup_qualifying_rounds
+id: womens_europa_cup_2026
+name: UEFA Women's Europa Cup
+short_name: "UWEC"
+season: 2026
+gender: women
+format: european
+movable: false
+
+color: "#b7950b"
+
+team_count: 3
+teams:
+  - rosenborg_w
+  - brann_w
+  - valerenga_w
+
+min_rest_days: 2
+
+matchday_weekdays: [wednesday]
+
+european_rounds:
+  - id: q1
+    name: First qualifying round
+    note: "Rosenborg's entry round; first legs 26/29 August, second legs 1/2 September 2026."
+    first_leg:
+      window_start: 2026-08-26
+      window_end: 2026-08-29
+      granularity: week
+    second_leg:
+      window_start: 2026-09-01
+      window_end: 2026-09-02
+      granularity: week
+    ties:
+      - team: rosenborg_w
+        reached: true
+      - team: brann_w
+      - team: valerenga_w
+
+  - id: q2
+    name: Second qualifying round
+    first_leg:
+      forced_date: 2026-09-23
+    second_leg:
+      forced_date: 2026-09-30
+    ties:
+      - team: rosenborg_w
+      - team: brann_w
+      - team: valerenga_w
+
+  - id: r16
+    name: Round of 16
+    note: "First legs 28/29 October, second legs 10/11 November 2026."
+    first_leg:
+      window_start: 2026-10-28
+      window_end: 2026-10-29
+      granularity: week
+    second_leg:
+      window_start: 2026-11-10
+      window_end: 2026-11-11
+      granularity: week
+    ties:
+      - team: rosenborg_w
+      - team: brann_w
+      - team: valerenga_w

@@ -74,6 +74,9 @@ def test_only_entry_rounds_are_hard_by_default(frame):
         "tromso_m/europa_league_2026/q2",
         "lillestrom_m/europa_league_2026/playoff",
         "brann_m/conference_league_2026/q2",
+        "brann_w/womens_champions_league_2026/q2",
+        "valerenga_w/womens_champions_league_2026/q2",
+        "rosenborg_w/womens_europa_cup_2026/q1",
         # Each cup's first round for the Eliteserien clubs
         *(f"{t}/cup_men_2026/r4" for t in frame.cup_trees if t.endswith("_m")),
         *(f"{t}/cup_men_2027/r1" for t in frame.cup_trees if t.endswith("_m")),
@@ -125,3 +128,32 @@ def test_cup_rounds_after_the_entry_round_are_contingent_with_compounding_probab
     assert by_node["brann_m/cup_men_2027/r4"].reached_probability == pytest.approx(0.85**3)
     assert by_node["brann_m/cup_men_2027/qf"].reached_probability == pytest.approx(0.85**3 * 0.5)
     assert not by_node["brann_m/cup_men_2027/r2"].hard
+
+
+def test_toppserien_entrants_get_commitments_from_the_womens_european_competitions(frame):
+    for team in ("brann_w", "valerenga_w", "rosenborg_w"):
+        competitions = {c.competition_id for c in frame.commitments.for_team(team) if c.source == "uefa"}
+        assert any(c.startswith("womens_") for c in competitions), team
+    assert {
+        c.competition_id for c in frame.commitments.for_team("brann_w") if c.source == "uefa"
+    } == {"womens_champions_league_2026", "womens_europa_cup_2026"}
+
+
+def test_womens_europe_is_hard_only_at_entry_and_contingent_after(frame):
+    by_node = {c.node_id: c for c in frame.commitments}
+    assert by_node["brann_w/womens_champions_league_2026/q2"].hard
+    assert by_node["rosenborg_w/womens_europa_cup_2026/q1"].hard
+    for node in (
+        "brann_w/womens_champions_league_2026/q3",
+        "brann_w/womens_europa_cup_2026/q1",
+        "valerenga_w/womens_europa_cup_2026/q2",
+        "rosenborg_w/womens_europa_cup_2026/q2",
+    ):
+        assert not by_node[node].hard, node
+
+
+def test_womens_uefa_weeks_never_touch_the_mens_clubs(frame):
+    womens = [w for w in frame.uefa_weeks if w.competition_id.startswith("womens_")]
+    assert womens
+    for week in womens:
+        assert all(t.endswith("_w") for t in week.teams), week.label
