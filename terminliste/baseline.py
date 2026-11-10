@@ -169,7 +169,7 @@ def evaluate_baseline(source: BaselineSource, world: World) -> BaselineEvaluatio
         raise BaselineError(f"{source.id}: cup scheduling failed — {exc}") from None
     except EuropeanCascadeError as exc:
         raise BaselineError(f"{source.id}: European scheduling failed — {exc}") from None
-    cup_schedules = frame.cup_schedules
+    cup_schedules = frame.solver_cup_schedules
     constraints = build_constraints(world, season, competitions, cup_schedules)
 
     try:

@@ -255,6 +255,69 @@ def test_cup_round_override_for_a_non_entrant_is_caught():
     assert any("overrides 'ghost'" in e for e in errors)
 
 
+def _cup_world(**round_kwargs):
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    clubs = [f.club("c1", [t1])]
+    rounds = [
+        f.cup_round("r1", forced_date=date(2026, 9, 1), name="r1"),
+        f.cup_round("r2", **round_kwargs),
+    ]
+    cup = f.competition("cup", ["t1"], format="cup", cup_rounds=rounds)
+    return f.world(clubs, [v], [cup])
+
+
+def test_cup_override_before_the_round_rest_gap_is_caught():
+    errors = validate_world(
+        _cup_world(
+            window_start=date(2026, 9, 8),
+            window_end=date(2026, 9, 20),
+            team_overrides={"t1": date(2026, 9, 1)},
+        )
+    )
+    assert any("override for 't1'" in e and "before the earliest" in e for e in errors)
+
+
+def test_cup_override_after_a_windowed_rounds_end_is_caught():
+    errors = validate_world(
+        _cup_world(
+            window_start=date(2026, 9, 8),
+            window_end=date(2026, 9, 20),
+            team_overrides={"t1": date(2026, 9, 30)},
+        )
+    )
+    assert any("after the round's window end" in e for e in errors)
+
+
+def test_cup_override_inside_the_window_is_accepted():
+    errors = validate_world(
+        _cup_world(
+            window_start=date(2026, 9, 8),
+            window_end=date(2026, 9, 20),
+            team_overrides={"t1": date(2026, 9, 15)},
+        )
+    )
+    assert not any("override" in e for e in errors)
+
+
+def test_match_window_days_on_a_cup_is_rejected():
+    import factories as f
+
+    v = f.venue("v1")
+    t1 = f.team("t1", "c1", "v1")
+    cup = f.competition(
+        "cup",
+        ["t1"],
+        format="cup",
+        match_window_days=5,
+        cup_rounds=[f.cup_round("r1", forced_date=date(2026, 9, 1))],
+    )
+    errors = validate_world(f.world([f.club("c1", [t1])], [v], [cup]))
+    assert any("match_window_days" in e for e in errors)
+
+
 def test_cup_with_no_rounds_is_caught():
     import factories as f
 

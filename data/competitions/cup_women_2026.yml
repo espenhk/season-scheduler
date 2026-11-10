@@ -36,6 +36,9 @@ teams:
 
 min_rest_days: 2
 
+# Out of the solvers' hard cup constraints until elimination-aware commitments land (#8).
+solver_commitments: false
+
 cup_rounds:
   - id: r2
     name: Round 2

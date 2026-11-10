@@ -190,7 +190,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
     frame, frame_warnings = _build_frame_or_exit(world, season)
-    cup_schedules, european_commitments = frame.cup_schedules, frame.european_commitments
+    cup_schedules, european_commitments = frame.solver_cup_schedules, frame.european_commitments
     constraints = build_constraints(
         world, season, competitions, cup_schedules, european_commitments
     )
@@ -256,7 +256,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         html_path,
         title=f"{season.year} season schedule",
         warnings=frame_warnings,
-        cup_schedules=cup_schedules,
+        cup_schedules=frame.cup_schedules,
         european_competitions=european_competitions,
         resolved_legs=resolved_legs,
     )
@@ -272,7 +272,7 @@ def cmd_score(args: argparse.Namespace) -> int:
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
     frame, frame_warnings = _build_frame_or_exit(world, season)
-    cup_schedules, european_commitments = frame.cup_schedules, frame.european_commitments
+    cup_schedules, european_commitments = frame.solver_cup_schedules, frame.european_commitments
     constraints = build_constraints(
         world, season, competitions, cup_schedules, european_commitments
     )
@@ -315,7 +315,7 @@ def cmd_score(args: argparse.Namespace) -> int:
         title=f"Score report — {Path(args.schedule).name}",
         full_diagnostics=True,
         warnings=warnings,
-        cup_schedules=cup_schedules,
+        cup_schedules=frame.cup_schedules,
         european_competitions=european_competitions,
         resolved_legs=resolved_legs,
     )
