@@ -691,13 +691,6 @@ def test_every_round_sits_in_one_planned_slot_and_both_backends_share_the_plan(s
             slots = [candidate.round_slots[(competition.id, r)] for r in range(competition.rounds)]
             assert len(set(slots)) == competition.rounds
             assert set(slots) == set(plan.chosen)
-            # Rounds stay near their slot: no match strays beyond the window.
-            for match in candidate.matches:
-                if match.competition_id != competition.id:
-                    continue
-                slot = candidate.round_slots[(competition.id, match.round_index)]
-                drift = abs((match.date - slot.default_day).days)
-                assert drift <= competition.match_window_days * 3
 
 
 def test_solve_fails_clearly_when_a_league_has_too_few_slots():
@@ -734,23 +727,97 @@ def test_a_round_swap_moves_the_slot_with_the_round_and_undo_restores_it():
         WorkingMatch(
             competition_id=m.competition_id, home_team=m.home_team, away_team=m.away_team,
             leg=m.leg, round_index=m.round_index, date=m.date, venue=m.venue,
-            anchor=plans[m.competition_id].slot_of(m.round_index).default_day,
+            slot=plans[m.competition_id].slot_of(m.round_index),
         )
         for m in initial
     ]
-    moves = _MoveSet(
-        working, pinned, world, competitions, calendars_by_competition(calendar, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions,
+        constraints=build_constraints(world, season, competitions), ctx=ctx,
     )
-    before = [(m.date, m.anchor) for m in working]
+    moves = _MoveSet(
+        working, pinned, request, calendars_by_competition(calendar, competitions)
+    )
+    before = [(m.date, m.slot) for m in working]
 
     rng = random.Random(1)
     snapshot = None
     while snapshot is None:
         snapshot = moves._swap_rounds(rng)
-    moved = [i for i, (m, b) in enumerate(zip(working, before, strict=True)) if (m.date, m.anchor) != b]
+    moved = [i for i, (m, b) in enumerate(zip(working, before, strict=True)) if (m.date, m.slot) != b]
     assert moved
     for i in moved:
-        assert working[i].anchor != before[i][1]
+        assert working[i].slot != before[i][1]
+        assert working[i].date in working[i].slot.days
 
     _restore(working, snapshot)
-    assert [(m.date, m.anchor) for m in working] == before
+    assert [(m.date, m.slot) for m in working] == before
+
+
+@pytest.mark.parametrize("solver_name", SOLVERS)
+def test_every_match_stays_on_a_day_of_its_rounds_slot(solver_name):
+    """Stage 4 (#7): no solver moves a match out of its round's slot."""
+    world, season, competitions = _small_world()
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=4, top_n=2, time_budget_s=8.0,
+    )
+    result = _get_scheduler(solver_name).solve(request)
+
+    assert result.candidates
+    for candidate in result.candidates:
+        for match in candidate.matches:
+            slot = candidate.round_slots[(match.competition_id, match.round_index)]
+            assert match.date in slot.days, (match.key, match.date, slot.days)
+
+
+def test_slot_days_leave_every_team_its_rest_before_a_single_day_slot():
+    """A Monday two days before a midweek round would break `min_rest_days`
+    for the whole league, so the planner drops it from the slot."""
+    from terminliste.model.calendar import build_calendar
+    from terminliste.slot_planner import plan_slots
+
+    world, season, competitions = _small_world()
+    plans = plan_slots(world, season, competitions, build_calendar(world, season))
+    for competition in competitions:
+        chosen = plans[competition.id].chosen
+        gap = competition.min_rest_days + 1
+        for earlier, later in zip(chosen, chosen[1:], strict=False):
+            assert any((b - a).days >= gap for a in earlier.days for b in later.days)
+
+
+def test_local_moves_never_leave_the_round_slot():
+    import random
+
+    from terminliste.model.calendar import build_calendar, calendars_by_competition
+    from terminliste.slot_planner import plan_slots
+    from terminliste.solvers.greedy import build_initial_schedule
+    from terminliste.solvers.local_search import WorkingMatch, _MoveSet
+
+    world, season, competitions = _small_world()
+    calendar = build_calendar(world, season)
+    plans = plan_slots(world, season, competitions, calendar)
+    initial, pinned, _ = build_initial_schedule(
+        world, season, competitions, 5, calendar, slot_plans=plans
+    )
+    working = [
+        WorkingMatch(
+            competition_id=m.competition_id, home_team=m.home_team, away_team=m.away_team,
+            leg=m.leg, round_index=m.round_index, date=m.date, venue=m.venue,
+            slot=plans[m.competition_id].slot_of(m.round_index),
+        )
+        for m in initial
+    ]
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions,
+        constraints=build_constraints(world, season, competitions),
+        ctx=EvalContext(world=world, season=season, travel=ApiTravelModel(world)),
+    )
+    moves = _MoveSet(working, pinned, request, calendars_by_competition(calendar, competitions))
+    rng = random.Random(2)
+    for _ in range(1500):
+        moves.apply(rng)
+        assert all(m.date in m.slot.days for m in working)

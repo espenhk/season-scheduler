@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Protocol
 
 from ..frame import SeasonFrame
@@ -34,6 +35,16 @@ DIVERSITY_THRESHOLD = 0.15
 # arrangement was the common case.
 _DIFFICULTY_HARD = 0.05
 _DIFFICULTY_EASY = 0.50
+
+
+def round_for_date(
+    slots: dict[int, RoundSlot], anchors: dict[int, date], day: date
+) -> int:
+    """The round whose slot holds `day`, else the one whose anchor is nearest."""
+    for round_index, slot in slots.items():
+        if slot.contains(day):
+            return round_index
+    return min(anchors, key=lambda r: abs((anchors[r] - day).days))
 
 
 @dataclass
