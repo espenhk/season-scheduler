@@ -113,6 +113,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
             )
 
     for season in world.seasons.values():
+        # Every season, so slot planning below checks each one's capacity.
         try:
             frame, frame_warnings = build_season_frame(world, season)
         except (CupSchedulingError, EuropeanCascadeError) as exc:

@@ -598,6 +598,7 @@ class ExtraRoundSlot(BaseModel):
     kind: Literal["holiday", "midweek"] = "holiday"
     competitions: list[str] = Field(default_factory=list)
     reason: str = ""
+    verified: bool = True
 
 
 class RivalryFixture(BaseModel):

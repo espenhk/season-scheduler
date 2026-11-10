@@ -774,13 +774,8 @@ def _validate_rivalry_fixtures(world: World, season: Season) -> list[str]:
 
 
 def _validate_calendar_capacity(world: World, season: Season) -> list[str]:
-    """Catch a league with fewer usable round slots than rounds.
-
-    Counts slots, not days: a Fri-Mon weekend hosts one round however many
-    days it has, and the World Cup break or a FIFA window removes whole
-    slots. Cup weekends need the resolved cups, so `cli.py validate` checks
-    those afterwards through the slot planner.
-    """
+    """Catch a league with fewer usable round slots than rounds. Cup weekends
+    need the resolved cups, so `cli.py validate` checks those via the planner."""
     # Local imports: the calendar and slot modules import this one.
     from .calendar import build_calendar, calendars_by_competition
     from .slots import candidate_slots, max_compatible_slots

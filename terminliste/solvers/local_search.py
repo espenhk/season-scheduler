@@ -277,11 +277,8 @@ def _round_slots(
 def _assign_missing_anchors(
     matches: list[WorkingMatch], slot_plans: dict[str, SlotPlan] | None
 ) -> None:
-    """Give matches with no anchor their round's slot, read off the dates.
-
-    Only for states built outside `solve`, which sets anchors exactly. Without
-    plans the anchor is the earliest date the round occupies.
-    """
+    """Fallback anchors for states built outside `solve` (tests); `solve` sets
+    them exactly, so production never reaches this."""
     dates_by_round: dict[tuple[str, int], list[date]] = {}
     for match in matches:
         if match.anchor is None:

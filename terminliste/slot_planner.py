@@ -1,12 +1,4 @@
-"""Stage 2/3: pick one slot per league round from the season frame (#6).
-
-Slots come from each league's own calendar; the frame supplies what they must
-avoid. Cup days on a league weekend remove the slot outright; a binding cup or
-UEFA date near a slot's default day is a clash, priced so the planner takes a
-clear slot whenever one exists and the least-clashing one otherwise. A small
-exact DP (a few dozen slots) picks the round slots, spreading them evenly over
-the weeks that can host a round.
-"""
+"""Picks one slot per league round from the season frame, avoiding cup and UEFA clashes (#6)."""
 
 from __future__ import annotations
 
