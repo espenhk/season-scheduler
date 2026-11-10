@@ -271,3 +271,11 @@ def test_scalar_string_in_a_list_field_is_rejected(tmp_path, list_field):
     )
     with pytest.raises(BaselineError, match=f"{list_field!r} must be a list"):
         load_baseline(sidecar)
+
+
+def test_grass_season_edge_fires_on_the_committed_baseline(world, sources):
+    for source in sources:
+        evaluation = evaluate_baseline(source, world)
+        result = evaluation.score.result("grass_season_edge")
+        assert result.count >= 1
+        assert result.total < 0

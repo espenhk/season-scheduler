@@ -493,6 +493,69 @@ class GrassAwayRoundOne:
 
 
 @dataclass
+class GrassSeasonEdge:
+    """Penalise grass-venue home matches outside the playable window, with cutoffs shifted by latitude (#16)."""
+
+    competitions: list[Competition]
+    id: str = "grass_season_edge"
+    kind: str = "soft"
+    weight: float = 1.5
+    spring_cutoff: tuple[int, int] = (4, 15)
+    autumn_cutoff: tuple[int, int] = (11, 15)
+    reference_lat: float = 60.0
+    days_per_degree: float = 4.0
+    _weight_by_team: dict[str, float] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        self._weight_by_team = _weights_by_team(self.competitions, "grass_season_edge", self.weight)
+
+    def days_outside_window(self, match_date: date, lat: float) -> int:
+        shift = timedelta(days=round((lat - self.reference_lat) * self.days_per_degree))
+        year = match_date.year
+        spring = date(year, *self.spring_cutoff) + shift
+        autumn = date(year, *self.autumn_cutoff) - shift
+        if match_date < spring:
+            return (spring - match_date).days
+        if match_date > autumn:
+            return (match_date - autumn).days
+        return 0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        total = 0.0
+        count = 0
+        events: list[Event] = []
+
+        for match in index.matches:
+            weight = self._weight_by_team.get(match.home_team)
+            if weight is None:
+                continue
+            venue = ctx.world.venue(match.venue)
+            if venue.surface != "grass":
+                continue
+            days = self.days_outside_window(match.date, venue.lat)
+            if days == 0:
+                continue
+            penalty = weight * days / 7
+            total -= penalty
+            count += 1
+            if ctx.detail:
+                events.append(
+                    Event(
+                        delta=-penalty,
+                        detail=(
+                            f"{ctx.world.team_label(match.home_team)} v "
+                            f"{ctx.world.team_label(match.away_team)} on {match.date} at grass "
+                            f"{venue.name} — {days} days outside its playable window"
+                        ),
+                        match_keys=(match.key,),
+                        team_ids=(match.home_team, match.away_team),
+                    )
+                )
+
+        return ConstraintResult(self.id, "soft", total, count, events)
+
+
+@dataclass
 class LateKickoffLongTravel:
     """Penalise a late Sunday kickoff for an away team with a long trip home.
 
@@ -788,6 +851,7 @@ __all__ = [
     "ConsecutiveHomeDays",
     "EuropeanCommitmentSoftConflict",
     "GrassAwayRoundOne",
+    "GrassSeasonEdge",
     "HomeAwayBalance",
     "HomeAwayBreaks",
     "LateKickoffLongTravel",
