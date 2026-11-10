@@ -31,6 +31,7 @@ from .schema import (
     Venue,
 )
 
+
 class DataError(Exception):
     """Raised for referential-integrity failures in the data files."""
 
