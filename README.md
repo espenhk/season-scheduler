@@ -229,8 +229,24 @@ evenly over the weeks that can host one. A slot's default day is the day
 fewest teams clash on, nearest the league's preferred weekday. The solvers
 take their round anchors from the plan; `validate` and the report list slots
 against rounds and the size of the search space, and `validate` fails when a
-league has fewer usable slots than rounds. Matches may still drift up to
-`match_window_days` from the anchor until days are confined to the slot.
+league has fewer usable slots than rounds. Days a neighbouring round would leave short of
+`min_rest_days` for the whole league (a Monday before a midweek round) are
+dropped from the slot.
+
+### Day within the slot (Stage 4)
+
+A match's date is always one of its round's slot days (#7); the slot stays
+attached to the round for the whole search. Greedy placement picks each
+match's day inside its slot: the default day unless a UEFA leg, cup date,
+shared venue or dual-club home clash makes another day cheaper, so a Thursday
+leg pushes a team to Sunday/Monday and a Tuesday/Wednesday leg to
+Saturday/Sunday through the rest rule. Local search has four moves: shift a
+match to another day of its slot, swap two rounds' slots within a leg, flip a
+mirrored home/away pair, and swap two teams' labels. Proposals that would put a
+team on a blackout, cup or UEFA date, or break rest, are dropped before the
+scorer runs. CP-SAT's candidate dates per fixture are the slot's allowed days.
+`match_window_days` is no longer read by the solvers. A hard fixed requirement
+dated outside every slot is the one exception, and is reported as a warning.
 
 ### European qualifying cascade
 

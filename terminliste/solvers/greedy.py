@@ -269,7 +269,13 @@ def resolve_round_pins(
             continue
         calendar = (by_competition or {}).get(plan.competition.id)
         chosen, warning = _clear_pin_date(
-            anchor, plan, calendar, cup_windows, european_commitments, movable=True
+            anchor,
+            plan,
+            calendar,
+            cup_windows,
+            european_commitments,
+            movable=True,
+            slot=plan.slots.get(final_round),
         )
         pins[(plan.competition.id, final_round)] = chosen
         if warning:
@@ -281,9 +287,7 @@ def resolve_round_pins(
         plan = next((p for p in planned if p.competition.id == requirement.competition), None)
         if plan is None or not plan.anchors:
             continue
-        round_index = min(
-            plan.anchors, key=lambda r: abs((plan.anchors[r] - requirement.date).days)
-        )
+        round_index = _round_for_date(plan, requirement.date)
         _, warning = _clear_pin_date(
             requirement.date, plan, None, cup_windows, european_commitments, movable=False
         )
@@ -294,6 +298,14 @@ def resolve_round_pins(
     return pins, warnings
 
 
+def _round_for_date(plan: PlannedCompetition, day: date) -> int:
+    """The round whose slot holds `day`, else the one whose anchor is nearest."""
+    for round_index, slot in plan.slots.items():
+        if slot.contains(day):
+            return round_index
+    return min(plan.anchors, key=lambda r: abs((plan.anchors[r] - day).days))
+
+
 def _clear_pin_date(
     anchor: date,
     plan: PlannedCompetition,
@@ -301,22 +313,23 @@ def _clear_pin_date(
     cup_windows: dict[str, list[tuple[date, int]]],
     european_commitments: dict[str, list[EuropeanCommitmentDate]],
     movable: bool,
+    slot: RoundSlot | None = None,
 ) -> tuple[date, str | None]:
     """The pin date to use, plus a warning if it still conflicts.
 
-    Tries the anchor, then — only when `movable` and a calendar is available —
-    nearby dates within the match window, widening once.
+    Tries the anchor, then — only when `movable` — the other days of the
+    round's slot, nearest first.
     """
     team_ids = plan.competition.teams
     if _round_clear(anchor, team_ids, cup_windows, european_commitments):
         return anchor, None
 
-    if movable and calendar is not None:
-        days = plan.competition.match_window_days
-        for radius in (days, days * 3):
-            for day in calendar.window(anchor, radius):
-                if _round_clear(day, team_ids, cup_windows, european_commitments):
-                    return day, None
+    if movable and slot is not None:
+        for day in sorted(slot.days, key=lambda d: (abs((d - anchor).days), d)):
+            if calendar is not None and not calendar.is_allowed(day):
+                continue
+            if _round_clear(day, team_ids, cup_windows, european_commitments):
+                return day, None
 
     round_desc = "final round" if movable else "full-round requirement"
     resolution = "no clear nearby date was found" if movable else "the date cannot move"
@@ -338,33 +351,72 @@ def _round_clear(
     )
 
 
-def align_home_teams_to_round_pins(
-    season: Season,
-    planned: list[PlannedCompetition],
-    round_pins: dict[tuple[str, int], date],
-) -> None:
-    """Flip fixtures so a hard `FixedRequirement`'s team is home in its pinned round.
+def align_home_teams_to_requirements(season: Season, planned: list[PlannedCompetition]) -> None:
+    """Flip fixtures so a hard `FixedRequirement`'s team is home in the round
+    whose slot holds its date.
 
-    A pinned round arrives with whatever orientation the round-robin generator
-    gave it, which has no reason to put e.g. Brann at home on May 16. Flips
-    the offending fixture and its season mirror, keeping every pairing meeting
-    home once and away once.
+    The round-robin generator has no reason to put e.g. Brann at home on
+    May 16. Flips the fixture and its season mirror, keeping every pairing
+    meeting home once and away once. Two required teams due at home in one
+    round cannot meet each other, so one is relabelled away from the other
+    first.
     """
     by_id = {p.competition.id: p for p in planned}
-    round_by_competition_date = {
-        (competition_id, day): round_index
-        for (competition_id, round_index), day in round_pins.items()
-    }
+    required: dict[str, list[tuple[str, int]]] = {}
     for requirement in season.fixed_requirements:
-        if not requirement.hard:
-            continue
-        round_index = round_by_competition_date.get((requirement.competition, requirement.date))
-        if round_index is None:
-            continue
         plan = by_id.get(requirement.competition)
-        if plan is None:
+        if not requirement.hard or plan is None or not plan.anchors:
             continue
-        _ensure_home_in_round(plan, requirement.home_team, round_index)
+        required.setdefault(plan.competition.id, []).append(
+            (requirement.home_team, _round_for_date(plan, requirement.date))
+        )
+
+    for competition_id, needs in required.items():
+        plan = by_id[competition_id]
+        for _ in range(_SEPARATION_ATTEMPTS):
+            if not _separate_required_teams(plan, needs):
+                break
+        for team_id, round_index in needs:
+            _ensure_home_in_round(plan, team_id, round_index)
+
+
+_SEPARATION_ATTEMPTS = 20
+
+
+def _meet(plan: PlannedCompetition, team_a: str, team_b: str, round_index: int) -> bool:
+    return any(
+        f.round_index == round_index and {f.home_team, f.away_team} == {team_a, team_b}
+        for f in plan.fixtures
+    )
+
+
+def _meetings(plan: PlannedCompetition, needs: list[tuple[str, int]]) -> list[tuple[str, str]]:
+    """Required teams that meet each other in the round both must be home."""
+    return [
+        (team_a, team_b)
+        for i, (team_a, round_a) in enumerate(needs)
+        for team_b, round_b in needs[i + 1 :]
+        if round_a == round_b and _meet(plan, team_a, team_b, round_a)
+    ]
+
+
+def _separate_required_teams(plan: PlannedCompetition, needs: list[tuple[str, int]]) -> bool:
+    """Relabel one team of a clashing pair with a team that has no requirement,
+    keeping the change only if it leaves fewer clashes. Returns whether it
+    changed anything."""
+    clashes = _meetings(plan, needs)
+    if not clashes:
+        return False
+    required_teams = {team for team, _ in needs}
+    _, team_b = clashes[0]
+    for other in plan.competition.teams:
+        if other in required_teams:
+            continue
+        _relabel(plan, team_b, other)
+        if len(_meetings(plan, needs)) < len(clashes):
+            return True
+        _relabel(plan, team_b, other)
+    return False
 
 
 def _ensure_home_in_round(plan: PlannedCompetition, team_id: str, round_index: int) -> None:
@@ -461,7 +513,7 @@ def build_initial_schedule(
     round_pins, pin_warnings = resolve_round_pins(
         season, planned, by_competition, cup_windows, european
     )
-    align_home_teams_to_round_pins(season, planned, round_pins)
+    align_home_teams_to_requirements(season, planned)
 
     state = PlacementState()
     matches: list[Match] = []
@@ -472,15 +524,25 @@ def build_initial_schedule(
 
     # Fixed requirements first: the least flexible thing in the season, and
     # placing them last would mean unpicking everything around them.
+    claimed: set[tuple[str, int, str, str]] = set()
     for requirement in season.fixed_requirements:
         if not requirement.hard:
             continue
         plan = by_id.get(requirement.competition)
         if plan is None:
             continue
-        fixture = _pick_fixture_for_requirement(plan, requirement.home_team, requirement.date)
+        fixture = pick_fixture_for_requirement(
+            plan, requirement.home_team, requirement.date, claimed
+        )
         if fixture is None:
             continue
+        claimed.add((fixture.competition_id, fixture.round_index, fixture.home_team, fixture.away_team))
+        if not plan.slots[fixture.round_index].contains(requirement.date):
+            pin_warnings.append(
+                f"{requirement.competition}: fixed requirement {requirement.id} on "
+                f"{requirement.date} lies outside every round slot; the match is placed "
+                f"there regardless of its round's slot"
+            )
         venue = world.team(fixture.home_team).home_venue
         match = Match(
             competition_id=fixture.competition_id,
@@ -548,13 +610,28 @@ def build_initial_schedule(
     return matches, pinned, pin_warnings
 
 
-def _pick_fixture_for_requirement(
-    plan: PlannedCompetition, home_team: str, target: date
+def pick_fixture_for_requirement(
+    plan: PlannedCompetition,
+    home_team: str,
+    target: date,
+    taken: set[tuple[str, int, str, str]] | None = None,
 ) -> Fixture | None:
-    """The home fixture whose round already sits closest to the required date."""
-    candidates = [f for f in plan.fixtures if f.home_team == home_team]
+    """The team's home fixture in the round whose slot holds `target`, else the
+    one whose round sits closest. `taken` holds fixtures already claimed by
+    another requirement, as (competition, round, home, away)."""
+    taken = taken or set()
+    candidates = [
+        f
+        for f in plan.fixtures
+        if f.home_team == home_team
+        and (f.competition_id, f.round_index, f.home_team, f.away_team) not in taken
+    ]
     if not candidates:
         return None
+    round_index = _round_for_date(plan, target)
+    in_round = [f for f in candidates if f.round_index == round_index]
+    if in_round:
+        return in_round[0]
     return min(candidates, key=lambda f: abs((plan.anchors[f.round_index] - target).days))
 
 
@@ -571,12 +648,9 @@ def _place_fixture(
 ) -> Match:
     competition = plan.competition
     venue = world.team(fixture.home_team).home_venue
-    window = calendar.window(anchor, competition.match_window_days, venue)
-
-    if not window:
-        # Widen rather than fail: the local search can fix a badly placed
-        # match, but not a missing one.
-        window = calendar.window(anchor, competition.match_window_days * 3, venue) or [anchor]
+    # A blocked day stays a candidate (at `_BLOCKED` cost) so a match never
+    # leaves its slot, even when the slot has no clean day for it.
+    window = list(plan.slots[fixture.round_index].days)
 
     preferred_weekday = WEEKDAYS.index(competition.preferred_weekday)
     best_day = window[0]
