@@ -17,7 +17,7 @@ from terminliste.report.payload import json_for_script
 from terminliste.report.render import (
     _club_headlines,
     _cup_entries,
-    _day_dots,
+    _day_competitions,
     _entity_counts,
     _european_entries,
     _fairness_rows,
@@ -331,21 +331,19 @@ def test_render_report_embeds_hostile_names_without_breaking_out_of_the_data_scr
 # -- combined view -------------------------------------------------------
 
 
-def test_match_entries_carry_short_names_and_club_ids_for_filtering():
+def test_match_entries_carry_team_ids_venue_and_competition_for_the_payload():
     world, season, comp_m, comp_w = _two_dual_clubs_world()
     matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
     candidate = _candidate(world, season, matches, [])
-    club_colors = {c.id: c.color for c in world.clubs.values()}
 
-    entries = _match_entries(world, candidate, club_colors, {"club_a", "club_b"})
+    entries = _match_entries(world, candidate, {"club_a", "club_b"})
     assert len(entries) == 1
     entry = entries[0]
-    assert entry["home_short"] == world.team_short_label("a_m")
-    assert entry["away_short"] == world.team_short_label("opp_m")
-    assert entry["home_club"] == "club_a"
-    assert entry["away_club"] == "opp1"
-    assert entry["color"] == "#112233"
-    assert entry["away_color"] == "#778899"
+    assert entry["home_team"] == "a_m"
+    assert entry["away_team"] == "opp_m"
+    assert entry["venue_id"] == "va"
+    assert entry["home"] == world.team_label("a_m")
+    assert entry["paired"] is False
     assert entry["competition_short"] == comp_m.short_name
 
 
@@ -374,7 +372,6 @@ def test_combined_calendar_interleaves_both_competitions_in_the_same_week():
 
 def test_cup_entries_flatten_one_row_per_entered_team_per_round():
     world, season, comp_m, comp_w = _two_dual_clubs_world()
-    club_colors = {c.id: c.color for c in world.clubs.values()}
     competition_colors = {"cup1": {"fg": "#111111", "bg": "#eeeeee"}}
     schedule = f.cup_schedule(
         "cup1",
@@ -390,16 +387,15 @@ def test_cup_entries_flatten_one_row_per_entered_team_per_round():
         competition_short_name="NM",
     )
 
-    entries = _cup_entries(world, [schedule], club_colors, competition_colors)
+    entries = _cup_entries(world, [schedule], competition_colors)
 
     assert len(entries) == 2
-    entry = next(e for e in entries if e["team_full"] == world.team_label("a_m"))
-    assert entry["is_cup"] is True
+    entry = next(e for e in entries if e["team_id"] == "a_m")
+    assert entry["team"] == world.team_short_label("a_m")
     assert entry["competition_id"] == "cup1"
     assert entry["competition_name"] == "NM Cup"
     assert entry["competition_short"] == "NM"
     assert entry["round_name"] == "Round 1"
-    assert entry["club_id"] == "club_a"
     assert entry["venue_type"] == "away"
     assert entry["date"] == date(2026, 3, 1)
     assert entry["comp_fg"] == "#111111"
@@ -436,7 +432,6 @@ def test_combined_views_include_cup_rounds_alongside_league_matches():
 
 def test_european_entries_flatten_one_row_per_entered_team_per_leg():
     world, season, comp_m, comp_w = _two_dual_clubs_world()
-    club_colors = {c.id: c.color for c in world.clubs.values()}
     competition_colors = {"cl": {"fg": "#111111", "bg": "#eeeeee"}}
     round_ = f.european_round(
         "q3",
@@ -447,14 +442,13 @@ def test_european_entries_flatten_one_row_per_entered_team_per_leg():
     comp = f.competition("cl", ["a_m"], format="european", european_rounds=[round_])
     resolved_legs = {("cl", "q3"): (date(2026, 8, 4), date(2026, 8, 11))}
 
-    entries = _european_entries(world, [comp], resolved_legs, club_colors, competition_colors)
+    entries = _european_entries(world, [comp], resolved_legs, competition_colors)
 
     assert len(entries) == 2
     first_leg_entry = next(e for e in entries if e["date"] == date(2026, 8, 4))
-    assert first_leg_entry["is_european"] is True
+    assert first_leg_entry["team_id"] == "a_m"
     assert first_leg_entry["competition_id"] == "cl"
     assert first_leg_entry["opponent"] == "Union Saint-Gilloise"
-    assert first_leg_entry["club_id"] == "club_a"
     # home_leg="second" -> the first leg is away for this team.
     assert first_leg_entry["venue_type"] == "away"
     assert first_leg_entry["comp_fg"] == "#111111"
@@ -466,7 +460,6 @@ def test_european_entries_flatten_one_row_per_entered_team_per_leg():
 
 def test_european_entries_use_unknown_venue_type_when_home_leg_is_not_set():
     world, season, comp_m, comp_w = _two_dual_clubs_world()
-    club_colors = {c.id: c.color for c in world.clubs.values()}
     round_ = f.european_round(
         "playoff",
         forced_date=date(2026, 8, 18),
@@ -475,7 +468,7 @@ def test_european_entries_use_unknown_venue_type_when_home_leg_is_not_set():
     comp = f.competition("cl", ["a_m"], format="european", european_rounds=[round_])
     resolved_legs = {("cl", "playoff"): (date(2026, 8, 18), date(2026, 8, 18))}
 
-    entries = _european_entries(world, [comp], resolved_legs, club_colors, {})
+    entries = _european_entries(world, [comp], resolved_legs, {})
     assert all(e["venue_type"] == "unknown" for e in entries)
     assert all(e["opponent"] == "TBD" for e in entries)
 
@@ -505,7 +498,6 @@ def test_main_tournament_renders_via_the_display_adapter():
     )
 
     world, season, comp_m, comp_w = _two_dual_clubs_world()
-    club_colors = {c.id: c.color for c in world.clubs.values()}
     qualifying = f.competition(
         "cl",
         ["a_m"],
@@ -532,7 +524,7 @@ def test_main_tournament_renders_via_the_display_adapter():
     rounds, resolved_legs = build_main_tournament_rounds_for_display(main, [qualifying, main], set())
     display_main = main.model_copy(update={"european_rounds": rounds})
 
-    entries = _european_entries(world, [display_main], resolved_legs, club_colors, {})
+    entries = _european_entries(world, [display_main], resolved_legs, {})
     # One reachable team (a_m): 1 matchday + 2 r16 legs + 1 final = 4 rows —
     # not 6, which is what emitting two rows for the matchday and the final
     # (the bug the review caught) would produce.
@@ -552,13 +544,12 @@ def test_main_tournament_renders_via_the_display_adapter():
 
     views = _european_views([display_main], resolved_legs, entries)
     assert len(views) == 1
-    assert views[0]["is_main_tournament"] is True
-    assert views[0]["match_count"] == 3
-    matchday_round = next(r for r in views[0]["rounds"] if r["name"] == "md1")
+    assert "3 matchday(s)/round(s) tracked" in views[0]["meta"]
+    matchday_round = next(r for r in views[0]["rounds"] if r["title"] == "md1")
     assert len(matchday_round["fixtures"]) == 1
-    r16_round = next(r for r in views[0]["rounds"] if r["name"] == "r16")
+    r16_round = next(r for r in views[0]["rounds"] if r["title"] == "r16")
     assert len(r16_round["fixtures"]) == 2
-    final_round = next(r for r in views[0]["rounds"] if r["name"] == "final")
+    final_round = next(r for r in views[0]["rounds"] if r["title"] == "final")
     assert len(final_round["fixtures"]) == 1
     assert "Wembley Stadium" in final_round["note"]
 
@@ -602,18 +593,15 @@ def test_tint_lightens_a_hex_color_toward_white():
     assert _tint("#000000", factor=1.0) == "#ffffff"
 
 
-def test_day_dots_deduplicates_multiple_entries_from_the_same_competition():
+def test_day_competitions_lists_each_competition_once_ordered_by_name():
     """Two Eliteserien matches on the same day still show one dot — issue
     #77 asks for "only one dot per league per day"."""
     entries = [
-        {"competition_id": "elite", "competition_name": "Eliteserien", "comp_fg": "#ca6f1e"},
-        {"competition_id": "elite", "competition_name": "Eliteserien", "comp_fg": "#ca6f1e"},
-        {"competition_id": "topp", "competition_name": "Toppserien", "comp_fg": "#8e44ad"},
+        {"competition_id": "topp", "competition_name": "Toppserien"},
+        {"competition_id": "elite", "competition_name": "Eliteserien"},
+        {"competition_id": "elite", "competition_name": "Eliteserien"},
     ]
-    assert _day_dots(entries) == [
-        {"id": "elite", "name": "Eliteserien", "color": "#ca6f1e"},
-        {"id": "topp", "name": "Toppserien", "color": "#8e44ad"},
-    ]
+    assert _day_competitions(entries) == ["elite", "topp"]
 
 
 def test_every_payload_fixture_resolves_to_a_club_for_the_club_filter():
@@ -669,9 +657,7 @@ def test_month_calendar_view_builds_a_full_month_grid_and_day_details():
     month = months[0]
     assert month["label"] == "March 2026"
     assert all(len(week) == 7 for week in month["weeks"])  # Monday-first, full rows
-    matched = [day for week in month["weeks"] for day in week if day["date_iso"] == "2026-03-01"]
-    assert len(matched) == 1
-    assert matched[0]["in_month"] is True
+    assert [iso for week in month["weeks"] for iso in week].count("2026-03-01") == 1
     assert month["key"] == "2026-03"
 
     assert len(day_details) == 1
@@ -693,10 +679,8 @@ def test_month_calendar_view_spans_multiple_months_and_pads_out_month_days():
     assert len(day_details) == 2
     # 1 April also shows up as an out-of-month padding cell at the tail of
     # March's grid, but only one day_details entry exists for it.
-    march_padding = [
-        day for week in months[0]["weeks"] for day in week if day["date_iso"] == "2026-04-01"
-    ]
-    assert march_padding and march_padding[0]["in_month"] is False
+    assert "2026-04-01" in [iso for week in months[0]["weeks"] for iso in week]
+    assert not "2026-04-01".startswith(months[0]["key"])
 
 
 def test_month_calendar_view_is_empty_for_no_entries():
@@ -803,7 +787,7 @@ def test_each_option_embeds_its_league_matches_once_and_shares_cup_entries():
 
     assert len(data["shared"]) == 1  # the cup entry, not one per option
     assert [len(o["matches"]) for o in data["options"]] == [1, 2]
-    # Fixtures are no longer repeated as markup: the page's script draws them.
+    # Fixtures are drawn by the page's script, not emitted as markup.
     assert 'class="fx ' not in rendered and 'class="fx"' not in rendered
     assert '<tr class="fx-row' not in rendered and 'class="day-row' not in rendered
     # Every uid a view refers to exists in that option's fixture list.

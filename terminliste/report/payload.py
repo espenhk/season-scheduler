@@ -54,8 +54,8 @@ def json_for_script(value: Any) -> str:
         ("&", "\\u0026"),
         ("<", "\\u003c"),
         (">", "\\u003e"),
-        (" ", "\\u2028"),
-        (" ", "\\u2029"),
+        ("\u2028", "\\u2028"),
+        ("\u2029", "\\u2029"),
     ):
         text = text.replace(char, escape)
     return text
@@ -212,7 +212,7 @@ def option_wire(
             {
                 "label": month["label"],
                 "key": month["key"],
-                "weeks": [[day["date_iso"] for day in week] for week in month["weeks"]],
+                "weeks": month["weeks"],
             }
             for month in month_calendar
         ],

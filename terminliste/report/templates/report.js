@@ -270,6 +270,7 @@
     var state = ctx.opt.state;
     var days = {};
     data.days.forEach(function (day) { days[day.date] = day; });
+    if (!data.months.length) return el('div', 'desc', 'Nothing scheduled yet.');
     var root = el('div');
 
     // Competitions with something visible that day, for the dots.

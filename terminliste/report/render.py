@@ -90,9 +90,9 @@ def render_report(
 
     # Cup and European entries are the same in every option, so they are built
     # (and later encoded) once; league matches follow them in the `uid` space.
-    shared_entries = _cup_entries(world, cup_schedules, club_colors, competition_colors)
+    shared_entries = _cup_entries(world, cup_schedules, competition_colors)
     shared_entries += _european_entries(
-        world, european_competitions, resolved_legs, club_colors, competition_colors
+        world, european_competitions, resolved_legs, competition_colors
     )
     for uid, entry in enumerate(shared_entries):
         entry["uid"] = uid
@@ -106,7 +106,6 @@ def render_report(
         _build_option(
             world,
             candidate,
-            club_colors,
             dual_club_ids,
             shared_entries,
             competition_colors,
@@ -152,7 +151,6 @@ def render_report(
 def _build_option(
     world: World,
     candidate: Candidate,
-    club_colors: dict[str, str],
     dual_club_ids: set[str],
     shared_entries: list[dict],
     competition_colors: dict[str, dict],
@@ -161,7 +159,7 @@ def _build_option(
 ) -> dict:
     score = candidate.score
     limit = 200 if full_diagnostics else 4
-    entries = _match_entries(world, candidate, club_colors, dual_club_ids, competition_colors)
+    entries = _match_entries(world, candidate, dual_club_ids, competition_colors)
     for uid, entry in enumerate(entries, start=len(shared_entries)):
         entry["uid"] = uid
     combined_entries = entries + shared_entries
@@ -511,15 +509,14 @@ def _club_headlines(world: World, candidate: Candidate, dual_club_ids: set[str])
 def _match_entries(
     world: World,
     candidate: Candidate,
-    club_colors: dict[str, str],
     dual_club_ids: set[str],
     competition_colors: dict[str, dict] | None = None,
 ) -> list[dict]:
     """One flat, chronologically sorted list of every match this option plays,
     with everything the per-competition and combined views need.
 
-    Built once per option so the two views agree by construction, with no
-    second pass that could compute `paired` or a club's colour differently.
+    Built once per option so the views agree by construction, with no second
+    pass that could compute `paired` differently.
     """
     matches = candidate.matches
     competition_colors = competition_colors or {}
@@ -535,7 +532,6 @@ def _match_entries(
     entries: list[dict] = []
     for match in sorted(matches, key=lambda m: (m.date, m.competition_id, m.home_team)):
         home_club = world.team(match.home_team).club_id
-        away_club = world.team(match.away_team).club_id
         paired = home_club in dual_club_ids and _has_adjacent_home(
             home_by_club[home_club], match.date
         )
@@ -544,18 +540,11 @@ def _match_entries(
         entries.append(
             {
                 "date": match.date,
-                "weekday": match.date.strftime("%a"),
                 "kickoff_time": match.kickoff_time,
                 "home_team": match.home_team,
                 "away_team": match.away_team,
                 "venue_id": match.venue,
                 "home": world.team_label(match.home_team),
-                "home_short": world.team_short_label(match.home_team),
-                "away": world.team_label(match.away_team),
-                "away_short": world.team_short_label(match.away_team),
-                "venue": world.venue(match.venue).name,
-                "color": club_colors.get(home_club, ""),
-                "away_color": club_colors.get(away_club, ""),
                 "paired": paired,
                 "leg": match.leg,
                 "round_index": match.round_index,
@@ -564,8 +553,6 @@ def _match_entries(
                 "competition_short": competition.short_name,
                 "comp_fg": comp_color["fg"],
                 "comp_bg": comp_color["bg"],
-                "home_club": home_club,
-                "away_club": away_club,
             }
         )
     return entries
@@ -587,17 +574,12 @@ def _competition_views(world: World, entries: list[dict]) -> list[dict]:
             {
                 "id": competition_id,
                 "name": competition.name,
-                "preferred_weekday": competition.preferred_weekday,
-                "match_count": len(comp_entries),
                 "meta": (
                     f"{len(comp_entries)} matches over {len(rounds)} rounds · "
                     f"prefers {competition.preferred_weekday}"
                 ),
                 "rounds": [
                     {
-                        "index": round_index + 1,
-                        "leg": round_entries[0]["leg"],
-                        "dates": _round_date_label(round_entries),
                         "title": f"Round {round_index + 1}",
                         "text": f"{_round_date_label(round_entries)} · leg {round_entries[0]['leg']}",
                         "matches": round_entries,
@@ -676,7 +658,7 @@ def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
         {
             "date_iso": day.isoformat(),
             "label": day.strftime("%A %d %B %Y"),
-            "competition_ids": [dot["id"] for dot in _day_dots(day_entries)],
+            "competition_ids": _day_competitions(day_entries),
             # Earliest kickoff first; an entry without one — every cup and
             # European entry — sorts after the timed ones, not before them.
             "matches": sorted(
@@ -694,38 +676,20 @@ def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 def _month_grid(month_start: date) -> dict:
-    """One calendar month's Monday-first weeks. Padding days from neighbouring
-    months are kept (`in_month=False`) so every week is a full row."""
-    weeks = []
-    for week in calendar.Calendar(firstweekday=0).monthdatescalendar(month_start.year, month_start.month):
-        weeks.append(
-            [
-                {
-                    "date_iso": day.isoformat(),
-                    "day_num": day.day,
-                    "in_month": day.month == month_start.month,
-                }
-                for day in week
-            ]
-        )
+    """One calendar month's Monday-first weeks as ISO dates. Padding days from
+    neighbouring months are kept so every week is a full row."""
+    weeks = [
+        [day.isoformat() for day in week]
+        for week in calendar.Calendar(firstweekday=0).monthdatescalendar(month_start.year, month_start.month)
+    ]
     return {"label": month_start.strftime("%B %Y"), "key": month_start.strftime("%Y-%m"), "weeks": weeks}
 
 
-def _day_dots(day_entries: list[dict]) -> list[dict]:
-    """One dot per competition present on the day (#77), however many of its
-    matches fall on it — name and colour come from the first entry seen, since
-    every entry for the same competition carries the same ones. Ordered by
-    competition name."""
-    names: dict[str, str] = {}
-    colors: dict[str, str] = {}
-    for entry in day_entries:
-        competition_id = entry["competition_id"]
-        names.setdefault(competition_id, entry["competition_name"])
-        colors.setdefault(competition_id, entry["comp_fg"])
-    return [
-        {"id": cid, "name": names[cid], "color": colors[cid]}
-        for cid in sorted(names, key=lambda cid: names[cid])
-    ]
+def _day_competitions(day_entries: list[dict]) -> list[str]:
+    """One competition id per competition present on the day (#77), however
+    many of its matches fall on it, ordered by competition name."""
+    names = {entry["competition_id"]: entry["competition_name"] for entry in day_entries}
+    return sorted(names, key=lambda cid: names[cid])
 
 
 def _round_fixtures(entries: list[dict], competition_id: str, round_index: int) -> list[dict]:
@@ -755,15 +719,13 @@ def _cup_views(cup_schedules: list[CupSchedule], cup_entries: list[dict]) -> lis
             {
                 "id": schedule.competition_id,
                 "name": schedule.competition_name,
-                "is_cup": True,
-                "match_count": team_count,
                 "meta": (
                     f"{team_count} teams entered · opponent drawn closer to each round, so dates "
                     "are per-team, not fixtures · home/away assumed per NM rules (away for the "
                     "first three rounds, then alternating; final always neutral)"
                 ),
                 "rounds": [
-                    _cup_round(i, placement, _round_fixtures(cup_entries, schedule.competition_id, i))
+                    _cup_round(placement, _round_fixtures(cup_entries, schedule.competition_id, i))
                     for i, placement in enumerate(schedule.rounds)
                 ],
             }
@@ -771,7 +733,7 @@ def _cup_views(cup_schedules: list[CupSchedule], cup_entries: list[dict]) -> lis
     return views
 
 
-def _cup_round(index: int, placement: CupRoundPlacement, fixtures: list[dict]) -> dict:
+def _cup_round(placement: CupRoundPlacement, fixtures: list[dict]) -> dict:
     if placement.spread_days == 0:
         dates = placement.earliest_date.strftime("%d %b %Y")
     else:
@@ -780,10 +742,6 @@ def _cup_round(index: int, placement: CupRoundPlacement, fixtures: list[dict]) -
         )
     venue_summary = _cup_venue_summary(placement.venue_type)
     return {
-        "index": index + 1,
-        "name": placement.round_name,
-        "dates": dates,
-        "venue_summary": venue_summary,
         "note": placement.note,
         "title": placement.round_name,
         "text": f"{dates} · {venue_summary}",
@@ -794,24 +752,19 @@ def _cup_round(index: int, placement: CupRoundPlacement, fixtures: list[dict]) -
 def _cup_entries(
     world: World,
     cup_schedules: list[CupSchedule],
-    club_colors: dict[str, str],
     competition_colors: dict[str, dict],
 ) -> list[dict]:
     """Cup rounds at one row per entered team per round, so the combined views
-    can merge them with league entries. Tagged `is_cup` so the page picks the
-    TBD-opponent card.
+    can merge them with league entries.
     """
     entries: list[dict] = []
     for schedule in cup_schedules:
         comp_color = competition_colors.get(schedule.competition_id, _DEFAULT_COMP_COLOR)
         for round_index, placement in enumerate(schedule.rounds):
             for team_id, team_date in placement.dates.items():
-                club_id = world.team(team_id).club_id
                 entries.append(
                     {
-                        "is_cup": True,
                         "date": team_date,
-                        "weekday": team_date.strftime("%a"),
                         "competition_id": schedule.competition_id,
                         "competition_name": schedule.competition_name,
                         "competition_short": schedule.competition_short_name,
@@ -821,9 +774,6 @@ def _cup_entries(
                         "round_name": placement.round_name,
                         "team_id": team_id,
                         "team": world.team_short_label(team_id),
-                        "team_full": world.team_label(team_id),
-                        "club_id": club_id,
-                        "color": club_colors.get(club_id, ""),
                         "venue_type": placement.venue_type,
                         "venue_label": _cup_venue_label(world, team_id, placement.venue_type),
                     }
@@ -877,10 +827,7 @@ def _european_views(
             dates = _european_round_date_label(resolved_legs[(competition.id, round_.id)])
             rounds.append(
                 {
-                    "index": i + 1,
-                    "name": round_.name,
                     "note": round_.note,
-                    "dates": dates,
                     "title": round_.name,
                     "text": dates,
                     "fixtures": _round_fixtures(european_entries, competition.id, i),
@@ -890,9 +837,6 @@ def _european_views(
             {
                 "id": competition.id,
                 "name": competition.name,
-                "is_european": True,
-                "is_main_tournament": competition.is_main_tournament,
-                "match_count": count,
                 "meta": meta,
                 "rounds": rounds,
             }
@@ -918,7 +862,6 @@ def _european_entries(
     world: World,
     european_competitions: list[Competition],
     resolved_legs: ResolvedLegs,
-    club_colors: dict[str, str],
     competition_colors: dict[str, dict],
 ) -> list[dict]:
     """European rounds at one row per entered team per leg, so the combined
@@ -931,7 +874,6 @@ def _european_entries(
         for round_index, round_ in enumerate(competition.european_rounds):
             first_date, second_date = resolved_legs[(competition.id, round_.id)]
             for tie in round_.ties:
-                club_id = world.team(tie.team).club_id
                 for leg_label, leg_date in _round_legs(first_date, second_date):
                     venue_type = _european_venue_type(tie.home_leg, leg_label)
                     round_name = f"{round_.name} ({leg_label} leg)" if leg_label else round_.name
@@ -939,7 +881,6 @@ def _european_entries(
                         {
                             "is_european": True,
                             "date": leg_date,
-                            "weekday": leg_date.strftime("%a"),
                             "competition_id": competition.id,
                             "competition_name": competition.name,
                             "competition_short": competition.short_name,
@@ -949,9 +890,6 @@ def _european_entries(
                             "round_name": round_name,
                             "team_id": tie.team,
                             "team": world.team_short_label(tie.team),
-                            "team_full": world.team_label(tie.team),
-                            "club_id": club_id,
-                            "color": club_colors.get(club_id, ""),
                             "opponent": tie.opponent,
                             "venue_type": venue_type,
                             "venue_label": _european_venue_label(world, tie.team, venue_type),

@@ -589,6 +589,8 @@
   </details>
   {% endif %}
 
+  <noscript><div class="warnings">This report draws its fixtures with JavaScript; enable it to see them.</div></noscript>
+
   <div class="controls">
     <div class="view-toggle">
       <button type="button" class="view-btn" data-view="by-competition">By competition</button>
@@ -660,7 +662,6 @@
 
 </div>
 
-<noscript><div class="warnings">This report draws its fixtures with JavaScript; enable it to see them.</div></noscript>
 <script type="application/json" id="report-data">{{ report_data_json }}</script>
 <script>
 {{ client_js }}
