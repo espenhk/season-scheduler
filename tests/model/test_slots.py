@@ -129,3 +129,10 @@ def test_overlapping_or_close_slots_do_not_count_together():
 
     assert len(slots) == 3  # two weekends and the Monday
     assert max_compatible_slots(slots, league.min_gap_days) == 2
+
+
+def test_2026_midweek_placeholder_slots_are_marked_unverified(season):
+    midweek = [e for e in season.extra_round_slots if e.kind == "midweek"]
+    assert len(midweek) == 6
+    assert all(not e.verified for e in midweek)
+    assert all(e.verified for e in season.extra_round_slots if e.kind == "holiday")

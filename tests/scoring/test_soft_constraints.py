@@ -14,6 +14,7 @@ from terminliste.scoring.soft import (
     ConsecutiveHomeDays,
     EuropeanCommitmentSoftConflict,
     GrassAwayRoundOne,
+    GrassSeasonEdge,
     HomeAwayBalance,
     HomeAwayBreaks,
     LateKickoffLongTravel,
@@ -296,6 +297,58 @@ def test_grass_away_round_one_is_silent_outside_round_one():
     later_round = [f.match("comp", "t_artificial", "t_grass", date(2026, 3, 22), "v_artificial", round_index=1)]
     result = evaluate(later_round, [constraint], _ctx(world, season))
     assert result.result("grass_away_round_one").total == 0.0
+
+
+# -- grass_season_edge ------------------------------------------------------
+
+
+def _grass_edge_world(surface="grass", lat=60.0, weight=2.0):
+    v_home, v_away = f.venue("v_home", lat=lat, surface=surface), f.venue("v_away")
+    home, away = f.team("home", "c1", "v_home"), f.team("away", "c2", "v_away")
+    clubs = [f.club("c1", [home]), f.club("c2", [away])]
+    comp = f.competition("comp", ["home", "away"], weights={"grass_season_edge": weight})
+    return f.world(clubs, [v_home, v_away], [comp]), f.season(competitions=["comp"]), comp
+
+
+def _edge_score(day, **world_kwargs):
+    world, season, comp = _grass_edge_world(**world_kwargs)
+    matches = [f.match("comp", "home", "away", day, "v_home")]
+    return evaluate(matches, [GrassSeasonEdge(competitions=[comp])], _ctx(world, season)).result(
+        "grass_season_edge"
+    )
+
+
+def test_grass_season_edge_penalises_by_days_outside_the_window():
+    result = _edge_score(date(2026, 4, 1))  # 14 days before the Apr 15 cutoff
+    assert result.total == -4.0
+    assert result.count == 1
+    assert _edge_score(date(2026, 11, 29)).total == -4.0  # 14 days after Nov 15
+
+
+def test_grass_season_edge_is_silent_inside_the_window_and_on_artificial_turf():
+    assert _edge_score(date(2026, 6, 7)).total == 0.0
+    assert _edge_score(date(2026, 4, 1), surface="artificial").total == 0.0
+
+
+def test_grass_season_edge_cutoffs_shift_with_latitude():
+    south = _edge_score(date(2026, 4, 20), lat=58.0)
+    north = _edge_score(date(2026, 4, 20), lat=69.0)  # spring cutoff moves 36 days later
+    assert south.total == 0.0
+    assert north.total < 0.0
+    assert _edge_score(date(2026, 11, 1), lat=69.0).total < 0.0
+
+
+def test_grass_season_edge_cutoff_days_themselves_are_inside_the_window():
+    assert _edge_score(date(2026, 4, 15)).total == 0.0
+    assert _edge_score(date(2026, 11, 15)).total == 0.0
+
+
+def test_grass_season_edge_southern_venue_gets_a_later_autumn_cutoff():
+    assert _edge_score(date(2026, 11, 20), lat=58.0).total == 0.0
+
+
+def test_grass_season_edge_weight_is_per_competition():
+    assert _edge_score(date(2026, 4, 1), weight=4.0).total == -8.0
 
 
 # -- late_kickoff_long_travel -----------------------------------------------

@@ -121,3 +121,23 @@ def test_league_anchors_skip_cup_weekends_when_the_calendar_excludes_them(world,
     assert date(2026, 6, 27) in calendar.dates_on_weekday("saturday")
     assert not set(clear) & set(blocks)
     assert set(plain) & set(blocks), "the unfiltered anchors should hit a cup weekend"
+
+
+def test_2026_cups_stay_in_the_frame_but_out_of_the_solver_constraints(frame):
+    ids = {s.competition_id for s in frame.cup_schedules}
+    assert {"cup_men_2026", "cup_women_2026"} <= ids
+    solver_ids = {s.competition_id for s in frame.solver_cup_schedules}
+    assert solver_ids == ids - {"cup_men_2026", "cup_women_2026"}
+
+
+def test_two_cups_on_one_weekend_date_keep_both_labels():
+    from terminliste.frame import CupDay, SeasonFrame
+
+    day = date(2026, 5, 9)
+    frame = SeasonFrame(
+        cup_days=[
+            CupDay("a", "men", "final", "A: Final", day, 2, ("t1",)),
+            CupDay("b", "men", "final", "B: Final", day, 2, ("t2",)),
+        ]
+    )
+    assert frame.cup_weekend_blocks(gender="men") == {day: "A: Final; B: Final"}
