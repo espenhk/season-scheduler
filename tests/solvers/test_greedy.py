@@ -44,11 +44,10 @@ def test_final_round_pin_moves_off_a_date_that_conflicts_with_a_european_commitm
     season, planned, by_competition = _world_and_plan(competition)
     final_round, anchor = _final_round(planned, "men")
 
-    # A commitment on the final round's anchor, with a rest window wide
-    # enough to block its neighbours too: only the widened search finds a
-    # clear date.
+    # A commitment on the final round's anchor that also blocks the day
+    # either side: the pin moves to another day of the same slot.
     commitment = EuropeanCommitmentDate(
-        team_id="t0", date=anchor, min_rest_days=3, label="cl: matchday 1", competition_id="cl"
+        team_id="t0", date=anchor, min_rest_days=1, label="cl: matchday 1", competition_id="cl"
     )
     commitments = {"t0": [commitment]}
 
@@ -58,6 +57,7 @@ def test_final_round_pin_moves_off_a_date_that_conflicts_with_a_european_commitm
 
     chosen = pins[("men", final_round)]
     assert chosen != anchor
+    assert planned[0].slots[final_round].contains(chosen)
     assert not european_conflict(commitments, "t0", chosen)
     assert warnings == []
 
@@ -135,7 +135,7 @@ def test_cup_conflict_also_moves_the_pin():
     season, planned, by_competition = _world_and_plan(competition)
     final_round, anchor = _final_round(planned, "men")
 
-    cup_windows = {"t1": [(anchor, 3)]}
+    cup_windows = {"t1": [(anchor, 1)]}
 
     pins, warnings = resolve_round_pins(
         season, planned, by_competition, cup_windows=cup_windows, european_commitments={}

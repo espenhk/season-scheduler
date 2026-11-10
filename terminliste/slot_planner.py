@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from bisect import bisect_right
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, timedelta
 
 from .frame import SeasonFrame
 from .model.calendar import SeasonCalendar, calendars_by_competition, competition_window
@@ -145,6 +145,11 @@ def plan_league_slots(
             f"slots while covering the full-round requirement dates"
         )
 
+    protected = pins | {
+        r.date for r in season.fixed_requirements if r.hard and r.competition == competition.id
+    }
+    chosen = _trim_unusable_days(chosen, competition, protected)
+
     plan = SlotPlan(
         competition.id, rounds, candidates, chosen, min_gap_days=competition.min_gap_days
     )
@@ -178,6 +183,44 @@ def _with_clashes(
         options, key=lambda d: (len(clashing(d)), abs(d.weekday() - preferred), d)
     )
     return replace(slot, default_day=day, clashing_teams=clashing(day))
+
+
+def _trim_unusable_days(
+    slots: list[RoundSlot], competition: Competition, protected: frozenset[date] | set[date]
+) -> list[RoundSlot]:
+    """Drop days that leave a team too little rest before or after the
+    neighbouring round, whatever day that round uses.
+
+    Every team plays every round, so a Monday followed two days later by a
+    midweek round breaks `min_rest_days` for the whole league, not for one
+    club. Protected days (pinned dates) stay.
+    """
+    rest_gap = timedelta(days=competition.min_rest_days + 1)
+    days = [list(s.days) for s in slots]
+
+    def has_rest(day: date, i: int) -> bool:
+        before = i == 0 or any(day - e >= rest_gap for e in days[i - 1])
+        after = i + 1 == len(days) or any(e - day >= rest_gap for e in days[i + 1])
+        return before and after
+
+    changed = True
+    while changed:
+        changed = False
+        for i, current in enumerate(days):
+            kept = [d for d in current if d in protected or has_rest(d, i)]
+            if kept and len(kept) != len(current):
+                days[i] = kept
+                changed = True
+    result = []
+    for slot, kept in zip(slots, days, strict=True):
+        if len(kept) == len(slot.days):
+            result.append(slot)
+            continue
+        default = slot.default_day if slot.default_day in kept else min(
+            kept, key=lambda d: (abs((d - slot.default_day).days), d)
+        )
+        result.append(replace(slot, days=tuple(kept), default_day=default))
+    return result
 
 
 def _binding_dates(frame: SeasonFrame, team_id: str) -> list[tuple[date, int]]:
@@ -287,22 +330,13 @@ def search_space_log10(
     plan: SlotPlan,
     competition: Competition,
     calendar: SeasonCalendar,
-    within_slot: bool = False,
 ) -> float:
-    """log10 of the per-match date combinations once rounds sit in slots.
-
-    By default each match is free within `match_window_days` of its round's
-    default day, as the solvers search today; `within_slot` counts only the
-    days of the slot itself.
-    """
+    """log10 of the per-match date combinations: each match picks one day of
+    its round's slot."""
     total = 0.0
     matches_per_round = len(competition.teams) // 2
     for slot in plan.chosen:
-        if within_slot:
-            choices = len(slot.days)
-        else:
-            choices = len(calendar.window(slot.default_day, competition.match_window_days))
-        total += matches_per_round * math.log10(max(1, choices))
+        total += matches_per_round * math.log10(max(1, len(slot.days)))
     return total
 
 

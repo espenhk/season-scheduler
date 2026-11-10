@@ -35,11 +35,13 @@ from .base import (
     SolveRequest,
     SolverResult,
     resolve_slot_plans,
+    round_for_date,
     select_diverse,
 )
 from .greedy import (
     align_dual_clubs,
-    align_home_teams_to_round_pins,
+    align_home_teams_to_requirements,
+    pick_fixture_for_requirement,
     plan_competitions,
     resolve_round_pins,
 )
@@ -83,7 +85,7 @@ class CpSatScheduler:
         round_pins, pin_warnings = resolve_round_pins(
             request.season, planned, by_competition, cup_windows, request.european_commitments
         )
-        align_home_teams_to_round_pins(request.season, planned, round_pins)
+        align_home_teams_to_requirements(request.season, planned)
 
         candidates: list[Candidate] = []
         notes: list[str] = list(pin_warnings)
@@ -277,6 +279,7 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
     # closest. Offering it to every fixture of that team would let an early
     # date leak into a late round and drag the leg boundary with it.
     required_dates: dict[tuple[str, int, str, str], date] = {}
+    claimed: set[tuple[str, int, str, str]] = set()
     for requirement in season.fixed_requirements:
         if not requirement.hard:
             continue
@@ -285,12 +288,12 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
         )
         if plan is None:
             continue
-        options = [f for f in plan.fixtures if f.home_team == requirement.home_team]
-        if not options:
-            continue
-        target = min(
-            options, key=lambda f: abs((plan.anchors[f.round_index] - requirement.date).days)
+        target = pick_fixture_for_requirement(
+            plan, requirement.home_team, requirement.date, claimed
         )
+        if target is None:
+            continue
+        claimed.add((target.competition_id, target.round_index, target.home_team, target.away_team))
         required_dates[_fixture_id(target)] = requirement.date
 
     for plan in planned:
@@ -298,34 +301,29 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
         competition_calendar = by_competition[competition.id]
         for fixture in plan.fixtures:
             venue = world.team(fixture.home_team).home_venue
-            anchor = plan.anchors[fixture.round_index]
             pin_date = round_pins.get((competition.id, fixture.round_index))
             if pin_date is not None:
                 # One candidate date forces the pin without a separate
                 # assumption literal — `AddExactlyOne` has nothing else to pick.
                 window = [pin_date]
             else:
+                slot_days = list(plan.slots[fixture.round_index].days)
                 window = _european_clear(
                     _cup_clear(
-                        competition_calendar.window(anchor, competition.match_window_days, venue),
+                        [
+                            day
+                            for day in slot_days
+                            if competition_calendar.is_allowed(day, venue)
+                        ],
                         fixture,
                         cup_windows,
                     ),
                     fixture,
                     european_commitments,
                 )
-                if not window:
-                    window = _european_clear(
-                        _cup_clear(
-                            competition_calendar.window(
-                                anchor, competition.match_window_days * 3, venue
-                            ),
-                            fixture,
-                            cup_windows,
-                        ),
-                        fixture,
-                        european_commitments,
-                    )
+                # A fully blocked slot keeps its days so the scorer reports the
+                # violation, as the greedy and local backends do.
+                window = window or slot_days
                 extra = required_dates.get(_fixture_id(fixture))
                 if extra is not None:
                     window = sorted(set(window) | {extra})
@@ -364,7 +362,11 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
             if requirement.date not in placement[index]:
                 continue
             plan = next(p for p in planned if p.competition.id == competition.id)
-            gap = abs((plan.anchors[fixture.round_index] - requirement.date).days)
+            gap = (
+                fixture.round_index
+                != round_for_date(plan.slots, plan.anchors, requirement.date),
+                abs((plan.anchors[fixture.round_index] - requirement.date).days),
+            )
             if best_gap is None or gap < best_gap:
                 best_index, best_gap = index, gap
         if best_index is not None:
@@ -395,10 +397,8 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
     # relaxing `min_rest_days` can never reach it. A team playing twice in
     # one day is the same category as a double-booked venue or an
     # out-of-order return leg: an impossibility, not the survivable
-    # inconvenience short rest is (review of issue #95's PR: relaxing the
-    # shared window this used to live in as the `offset == 0` slice let
-    # CP-SAT schedule a team home in one city and away in another hours
-    # later on the same date).
+    # inconvenience short rest is, so relaxing rest must never let a team
+    # play in two cities on one date (#95).
     day_literal = assume("one_match_per_team_per_day")
     for vars_ in team_on_date.values():
         if len(vars_) > 1:

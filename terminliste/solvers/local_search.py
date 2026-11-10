@@ -4,10 +4,13 @@ Takes the greedy schedule and improves it by repeatedly making a small change,
 rescoring, and keeping the change if it helped (or, early on, sometimes even if
 it did not — that is what lets it climb out of a local optimum).
 
-Four move operators spanning different scales:
+Rounds sit in fixed slots chosen up front (`slot_planner.py`), so no move can
+take a match out of its round's slot (#7). Four move operators span different
+scales:
 
-* `shift` moves one match a few days inside its round window — fine.
-* `swap_rounds` exchanges two rounds' dates within a leg — medium.
+* `shift_day` moves one match to another day of its round's slot — fine.
+* `swap_rounds` exchanges two rounds' slots within a leg, refusing a swap that
+  lands any team on a blackout, cup or European date — medium.
 * `flip_orientation` swaps home and away across a mirrored fixture pair,
   changing who travels without touching the calendar.
 * `swap_teams` exchanges two teams' entire seasons — the coarsest move, and
@@ -32,12 +35,13 @@ import math
 import random
 import time
 from dataclasses import dataclass, replace
-from datetime import date, timedelta
+from datetime import date
 
 from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
-from ..model.loader import World
-from ..model.schema import Competition, Match
+from ..model.schema import Match
 from ..model.slots import RoundSlot
+from ..rounds.cup_schedule import cup_conflict, resolved_cup_windows
+from ..rounds.european_schedule import european_conflict
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import (
     HARD_PENALTY,
@@ -78,9 +82,9 @@ class WorkingMatch:
     # Never mutated by a move — kickoff is assigned once dates are final, not
     # searched. Here only so constraints like `FinalRoundSameSlot` can read it.
     kickoff_time: str | None = None
-    # Default day of the slot this match's round currently sits in. Moves of
-    # whole rounds rewrite it, so it follows the round rather than its index.
-    anchor: date | None = None
+    # The slot this match's round sits in. Round swaps rewrite it, so it
+    # follows the round rather than its index.
+    slot: RoundSlot | None = None
 
     @property
     def key(self) -> str:
@@ -99,7 +103,7 @@ class WorkingMatch:
 
 
 # A snapshot of one match's mutable state, for undo.
-_Snapshot = tuple[int, str, str, date, str, date | None]
+_Snapshot = tuple[int, str, str, date, str, RoundSlot | None]
 
 
 class LocalSearchScheduler:
@@ -182,7 +186,7 @@ class LocalSearchScheduler:
                     round_index=m.round_index,
                     date=m.date,
                     venue=m.venue,
-                    anchor=slot_plans[m.competition_id].slot_of(m.round_index).default_day,
+                    slot=slot_plans[m.competition_id].slot_of(m.round_index),
                 )
                 for m in initial
             ]
@@ -215,7 +219,7 @@ class LocalSearchScheduler:
                     score=score,
                     label=f"Candidate (seed {seed})",
                     seed=seed,
-                    round_slots=_round_slots(best, slot_plans),
+                    round_slots=_round_slots(best),
                 )
             )
             restart_states.append((best, pinned))
@@ -258,47 +262,35 @@ class LocalSearchScheduler:
         )
 
 
-def _round_slots(
-    matches: list[WorkingMatch], slot_plans: dict[str, SlotPlan]
-) -> dict[tuple[str, int], RoundSlot]:
+def _round_slots(matches: list[WorkingMatch]) -> dict[tuple[str, int], RoundSlot]:
     """Where each round ended up: round-swap moves reorder rounds across slots."""
-    by_anchor = {
-        (competition_id, slot.default_day): slot
-        for competition_id, plan in slot_plans.items()
-        for slot in plan.chosen
-    }
     return {
-        (m.competition_id, m.round_index): by_anchor[(m.competition_id, m.anchor)]
-        for m in matches
-        if (m.competition_id, m.anchor) in by_anchor
+        (m.competition_id, m.round_index): m.slot for m in matches if m.slot is not None
     }
 
 
-def _assign_missing_anchors(
-    matches: list[WorkingMatch], slot_plans: dict[str, SlotPlan] | None
+def _assign_missing_slots(
+    matches: list[WorkingMatch], slot_plans: dict[str, SlotPlan]
 ) -> None:
-    """Fallback anchors for states built outside `solve` (tests); `solve` sets
+    """Fallback slots for states built outside `solve` (tests); `solve` sets
     them exactly, so production never reaches this."""
     dates_by_round: dict[tuple[str, int], list[date]] = {}
     for match in matches:
-        if match.anchor is None:
+        if match.slot is None:
             dates_by_round.setdefault((match.competition_id, match.round_index), []).append(
                 match.date
             )
-    anchors: dict[tuple[str, int], date] = {}
+    slots: dict[tuple[str, int], RoundSlot] = {}
     for (competition_id, round_index), dates in dates_by_round.items():
         earliest = min(dates)
-        plan = (slot_plans or {}).get(competition_id)
-        if plan is None:
-            anchors[(competition_id, round_index)] = earliest
-        else:
-            anchors[(competition_id, round_index)] = min(
-                (slot.default_day for slot in plan.chosen),
-                key=lambda day: abs((day - earliest).days),
-            )
+        chosen = slot_plans[competition_id].chosen
+        slots[(competition_id, round_index)] = next(
+            (slot for slot in chosen if slot.contains(earliest)),
+            min(chosen, key=lambda slot: abs((slot.default_day - earliest).days)),
+        )
     for match in matches:
-        if match.anchor is None:
-            match.anchor = anchors[(match.competition_id, match.round_index)]
+        if match.slot is None:
+            match.slot = slots[(match.competition_id, match.round_index)]
 
 
 def _polish_candidates(
@@ -354,7 +346,7 @@ def _polish_candidates(
         if score.sort_key < candidate.score.sort_key:
             candidate.matches = matches
             candidate.score = score
-            candidate.round_slots = _round_slots(polished, request.slot_plans or {})
+            candidate.round_slots = _round_slots(polished)
             improved += 1
 
     if improved:
@@ -410,7 +402,11 @@ def _anneal(
 ) -> tuple[list[WorkingMatch], int, SearchStats]:
     ctx = request.ctx
     constraints = request.constraints
-    _assign_missing_anchors(matches, request.slot_plans)
+    if any(m.slot is None for m in matches):
+        plans = request.slot_plans or resolve_slot_plans(
+            request, build_calendar(request.world, request.season)
+        )
+        _assign_missing_slots(matches, plans)
 
     # Cooling follows iteration progress rather than the clock, so the draws
     # taken from the seeded RNG depend only on the seed and the calibrated
@@ -419,7 +415,7 @@ def _anneal(
     total_iterations = max(1, round(budget_s * _iterations_per_second(matches, request, calendars)))
 
     rng = random.Random(seed)
-    moves = _MoveSet(matches, pinned, request.world, request.competitions, calendars)
+    moves = _MoveSet(matches, pinned, request, calendars)
 
     current_cost = _cost(matches, constraints, ctx).cost
     best_cost = current_cost
@@ -433,12 +429,17 @@ def _anneal(
     report_every = max(1, total_iterations // 40)
 
     iterations = 0
+    idle_draws = 0
     while iterations < total_iterations:
         anneal_progress = iterations / max(1, total_iterations - 1)
         temperature = start_temperature * math.exp(decay * anneal_progress)
 
         undo = moves.apply(rng)
         if undo is None:
+            # A schedule with nothing movable would otherwise spin here.
+            idle_draws += 1
+            if idle_draws > _MAX_IDLE_DRAWS:
+                break
             continue
         iterations += 1
 
@@ -483,6 +484,7 @@ def _anneal(
 _RATE_CACHE: dict[tuple[int, int], float] = {}
 
 _CALIBRATION_PROBES = 200
+_MAX_IDLE_DRAWS = 200_000
 
 
 def _iterations_per_second(
@@ -495,15 +497,19 @@ def _iterations_per_second(
     if cached is not None:
         return cached
 
-    probe_moves = _MoveSet(matches, set(), request.world, request.competitions, calendars)
+    probe_moves = _MoveSet(matches, set(), request, calendars)
     probe_rng = random.Random()
     snapshot = _capture_all(matches)
 
     started = time.perf_counter()
     completed = 0
+    idle_draws = 0
     while completed < _CALIBRATION_PROBES:
         undo = probe_moves.apply(probe_rng)
         if undo is None:
+            idle_draws += 1
+            if idle_draws > _MAX_IDLE_DRAWS:
+                break
             continue
         _cost(matches, request.constraints, request.ctx)
         completed += 1
@@ -511,7 +517,7 @@ def _iterations_per_second(
 
     _restore(matches, snapshot)
 
-    rate = completed / elapsed if elapsed > 0 else float(completed)
+    rate = completed / elapsed if completed and elapsed > 0 else float(max(1, completed))
     _RATE_CACHE[key] = rate
     return rate
 
@@ -521,35 +527,42 @@ def _capture_all(matches: list[WorkingMatch]) -> list[_Snapshot]:
 
 
 def _snap(index: int, match: WorkingMatch) -> _Snapshot:
-    return (index, match.home_team, match.away_team, match.date, match.venue, match.anchor)
+    return (index, match.home_team, match.away_team, match.date, match.venue, match.slot)
 
 
 def _restore(matches: list[WorkingMatch], snapshot: list[_Snapshot]) -> None:
-    for index, home, away, day, venue, anchor in snapshot:
+    for index, home, away, day, venue, slot in snapshot:
         match = matches[index]
         match.home_team = home
         match.away_team = away
         match.date = day
         match.venue = venue
-        match.anchor = anchor
+        match.slot = slot
 
 
 class _MoveSet:
-    """The four move operators, plus the indexes they need to run cheaply."""
+    """The four move operators, plus the indexes they need to run cheaply.
+
+    Every operator proposes only dates inside the match's round slot and
+    drops a proposal that would put a team on a blackout, cup or European
+    date, so the full scorer only sees moves that can be viable (#7).
+    """
 
     def __init__(
         self,
         matches: list[WorkingMatch],
         pinned: set[str],
-        world: World,
-        competitions: list[Competition],
+        request: SolveRequest,
         calendars: dict[str, SeasonCalendar],
     ) -> None:
         self._matches = matches
         self._pinned = pinned
-        self._world = world
+        self._world = request.world
         self._calendars = calendars
-        self._competitions = {c.id: c for c in competitions}
+        self._competitions = {c.id: c for c in request.competitions}
+        self._cup_windows = resolved_cup_windows(request.cup_schedules)
+        self._european = request.european_commitments
+        self._club_of = {team_id: team.club_id for team_id, team in request.world.teams.items()}
 
         # Pinned matches are tracked by list position, not by key: a key
         # contains the home team, and the orientation moves rewrite that.
@@ -588,38 +601,79 @@ class _MoveSet:
     def apply(self, rng: random.Random) -> list[_Snapshot] | None:
         roll = rng.random()
         if roll < 0.55:
-            return self._shift(rng)
+            return self._shift_day(rng)
         if roll < 0.75:
             return self._swap_rounds(rng)
         if roll < 0.90:
             return self._flip_orientation(rng)
         return self._swap_teams(rng)
 
-    # -- fine: move one match within its round window ----------------------
+    # -- date admissibility ---------------------------------------------------
 
-    def _shift(self, rng: random.Random) -> list[_Snapshot] | None:
+    def _date_ok(self, home: str, away: str, venue: str, competition_id: str, day: date) -> bool:
+        """Whether `day` clears the blackouts and the binding cup and European
+        dates of both teams."""
+        if not self._calendars[competition_id].is_allowed(day, venue):
+            return False
+        return not any(
+            cup_conflict(self._cup_windows, team, day)
+            or european_conflict(self._european, team, day)
+            for team in (home, away)
+        )
+
+    def _neighbours_ok(self, index: int, day: date) -> bool:
+        """Whether `day` leaves both teams their rest and double-books neither
+        the venue nor the club's home day, given every other match as placed."""
+        match = self._matches[index]
+        home, away, venue = match.home_team, match.away_team, match.venue
+        club = self._club_of[home]
+        own_gap = self._gap_of(match)
+        for i, other in enumerate(self._matches):
+            if i == index:
+                continue
+            # Matches far enough apart for both rests cannot conflict; a nearer
+            # one conflicts if it shares a team, or a venue/club on the same day.
+            delta = abs((other.date - day).days)
+            if delta >= own_gap and delta >= self._gap_of(other):
+                continue
+            if delta == 0 and (other.venue == venue or self._club_of[other.home_team] == club):
+                return False
+            if (home in (other.home_team, other.away_team)) or (
+                away in (other.home_team, other.away_team)
+            ):
+                return False
+        return True
+
+    def _gap_of(self, match: WorkingMatch) -> int:
+        return self._competitions[match.competition_id].min_rest_days + 1
+
+    # -- fine: move one match to another day of its slot --------------------
+
+    def _shift_day(self, rng: random.Random) -> list[_Snapshot] | None:
         if not self._movable:
             return None
         index = rng.choice(self._movable)
         match = self._matches[index]
-        competition = self._competitions.get(match.competition_id)
-        if competition is None:
+        if match.slot is None or match.competition_id not in self._competitions:
             return None
 
-        anchor = match.anchor
-        if anchor is None:
-            return None
-        calendar = self._calendars[match.competition_id]
-        window = calendar.window(anchor, competition.match_window_days, match.venue)
-        window = [d for d in window if d != match.date]
-        if not window:
+        options = [
+            day
+            for day in match.slot.days
+            if day != match.date
+            and self._date_ok(
+                match.home_team, match.away_team, match.venue, match.competition_id, day
+            )
+            and self._neighbours_ok(index, day)
+        ]
+        if not options:
             return None
 
         snapshot = [_snap(index, match)]
-        match.date = rng.choice(window)
+        match.date = rng.choice(options)
         return snapshot
 
-    # -- medium: exchange two rounds' dates within a leg -------------------
+    # -- medium: exchange two rounds' slots within a leg ---------------------
 
     def _swap_rounds(self, rng: random.Random) -> list[_Snapshot] | None:
         keys = [k for k, rounds in self._rounds_by_leg.items() if len(rounds) >= 2]
@@ -631,16 +685,13 @@ class _MoveSet:
 
         indexes_a = self._indexes_by_round[(competition_id, round_a)]
         indexes_b = self._indexes_by_round[(competition_id, round_b)]
-        anchor_a = self._matches[indexes_a[0]].anchor
-        anchor_b = self._matches[indexes_b[0]].anchor
-        if anchor_a is None or anchor_b is None:
-            return None
-        offset = (anchor_b - anchor_a).days
-        if offset == 0:
+        slot_a = self._matches[indexes_a[0]].slot
+        slot_b = self._matches[indexes_b[0]].slot
+        if slot_a is None or slot_b is None or slot_a == slot_b:
             return None
 
         snapshot: list[_Snapshot] = []
-        for indexes, shift, new_anchor in ((indexes_a, offset, anchor_b), (indexes_b, -offset, anchor_a)):
+        for indexes, source, target in ((indexes_a, slot_a, slot_b), (indexes_b, slot_b, slot_a)):
             for index in indexes:
                 match = self._matches[index]
                 if index in self._pinned_indexes:
@@ -648,8 +699,12 @@ class _MoveSet:
                     # break the requirement it satisfies.
                     return self._abort(snapshot)
                 snapshot.append(_snap(index, match))
-                match.date = match.date + timedelta(days=shift)
-                match.anchor = new_anchor
+                match.date = _carry_over(match.date, source, target)
+                match.slot = target
+                if not self._date_ok(
+                    match.home_team, match.away_team, match.venue, competition_id, match.date
+                ):
+                    return self._abort(snapshot)
 
         return snapshot
 
@@ -681,6 +736,8 @@ class _MoveSet:
         for target in (match, mirror):
             target.home_team, target.away_team = target.away_team, target.home_team
             target.venue = self._world.team(target.home_team).home_venue
+            if not self._calendars[target.competition_id].is_allowed(target.date, target.venue):
+                return self._abort(snapshot)
         return snapshot
 
     def _find_mirror(self, index: int) -> int | None:
@@ -709,8 +766,19 @@ class _MoveSet:
             match.home_team = _swap(match.home_team, team_a, team_b)
             match.away_team = _swap(match.away_team, team_a, team_b)
             match.venue = self._world.team(match.home_team).home_venue
+            if not self._date_ok(
+                match.home_team, match.away_team, match.venue, competition_id, match.date
+            ):
+                return self._abort(snapshot)
 
         return snapshot or None
+
+
+def _carry_over(day: date, source: RoundSlot, target: RoundSlot) -> date:
+    """`day`'s counterpart in `target`: the slot day nearest the same offset
+    from the slot's default day."""
+    wanted = target.default_day + (day - source.default_day)
+    return min(target.days, key=lambda d: (abs((d - wanted).days), d))
 
 
 def _swap(team: str, a: str, b: str) -> str:
