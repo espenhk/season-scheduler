@@ -187,3 +187,17 @@ extra_round_slots:
   - {date: 2026-07-15, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round", verified: false}
   - {date: 2026-10-28, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round", verified: false}
   - {date: 2026-11-18, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round", verified: false}
+
+# Catch-up midweeks kept free of league fixtures: where a match moves when a
+# later cup or UEFA round displaces it (`contingency_policy`). Each is a
+# Wednesday clear of every declared slot, cup date and UEFA leg; picked from the
+# calendar rather than published by the leagues, so unverified.
+reserve_dates:
+  - {date: 2026-04-15, capacity: 3, reason: "Spring catch-up midweek", verified: false}
+  - {date: 2026-07-22, capacity: 3, reason: "Summer catch-up midweek", verified: false}
+  - {date: 2026-08-12, capacity: 3, reason: "Catch-up midweek", verified: false}
+  - {date: 2026-08-26, capacity: 3, reason: "Catch-up midweek", verified: false}
+  - {date: 2026-09-09, capacity: 3, reason: "Catch-up midweek", verified: false}
+  - {date: 2026-10-14, capacity: 3, reason: "Catch-up midweek", verified: false}
+  - {date: 2026-11-04, capacity: 3, reason: "Catch-up midweek", verified: false}
+  - {date: 2026-11-25, capacity: 3, reason: "Autumn catch-up midweek", verified: false}

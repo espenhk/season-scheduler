@@ -55,6 +55,7 @@ from .base import (
     SearchStats,
     SolveRequest,
     SolverResult,
+    attach_contingency_plan,
     resolve_slot_plans,
     select_diverse,
 )
@@ -242,6 +243,7 @@ class LocalSearchScheduler:
 
         for position, candidate in enumerate(chosen, start=1):
             candidate.label = f"Option {position}"
+            attach_contingency_plan(candidate, request)
 
         if not any(c.score.feasible for c in chosen):
             notes.append(

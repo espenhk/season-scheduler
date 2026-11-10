@@ -11,6 +11,7 @@ on:
     paths:
       - "terminliste/solvers/**"
       - "terminliste/slot_planner.py"
+      - "terminliste/contingency.py"
       - "terminliste/frame.py"
       - "tests/solvers/**"
       - "tests/integration/**"

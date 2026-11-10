@@ -14,7 +14,6 @@ import factories as f
 from terminliste.model.schema import Fixture
 from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.hard import CommitmentConflict
-from terminliste.scoring.soft import ContingentCommitmentConflict
 from terminliste.solvers.cpsat import _commitment_clear
 from terminliste.solvers.greedy import (
     _COMMITMENT_CONFLICT,
@@ -71,14 +70,8 @@ def test_greedy_cpsat_and_hard_rule_agree_on_hard_commitments():
     assert hard_days == {date(2026, 7, 23) + timedelta(days=d) for d in range(-2, 3)}
 
 
-def test_contingent_dates_are_a_greedy_nudge_and_a_soft_penalty():
-    world, season = _world()
-    ctx = EvalContext(world=world, season=season, travel=_StubTravel())
-    soft = ContingentCommitmentConflict(commitments=_COMMITMENTS)
+def test_contingent_dates_stay_in_the_domain_and_get_a_greedy_nudge():
     day = date(2026, 8, 20)
 
     assert 0 < commitment_cost(_COMMITMENTS, _FIXTURE, day) < _COMMITMENT_CONFLICT
     assert _commitment_clear([day], _FIXTURE, _COMMITMENTS) == [day]
-    score = evaluate([f.match("league", "t1", "t2", day, "v1")], [soft], ctx)
-    assert score.hard_violations == 0
-    assert score.result(soft.id).count == 1

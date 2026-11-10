@@ -33,6 +33,7 @@ from .base import (
     SearchStats,
     SolveRequest,
     SolverResult,
+    attach_contingency_plan,
     resolve_slot_plans,
     select_diverse,
 )
@@ -193,6 +194,13 @@ class CpSatScheduler:
         chosen = select_diverse(candidates, request.top_n)
         for position, candidate in enumerate(chosen, start=1):
             candidate.label = f"Option {position}"
+            attach_contingency_plan(candidate, request)
+        if chosen and request.commitments and any(not c.hard for c in request.commitments):
+            notes.append(
+                "CP-SAT does not optimise fallbacks: the contingency plan is derived from the "
+                "solved schedule afterwards, and an uncovered match shows as a "
+                "contingency_coverage violation."
+            )
 
         if chosen and not any(c.score.feasible for c in chosen):
             notes.append(
@@ -629,8 +637,8 @@ def _commitment_clear(window: list[date], fixture, commitments: CommitmentSet) -
 
     Excluded up front, the way a blackout date already is, rather than
     modelled as a constraint to satisfy after the fact. Contingent
-    commitments stay in the domain; `ContingentCommitmentConflict` scores
-    them.
+    commitments stay in the domain; the contingency plan covers them
+    after solving (#9).
     """
     return [
         day

@@ -518,7 +518,7 @@ def test_european_commitment_conflict_is_silent_for_a_team_with_no_commitments()
 def test_european_commitment_conflict_ignores_a_contingent_commitment():
     """A commitment the team only reaches with some probability (#8) isn't a
     guaranteed fixture, so it must not gate a hard exclusion —
-    `ContingentCommitmentConflict` (scoring/soft.py) is where it shows up
+    the contingency plan (`contingency.py`) is where it shows up
     instead."""
     world, season, _ = _european_world()
     contingent = f.commitment(

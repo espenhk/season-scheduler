@@ -19,6 +19,10 @@ _UNCOVERED_REQUIREMENT_COST = 50.0
 _OFF_WEEKDAY_COST = 3.0
 _EXTRA_SLOT_COST = 2.0
 _DISCOURAGED_COST = 3.0
+# Every team clashing with a contingent commitment needs its own fallback date,
+# so a slot hitting more than a few at once gets quadratically worse (#9).
+_CONTINGENT_CROWDING_COST = 0.5
+_CONTINGENT_CROWD_FREE = 3
 
 
 class SlotPlanningError(ValueError):
@@ -168,6 +172,20 @@ def _with_clashes(
     """The slot with its default day moved to the day fewest teams clash on,
     nearest the preferred weekday among equals. A pinned day stays put."""
     dates = {team_id: _hard_dates(frame, team_id) for team_id in competition.teams}
+    contingent = {
+        team_id: frame.commitments.contingent_for(team_id)
+        for team_id in competition.teams
+        if frame.commitments.contingent_for(team_id)
+    }
+
+    def contingent_clashes(day: date) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                team_id
+                for team_id, items in contingent.items()
+                if any(c.clashes(day) for c in items)
+            )
+        )
 
     def clashing(day: date) -> tuple[str, ...]:
         return tuple(
@@ -182,7 +200,12 @@ def _with_clashes(
     day = min(
         options, key=lambda d: (len(clashing(d)), abs(d.weekday() - preferred), d)
     )
-    return replace(slot, default_day=day, clashing_teams=clashing(day))
+    return replace(
+        slot,
+        default_day=day,
+        clashing_teams=clashing(day),
+        contingent_teams=contingent_clashes(day),
+    )
 
 
 def _trim_unusable_days(
@@ -229,6 +252,8 @@ def _hard_dates(frame: SeasonFrame, team_id: str) -> list[tuple[date, int]]:
 
 def _slot_cost(slot: RoundSlot, competition: Competition, calendar: SeasonCalendar) -> float:
     cost = _CLASH_COST * len(slot.clashing_teams)
+    crowd = max(0, len(slot.contingent_teams) - _CONTINGENT_CROWD_FREE)
+    cost += _CONTINGENT_CROWDING_COST * crowd**2
     if slot.weekday != competition.preferred_weekday:
         cost += _OFF_WEEKDAY_COST
     if slot.kind != "weekend":

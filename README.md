@@ -350,9 +350,39 @@ Everything reads the one `CommitmentSet` held by `SeasonFrame.commitments` and
 league slot when it is hard for someone), greedy placement and round pinning,
 local search's move filter, CP-SAT's candidate domains, `CommitmentConflict`
 (hard, ids `cup_round_conflict` and `european_commitment_conflict`) and
-`ContingentCommitmentConflict` (soft, weight 3.0 x rest shortfall x
-probability). The soft rule stands in for a planned fallback until contingency
-plans exist (#9).
+the contingency rules below.
+
+### Fallbacks and reserve dates
+
+A match within rest distance of a contingent commitment gets a fallback: the
+date it moves to if the team reaches that round. `terminliste/contingency.py`
+derives them from the base plan after (and inside) every evaluation, so local
+search, CP-SAT and `score` all see the same plan for the same fixtures; a base
+move that strands a match re-plans it. Candidates are tried in the order of
+`Season.contingency_policy.fallback_kinds`, within `max_fallback_days` (21):
+`same_slot` (another day of the Fri-Mon span), `reserve_date` (one of
+`Season.reserve_dates`, midweeks no base fixture may use) and `next_free_slot`
+(a later weekend day). A fallback is valid in its trigger's scenario: rest
+days from the hard commitments plus every contingent one that can be played
+alongside the trigger, one match per team per day, venue blackouts and
+double-booking, shared-stadium and dual-club home clashes, leg ordering, and
+reserve-date capacity. Reserve capacity counts a cup round's fallbacks up to
+the bracket bound: when the previous round's field was drawn against itself,
+at most half of the alive top-flight teams reach the next one.
+
+- `contingency_coverage` (hard): every colliding match has a valid fallback.
+- `contingency_collision` (hard): two fallbacks share a team, venue or club
+  date only if their triggers are mutually exclusive in the outcome tree.
+- `reserve_date_unused` (hard): no base fixture on a reserve date.
+- `expected_disruption` (soft, weight 3.0): sum of probability x move cost
+  (`KIND_COST` per kind plus `DAY_COST` per day), replacing the flat
+  contingent-commitment penalty.
+
+The plan is on `Candidate.contingency_plan` and in the JSON output under
+`contingency_plan`. CP-SAT does not optimise fallbacks; it plans them after
+solving and notes this in its result. The slot planner steers rounds away from
+slots where more than three teams clash with a contingent commitment, since
+each of them needs its own fallback.
 
 ### Main tournaments (Champions/Europa/Conference League)
 

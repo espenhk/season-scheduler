@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from ..contingency import ContingencyPlan, ContingencyPlanner
 from ..frame import SeasonFrame
 from ..model.calendar import SeasonCalendar
 from ..model.loader import World
@@ -110,6 +111,8 @@ class Candidate:
     # Each round's slot, keyed by (competition_id, round_index), so the
     # day-within-slot step can read it without re-deriving it from dates.
     round_slots: dict[tuple[str, int], RoundSlot] = field(default_factory=dict)
+    # Where each match goes if a later cup or UEFA round displaces it (#9).
+    contingency_plan: ContingencyPlan | None = None
 
     def assignment(self) -> dict[str, object]:
         """Fixture key -> date, the fingerprint used for diversity checks."""
@@ -156,6 +159,15 @@ class SolveRequest:
     # Called periodically with a running `SearchStats` snapshot so the CLI can
     # print live progress. `None` means don't bother.
     progress: Callable[[ProgressUpdate], None] | None = None
+
+
+def attach_contingency_plan(candidate: Candidate, request: SolveRequest) -> None:
+    """Plan `candidate`'s fallbacks from the request's commitments."""
+    planner = ContingencyPlanner(
+        request.world, request.season, request.competitions, request.commitments
+    )
+    if planner.active:
+        candidate.contingency_plan = planner.plan(candidate.matches)
 
 
 def resolve_slot_plans(request: SolveRequest, calendar: SeasonCalendar) -> dict[str, SlotPlan]:

@@ -10,6 +10,7 @@ on:
     branches: [main]
     paths:
       - "terminliste/external_schedule.py"
+      - "terminliste/contingency.py"
       - "terminliste/baseline.py"
       - "cli.py"
       - "baselines/**"

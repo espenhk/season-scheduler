@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import yaml
@@ -343,6 +343,7 @@ def validate_world(world: World) -> list[str]:
                 )
         errors.extend(_validate_blackout_range_scopes(world, season))
         errors.extend(_validate_fixed_requirements(world, season))
+        errors.extend(_validate_reserve_dates(season))
         errors.extend(_validate_full_round_requirements(world, season))
         errors.extend(_validate_rivalry_fixtures(world, season))
         errors.extend(_validate_calendar_capacity(world, season))
@@ -668,6 +669,29 @@ def _validate_fixed_requirements(world: World, season: Season) -> list[str]:
                 f"requirement {requirement.id!r} demands a match on {requirement.date}, which "
                 f"falls inside a global blackout range — these cannot both hold"
             )
+    return errors
+
+
+def _validate_reserve_dates(season: Season) -> list[str]:
+    errors: list[str] = []
+    required = {r.date for r in season.fixed_requirements} | {
+        r.date for r in season.full_round_requirements
+    }
+    slots = {e.date for e in season.extra_round_slots}
+    seen: set[date] = set()
+    for reserve in season.reserve_dates:
+        day = reserve.date
+        if day in seen:
+            errors.append(f"season {season.id!r} lists reserve date {day} twice")
+        seen.add(day)
+        if not season.start <= day <= season.end:
+            errors.append(f"reserve date {day} falls outside the season {season.start}..{season.end}")
+        if day in season.blacked_out_dates:
+            errors.append(f"reserve date {day} is also a global blackout")
+        if day in required:
+            errors.append(f"reserve date {day} is also a required fixture date")
+        if day in slots:
+            errors.append(f"reserve date {day} is also an extra round slot")
     return errors
 
 

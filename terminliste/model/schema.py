@@ -635,6 +635,20 @@ class RivalryFixture(BaseModel):
     reason: str = ""
 
 
+FallbackKind = Literal["same_slot", "reserve_date", "next_free_slot"]
+
+
+class ReserveDate(BaseModel):
+    """A catch-up midweek kept free of base-plan fixtures, for matches a later
+    cup or UEFA round pushes off their date (#9). `capacity` caps how many
+    fallbacks that can fire together may land on it."""
+
+    date: date
+    capacity: int = Field(default=3, ge=1)
+    reason: str = ""
+    verified: bool = True
+
+
 class ContingencyPolicy(BaseModel):
     """How the season treats commitments it may not reach (#8).
 
@@ -644,6 +658,12 @@ class ContingencyPolicy(BaseModel):
     """
 
     hard_threshold: float = Field(default=1.0, ge=0.0, le=1.0)
+    # How far from its base date a fallback may sit, and which kinds of
+    # fallback are tried, in order of preference (#9).
+    max_fallback_days: int = Field(default=21, ge=1)
+    fallback_kinds: list[FallbackKind] = Field(
+        default_factory=lambda: ["same_slot", "reserve_date", "next_free_slot"]
+    )
 
 
 class FixedRequirement(BaseModel):
@@ -703,6 +723,11 @@ class Season(BaseModel):
     rivalry_fixtures: list[RivalryFixture] = Field(default_factory=list)
     extra_round_slots: list[ExtraRoundSlot] = Field(default_factory=list)
     contingency_policy: ContingencyPolicy = Field(default_factory=ContingencyPolicy)
+    reserve_dates: list[ReserveDate] = Field(default_factory=list)
+
+    @cached_property
+    def reserve_date_set(self) -> frozenset[date]:
+        return frozenset(r.date for r in self.reserve_dates)
 
     @cached_property
     def blacked_out_dates(self) -> dict[date, str]:

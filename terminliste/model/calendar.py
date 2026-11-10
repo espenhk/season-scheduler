@@ -122,7 +122,8 @@ def _outward_offsets(days: int) -> list[int]:
 def build_calendar(world: object, season: Season) -> SeasonCalendar:
     # `world` is unused; typed `object` because importing World would cycle with the loader.
     all_dates = _date_range(season.start, season.end)
-    blackouts = set(season.blacked_out_dates)
+    # Reserve dates stay free of base-plan fixtures (#9).
+    blackouts = set(season.blacked_out_dates) | season.reserve_date_set
     # Belt and braces: the loader already rejects a hard requirement whose
     # date is blacked out.
     required = {r.date for r in season.fixed_requirements if r.hard} | {

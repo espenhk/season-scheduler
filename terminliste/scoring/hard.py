@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from ..contingency import ContingencyPlanner
 from ..model.schema import Competition, FixedRequirement, FullRoundRequirement
 from ..rounds.commitments import CommitmentSet, CommitmentSource
 from .base import Constraint, ConstraintResult, EvalContext, Event, ScheduleIndex
@@ -442,6 +443,107 @@ class CommitmentConflict:
 
 
 @dataclass
+class ReserveDateUnused:
+    """Reserve dates stay free of base-plan fixtures; only a fallback may use
+    them (#9)."""
+
+    id: str = "reserve_date_unused"
+    kind: str = "hard"
+    weight: float = 1.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        count = 0
+        events: list[Event] = []
+        for day in ctx.season.reserve_date_set:
+            for match in index.by_date.get(day, ()):
+                count += 1
+                if ctx.detail:
+                    events.append(
+                        Event(
+                            delta=-self.weight,
+                            detail=f"{match.competition_id} match on reserve date {day}",
+                            match_keys=(match.key,),
+                        )
+                    )
+        return ConstraintResult(self.id, "hard", -self.weight * count, count, events)
+
+
+@dataclass
+class ContingencyCoverage:
+    """Every match within rest distance of a contingent commitment has a
+    fallback that is valid in its trigger's scenario (#9)."""
+
+    planner: ContingencyPlanner
+    id: str = "contingency_coverage"
+    kind: str = "hard"
+    weight: float = 1.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        plan = self.planner.plan_for(index)
+        missing = plan.uncovered
+        events: list[Event] = []
+        if ctx.detail:
+            for key in missing:
+                events.append(
+                    Event(
+                        delta=-self.weight,
+                        detail=(
+                            f"{key} collides with {', '.join(plan.colliding[key])} and has no "
+                            f"valid fallback within {ctx.season.contingency_policy.max_fallback_days} days"
+                        ),
+                        match_keys=(key,),
+                    )
+                )
+        return ConstraintResult(self.id, "hard", -self.weight * len(missing), len(missing), events)
+
+
+@dataclass
+class ContingencyCollision:
+    """Two fallbacks share a team, venue or club date only if their triggers
+    can never both fire (#9)."""
+
+    planner: ContingencyPlanner
+    id: str = "contingency_collision"
+    kind: str = "hard"
+    weight: float = 1.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        plan = self.planner.plan_for(index)
+        slots: dict[tuple[str, str, date], list] = {}
+        for fallback in plan.fallbacks.values():
+            for resource in (
+                ("team", fallback.home_team),
+                ("team", fallback.away_team),
+                ("venue", fallback.venue),
+                ("home", fallback.home_team),
+            ):
+                slots.setdefault((*resource, fallback.date), []).append(fallback)
+            for partner in self.planner.partners.get(fallback.home_team, ()):
+                slots.setdefault(("home", partner, fallback.date), []).append(fallback)
+
+        clashes: dict[tuple[str, str], tuple[str, date]] = {}
+        for (resource, name, day), sharing in slots.items():
+            for i, first in enumerate(sharing):
+                for second in sharing[i + 1 :]:
+                    if first.match_key != second.match_key and self.planner.co_triggerable(
+                        first.trigger_node_ids, second.trigger_node_ids
+                    ):
+                        pair = tuple(sorted((first.match_key, second.match_key)))
+                        clashes.setdefault(pair, (f"{resource} {name}", day))
+        events: list[Event] = []
+        if ctx.detail:
+            for (first, second), (what, day) in sorted(clashes.items()):
+                events.append(
+                    Event(
+                        delta=-self.weight,
+                        detail=f"fallbacks of {first} and {second} can both fire and share {what} on {day}",
+                        match_keys=(first, second),
+                    )
+                )
+        return ConstraintResult(self.id, "hard", -self.weight * len(clashes), len(clashes), events)
+
+
+@dataclass
 class FinalRoundSameSlot:
     """Every league's final round lands on one date, at one kickoff time, so
     no team gains an edge from kicking off after its rivals have finished.
@@ -547,6 +649,9 @@ __all__: list[str] = [
     "ClubHomeClash",
     "Constraint",
     "CommitmentConflict",
+    "ContingencyCollision",
+    "ContingencyCoverage",
+    "ReserveDateUnused",
     "FinalRoundSameSlot",
     "FixedDateRequirement",
     "FullRoundOnDate",

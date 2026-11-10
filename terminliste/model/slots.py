@@ -32,6 +32,8 @@ class RoundSlot:
     default_day: date
     label: str = ""
     clashing_teams: tuple[str, ...] = ()
+    # Teams whose contingent commitments are too close to `default_day` (#9).
+    contingent_teams: tuple[str, ...] = ()
 
     def contains(self, day: date) -> bool:
         return self.start <= day <= self.end
