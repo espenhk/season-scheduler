@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import TYPE_CHECKING
 
-from .loader import World
 from .schema import WEEKDAYS, Competition, Season
+
+if TYPE_CHECKING:
+    from .loader import World
 
 
 @dataclass(frozen=True)
