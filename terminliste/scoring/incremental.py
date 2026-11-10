@@ -43,6 +43,7 @@ class LiveIndex(ScheduleIndex):
     """
 
     def __init__(self, matches: Sequence) -> None:
+        self._ready = False
         super().__init__(matches)  # type: ignore[arg-type]
         self._fields: list[_Fields] = [_fields_of(m) for m in matches]
         self.team_idx: dict[str, set[int]] = {}
@@ -52,12 +53,29 @@ class LiveIndex(ScheduleIndex):
         self._away_dates: dict[str, set[date]] = {
             t: set(dates) for t, dates in self.away_dates_by_team.items()
         }
-        # Per team, so one edit per rebuild. `away_venue_by_team_date` is
-        # not kept current between resyncs; the club views read this instead.
+        # Per team, so one edit per rebuild; stands in for the unavailable
+        # `away_venue_by_team_date`.
         self.away_venues: dict[str, dict[date, str]] = {}
-        for (team, day), venue in self.away_venue_by_team_date.items():
-            self.away_venues.setdefault(team, {})[day] = venue
+        for match in matches:
+            self.away_venues.setdefault(match.away_team, {})[match.date] = match.venue
+        # Leg is fixed per match, so these partitions never change.
+        self.by_leg: dict[tuple[str, int], list] = {}
+        for match in matches:
+            self.by_leg.setdefault((match.competition_id, match.leg), []).append(match)
         self._log: list[tuple] = []
+        self._ready = True
+
+    @property
+    def away_venue_by_team_date(self):
+        if not self.__dict__.get("_ready"):
+            return {}  # ScheduleIndex.__init__ fills it while building
+        raise AttributeError(
+            "LiveIndex does not keep away_venue_by_team_date current; read away_venues[team]"
+        )
+
+    @away_venue_by_team_date.setter
+    def away_venue_by_team_date(self, value) -> None:
+        pass  # ScheduleIndex.__init__ assigns it; deliberately dropped
 
     def sync(self, changed: Iterable[int]) -> None:
         """Bring the index in line with the changed matches' current fields.
@@ -159,6 +177,7 @@ class _View:
         "home_dates_by_team",
         "away_dates_by_team",
         "away_venue_by_team_date",
+        "by_leg",
     )
 
     def __init__(
@@ -170,7 +189,9 @@ class _View:
         home_dates_by_team=_EMPTY,
         away_dates_by_team=_EMPTY,
         away_venue_by_team_date=_EMPTY,
+        by_leg=_EMPTY,
     ) -> None:
+        self.by_leg = by_leg
         self.matches = matches
         self.by_team = by_team
         self.by_venue_date = by_venue_date
@@ -353,6 +374,8 @@ class DeltaScorer:
             return _View(chosen, by_team=by_team, by_competition=grouped), self.ctx
         if scope == "competition":
             grouped = {u: live.by_competition[u] for u in units}
+            legs = {k: v for k, v in live.by_leg.items() if k[0] in units}
+            return _View([m for ms in grouped.values() for m in ms], by_competition=grouped, by_leg=legs), self.ctx
         else:
             grouped = {}
             for competition_id, round_index in units:

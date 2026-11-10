@@ -284,6 +284,17 @@ class LegOrdering:
         penalty = 0.0
         events: list[Event] = []
 
+        by_leg = getattr(index, "by_leg", None)
+        if by_leg and not ctx.detail:
+            # Search path: leg partitions are fixed, so this is C-level max/sum.
+            for (competition_id, leg), matches in by_leg.items():
+                previous = by_leg.get((competition_id, leg - 1))
+                if leg < 2 or not previous:
+                    continue
+                previous_end = max(m.date for m in previous)
+                count += sum(1 for m in matches if m.date <= previous_end)
+            return ConstraintResult(self.id, "hard", -self.weight * count, count, events)
+
         for competition_id, matches in index.by_competition.items():
             last_of_leg: dict[int, date] = {}
             for match in matches:

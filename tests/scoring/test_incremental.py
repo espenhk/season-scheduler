@@ -108,3 +108,11 @@ def test_pruned_proposal_is_rejected_and_leaves_the_scorer_intact(state):
         scorer.reject()
     _assert_agrees(scorer, working, request)
     assert pruned > 0
+
+
+def test_live_index_refuses_the_away_venue_dict_it_does_not_maintain(state):
+    request, working, _, _ = state
+    scorer = DeltaScorer(working, request.constraints, request.ctx)
+    with pytest.raises(AttributeError):
+        scorer.live.away_venue_by_team_date  # noqa: B018
+    assert scorer.live.away_venues
