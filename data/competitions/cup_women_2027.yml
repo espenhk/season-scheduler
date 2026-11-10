@@ -4,7 +4,7 @@
 #
 # Rounds are schedulable, not fixed — see cup_men_2027.yml's header and
 # `terminliste/rounds/cup_schedule.py` for how forced_date/window_start/
-# window_end work.
+# window_end/preferred_weekday work.
 #
 # verified: false — Round 2's date is NFF-confirmed via web search; NFF has
 # not yet published windows beyond Round 2, so Round 3 onward are estimated
@@ -44,7 +44,6 @@ teams:
   - valerenga_w
 
 min_rest_days: 2
-match_window_days: 3
 
 cup_rounds:
   - id: r2
@@ -71,6 +70,7 @@ cup_rounds:
     note: "Estimated — spring 2027, no NFF window published yet; assumed early-to-mid May 2027, ahead of the final."
   - id: final
     name: Final
+    preferred_weekday: sunday
     window_start: 2027-05-24
     window_end: 2027-05-31
     granularity: week

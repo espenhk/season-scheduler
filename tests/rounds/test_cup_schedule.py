@@ -83,7 +83,6 @@ def test_windowed_round_starts_at_the_earliest_point_the_gap_allows():
         ["t1"],
         format="cup",
         min_rest_days=5,
-        match_window_days=0,  # one date per round, easiest to assert on
         cup_rounds=[
             f.cup_round("r1", forced_date=date(2026, 8, 22), name="Round 1"),
             f.cup_round(
@@ -92,6 +91,7 @@ def test_windowed_round_starts_at_the_earliest_point_the_gap_allows():
                 window_end=date(2026, 9, 30),
                 granularity="month",
                 name="Round 2",
+                preferred_weekday="friday",
             ),
         ],
     )
@@ -124,30 +124,209 @@ def test_windowed_round_too_narrow_after_the_gap_is_rejected():
         schedule_cup(cup, blackouts=set())
 
 
-# -- schedule_cup: team spread within a windowed round -----------------------
+# -- schedule_cup: one date per windowed round -------------------------------
 
 
-def test_teams_spread_across_a_windowed_rounds_span_not_all_on_one_day():
+def test_windowed_round_puts_every_team_on_one_preferred_weekday_date():
     cup = f.competition(
         "cup",
         [f"t{i}" for i in range(8)],
         format="cup",
-        match_window_days=3,
         cup_rounds=[
             f.cup_round(
                 "r1",
-                window_start=date(2026, 9, 1),
+                window_start=date(2026, 9, 3),  # a Thursday
                 window_end=date(2026, 9, 30),
                 granularity="month",
                 name="Round 1",
+                preferred_weekday="tuesday",
             )
         ],
     )
     schedule, warnings = schedule_cup(cup, blackouts=set())
     placement = schedule.rounds[0]
-    assert len(set(placement.dates.values())) > 1, "8 teams over several legal days should not clump"
-    assert placement.spread_days <= 6
+    assert set(placement.dates.values()) == {date(2026, 9, 8)}
+    assert placement.spread_days == 0
     assert warnings == []
+
+
+def test_windowed_round_skips_a_blacked_out_preferred_weekday():
+    cup = f.competition(
+        "cup",
+        ["t1"],
+        format="cup",
+        cup_rounds=[
+            f.cup_round(
+                "r1",
+                window_start=date(2026, 9, 1),
+                window_end=date(2026, 9, 30),
+                name="Round 1",
+            )
+        ],
+    )
+    schedule, warnings = schedule_cup(cup, blackouts={date(2026, 9, 2)})
+    assert schedule.rounds[0].earliest_date == date(2026, 9, 9)
+    assert warnings == []
+
+
+def test_windowed_round_falls_back_to_another_midweek_day_never_a_weekend():
+    cup = f.competition(
+        "cup",
+        ["t1"],
+        format="cup",
+        cup_rounds=[
+            f.cup_round(
+                "r1",
+                window_start=date(2026, 9, 1),  # Tue; the window holds one Wednesday
+                window_end=date(2026, 9, 6),
+                name="Round 1",
+            )
+        ],
+    )
+    schedule, warnings = schedule_cup(cup, blackouts={date(2026, 9, 2)})
+    assert schedule.rounds[0].earliest_date == date(2026, 9, 1)
+    assert warnings == []
+
+
+def test_windowed_round_without_a_midweek_day_warns_and_settles_for_the_weekend():
+    cup = f.competition(
+        "cup",
+        ["t1"],
+        format="cup",
+        cup_rounds=[
+            f.cup_round(
+                "r1", window_start=date(2026, 9, 4), window_end=date(2026, 9, 6), name="Round 1"
+            )
+        ],
+    )
+    schedule, warnings = schedule_cup(cup, blackouts=set())
+    assert schedule.rounds[0].earliest_date == date(2026, 9, 4)
+    assert warnings and "Round 1" in warnings[0]
+
+
+def test_windowed_round_avoids_every_entrants_uefa_leg():
+    cup = f.competition(
+        "cup",
+        ["t1", "t2"],
+        format="cup",
+        min_rest_days=2,
+        cup_rounds=[
+            f.cup_round(
+                "r1", window_start=date(2026, 9, 1), window_end=date(2026, 9, 30), name="Round 1"
+            )
+        ],
+    )
+    commitments = {
+        "t1": [_uefa("t1", date(2026, 9, 2))],  # kills Wed 2 Sep and its rest days
+        "t2": [_uefa("t2", date(2026, 9, 9))],  # kills Wed 9 Sep
+    }
+    schedule, warnings = schedule_cup(cup, blackouts=set(), european_commitments=commitments)
+    assert schedule.rounds[0].earliest_date == date(2026, 9, 16)
+    assert warnings == []
+
+
+def test_windowed_round_ignores_a_team_with_an_override_when_dodging_uefa():
+    cup = f.competition(
+        "cup",
+        ["t1", "t2"],
+        format="cup",
+        cup_rounds=[
+            f.cup_round(
+                "r1",
+                window_start=date(2026, 9, 1),
+                window_end=date(2026, 9, 30),
+                name="Round 1",
+                team_overrides={"t1": date(2026, 9, 10)},
+            )
+        ],
+    )
+    commitments = {"t1": [_uefa("t1", date(2026, 9, 2))]}
+    schedule, _ = schedule_cup(cup, blackouts=set(), european_commitments=commitments)
+    assert schedule.rounds[0].dates == {"t1": date(2026, 9, 10), "t2": date(2026, 9, 2)}
+
+
+def test_forced_round_inside_a_uefa_week_warns_but_keeps_its_date():
+    cup = f.competition(
+        "cup",
+        ["t1", "t2"],
+        format="cup",
+        cup_rounds=[f.cup_round("r1", forced_date=date(2026, 8, 22), name="Round 1")],
+    )
+    commitments = {"t1": [_uefa("t1", date(2026, 8, 20))]}
+    schedule, warnings = schedule_cup(cup, blackouts=set(), european_commitments=commitments)
+    assert set(schedule.rounds[0].dates.values()) == {date(2026, 8, 22)}
+    assert len(warnings) == 1 and "UEFA" in warnings[0] and "t1" in warnings[0]
+
+
+def test_forced_round_clear_of_uefa_does_not_warn():
+    cup = f.competition(
+        "cup",
+        ["t1"],
+        format="cup",
+        cup_rounds=[f.cup_round("r1", forced_date=date(2026, 8, 22), name="Round 1")],
+    )
+    commitments = {"t1": [_uefa("t1", date(2026, 8, 27))]}
+    _, warnings = schedule_cup(cup, blackouts=set(), european_commitments=commitments)
+    assert warnings == []
+
+
+def test_team_override_moves_only_that_team():
+    cup = f.competition(
+        "cup",
+        ["t1", "t2"],
+        format="cup",
+        cup_rounds=[
+            f.cup_round(
+                "r1", forced_date=date(2026, 8, 22), name="Round 1",
+                team_overrides={"t2": date(2026, 9, 2)},
+            )
+        ],
+    )
+    schedule, _ = schedule_cup(cup, blackouts=set())
+    assert schedule.rounds[0].dates == {"t1": date(2026, 8, 22), "t2": date(2026, 9, 2)}
+
+
+def test_team_override_on_a_blackout_date_warns():
+    cup = f.competition(
+        "cup",
+        ["t1", "t2"],
+        format="cup",
+        cup_rounds=[
+            f.cup_round(
+                "r1", forced_date=date(2026, 8, 22), name="Round 1",
+                team_overrides={"t2": date(2026, 9, 2)},
+            )
+        ],
+    )
+    _, warnings = schedule_cup(cup, blackouts={date(2026, 9, 2)})
+    assert len(warnings) == 1 and "t2" in warnings[0] and "2026-09-02" in warnings[0]
+
+
+def test_a_weekend_preference_keeps_the_final_on_one_weekend_date():
+    cup = f.competition(
+        "cup",
+        ["t1", "t2"],
+        format="cup",
+        cup_rounds=[
+            f.cup_round(
+                "final",
+                window_start=date(2027, 5, 24),
+                window_end=date(2027, 5, 31),
+                name="Final",
+                preferred_weekday="sunday",
+            )
+        ],
+    )
+    schedule, _ = schedule_cup(cup, blackouts=set())
+    assert set(schedule.rounds[0].dates.values()) == {date(2027, 5, 30)}
+
+
+def _uefa(team: str, day: date, *, certain: bool = True):
+    from terminliste.rounds.european_schedule import EuropeanCommitmentDate
+
+    return EuropeanCommitmentDate(
+        team_id=team, date=day, min_rest_days=2, label="x", competition_id="cl", certain=certain
+    )
 
 
 # -- schedule_cup: home/away resolution --------------------------------------
@@ -260,14 +439,13 @@ def test_forced_round_too_close_to_the_previous_round_honours_min_rest_days():
 
 
 def test_fully_blacked_out_window_falls_back_to_the_anchor_with_a_warning():
-    """When every legal candidate day is blacked out, placement still
-    succeeds — falling back onto the round's own anchor — but is flagged
+    """When every day in the window is blacked out, placement still
+    succeeds — falling back onto the window's first day — but is flagged
     with a warning rather than silently ignoring the blackout."""
     cup = f.competition(
         "cup",
         [f"t{i}" for i in range(4)],
         format="cup",
-        match_window_days=1,
         cup_rounds=[
             f.cup_round(
                 "r1",
@@ -278,9 +456,7 @@ def test_fully_blacked_out_window_falls_back_to_the_anchor_with_a_warning():
             )
         ],
     )
-    # Blacks out both candidate days: the anchor (window_start) and the one
-    # day after it that match_window_days=1 would otherwise reach.
-    blackouts = {date(2026, 9, 1), date(2026, 9, 2)}
+    blackouts = {date(2026, 9, 1) + timedelta(days=i) for i in range(10)}
     schedule, warnings = schedule_cup(cup, blackouts=blackouts)
     assert set(schedule.rounds[0].dates.values()) == {date(2026, 9, 1)}
     assert warnings and "Round 1" in warnings[0]
@@ -306,10 +482,9 @@ def test_schedule_cups_pools_warnings_across_competitions():
         "tight",
         [f"t{i}" for i in range(4)],
         format="cup",
-        match_window_days=1,
         cup_rounds=[
             f.cup_round(
-                "r1", window_start=date(2026, 9, 1), window_end=date(2026, 9, 10), name="Round 1"
+                "r1", window_start=date(2026, 9, 1), window_end=date(2026, 9, 2), name="Round 1"
             )
         ],
     )
@@ -339,7 +514,10 @@ def test_schedule_cups_avoids_a_global_blackout_range():
         ["t1", "t2"],
         format="cup",
         cup_rounds=[
-            f.cup_round("r1", window_start=date(2026, 9, 1), window_end=date(2026, 9, 10), name="Round 1")
+            f.cup_round(
+                "r1", window_start=date(2026, 9, 1), window_end=date(2026, 9, 10), name="Round 1",
+                preferred_weekday="friday",
+            )
         ],
     )
     season = f.season(
@@ -364,7 +542,10 @@ def test_schedule_cups_ignores_venue_blackout_ranges():
         ["t1", "t2"],
         format="cup",
         cup_rounds=[
-            f.cup_round("r1", window_start=date(2026, 9, 1), window_end=date(2026, 9, 10), name="Round 1")
+            f.cup_round(
+                "r1", window_start=date(2026, 9, 1), window_end=date(2026, 9, 10), name="Round 1",
+                preferred_weekday="tuesday",
+            )
         ],
     )
     season = f.season(
@@ -393,3 +574,53 @@ def test_resolved_cup_windows_reads_each_teams_own_date():
     windows = resolved_cup_windows([schedule])
     assert windows["t1"] == [(date(2026, 8, 22), 4), (date(2026, 9, 16), 4)]
     assert windows["t2"] == [(date(2026, 8, 24), 4)]
+
+
+def test_schedule_cups_applies_blackouts_beyond_the_seasons_own_dates():
+    """The cup runs into 2027, past the season's end: 17 May 2027 is still off."""
+    comp = f.competition(
+        "cup1",
+        ["t1"],
+        format="cup",
+        cup_rounds=[
+            f.cup_round(
+                "r1", window_start=date(2027, 5, 17), window_end=date(2027, 5, 17), name="Round 1"
+            )
+        ],
+    )
+    season = f.season(
+        cup_competitions=["cup1"],
+        end=date(2026, 12, 6),
+        global_blackouts=[DatedNote(date=date(2027, 5, 17))],
+    )
+    _, warnings = schedule_cups([comp], season)
+    assert warnings and "Round 1" in warnings[0]
+
+
+def test_schedule_cups_applies_gender_scoped_blackouts_to_that_genders_cup():
+    from terminliste.model.schema import GlobalBlackoutRange
+
+    def cup(cup_id, gender):
+        return f.competition(
+            cup_id,
+            ["t1"],
+            format="cup",
+            gender=gender,
+            cup_rounds=[
+                f.cup_round(
+                    "r1", window_start=date(2026, 9, 21), window_end=date(2026, 10, 14), name="R"
+                )
+            ],
+        )
+
+    season = f.season(
+        cup_competitions=["m", "w"],
+        global_blackout_ranges=[
+            GlobalBlackoutRange(
+                start=date(2026, 9, 21), end=date(2026, 10, 6), gender="men", reason="FIFA"
+            )
+        ],
+    )
+    men, women = schedule_cups([cup("m", "men"), cup("w", "women")], season)[0]
+    assert men.rounds[0].earliest_date == date(2026, 10, 7)
+    assert women.rounds[0].earliest_date == date(2026, 9, 23)

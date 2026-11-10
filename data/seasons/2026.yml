@@ -20,8 +20,12 @@ competitions:
 # rounds are real-world fixed dates rather than something the solver
 # schedules — see cup_men_2027.yml / cup_women_2027.yml. The 2027 cup starts
 # in August 2026 and runs into spring 2027, so its later rounds fall after
-# this season's own end date; that is expected, not a data error.
+# this season's own end date; that is expected, not a data error. The 2026
+# editions are the spring 2026 rounds of the previous cup year, which overlap
+# the league season.
 cup_competitions:
+  - cup_men_2026
+  - cup_women_2026
   - cup_men_2027
   - cup_women_2027
 
@@ -46,6 +50,10 @@ global_blackouts:
   - {date: 2026-05-17, reason: "Grunnlovsdagen — national day, no matches"}
   - {date: 2026-06-23, reason: "Sankthansaften"}
   - {date: 2026-12-24, reason: "Julaften"}
+  # Cup rounds run into 2027, so the holidays are listed there too (#5).
+  - {date: 2027-03-26, reason: "Langfredag (Good Friday)"}
+  - {date: 2027-03-28, reason: "Første påskedag (Easter Sunday)"}
+  - {date: 2027-05-17, reason: "Grunnlovsdagen — national day, no matches"}
 
 # International windows and the World Cup break, scoped to the competitions
 # they actually stop. Men's windows are per the FIFA calendar; the Eliteserien
@@ -56,6 +64,8 @@ global_blackout_ranges:
   - {start: 2026-05-26, end: 2026-07-03, competitions: [eliteserien_2026], reason: "World Cup break (Eliteserien)"}
   - {start: 2026-09-21, end: 2026-10-06, gender: men, reason: "FIFA window (men)"}
   - {start: 2026-11-09, end: 2026-11-17, gender: men, reason: "FIFA window (men)"}
+  # Approximate (verified: false) — FIFA's 2027 men's window, placed as in 2026.
+  - {start: 2027-03-22, end: 2027-03-30, gender: men, reason: "FIFA window (men)"}
 
 # Dates that are legal but discouraged; scheduling here costs
 # `soft_venue_preference` points rather than being rejected outright.

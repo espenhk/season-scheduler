@@ -31,10 +31,12 @@ from pathlib import Path
 import yaml
 
 from .external_schedule import ExternalScheduleError, load_external_schedule
+from .frame import build_season_frame
 from .model.loader import World
 from .model.schema import Match
 from .model.travel import ApiTravelModel
-from .rounds.cup_schedule import CupSchedulingError, schedule_cups
+from .rounds.cup_schedule import CupSchedulingError
+from .rounds.european_schedule import EuropeanCascadeError
 from .scoring.base import EvalContext, Score, evaluate
 from .scoring.registry import build_constraints
 
@@ -162,11 +164,12 @@ def evaluate_baseline(source: BaselineSource, world: World) -> BaselineEvaluatio
     season = world.season(source.season_id)
     competitions = [world.competition(c) for c in season.competitions]
     try:
-        cup_schedules, cup_warnings = schedule_cups(
-            [world.competition(c) for c in season.cup_competitions], season
-        )
+        frame, cup_warnings = build_season_frame(world, season)
     except CupSchedulingError as exc:
         raise BaselineError(f"{source.id}: cup scheduling failed — {exc}") from None
+    except EuropeanCascadeError as exc:
+        raise BaselineError(f"{source.id}: European scheduling failed — {exc}") from None
+    cup_schedules = frame.solver_cup_schedules
     constraints = build_constraints(world, season, competitions, cup_schedules)
 
     try:

@@ -152,7 +152,14 @@ class CupRound(_ScheduledRound):
 
     Pairings are drawn round by round, so this only describes *when*;
     `rounds/cup_schedule.py` resolves it to a per-team date.
+
+    A windowed round resolves to one date for every entrant, on
+    `preferred_weekday` when the window offers it. `team_overrides` pins a
+    team elsewhere, e.g. a later date for a club busy in Europe.
     """
+
+    preferred_weekday: Weekday = "wednesday"
+    team_overrides: dict[str, date] = Field(default_factory=dict)
 
 
 class EuropeanLeg(_DateSpec):
@@ -396,6 +403,10 @@ class Competition(BaseModel):
     # Cup-only: the real-world rounds this competition's teams are entered
     # into, in playing order.
     cup_rounds: list[CupRound] = Field(default_factory=list)
+    # Cup-only: false keeps the cup in the frame and report but out of the
+    # solvers' and scorer's hard cup constraints, for cups whose round dates
+    # assume every club survives to the final.
+    solver_commitments: bool = True
 
     # European-only: the UEFA qualifying rounds this competition's Norwegian
     # entrant(s) play, in playing order (#29). Empty for a main tournament,
