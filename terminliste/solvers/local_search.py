@@ -17,6 +17,10 @@ scales:
   the most effective, since a team stuck with a bad calendar can be relocated
   wholesale. It is a relabelling, so the tournament stays valid.
 
+Each proposal is scored incrementally by `DeltaScorer`, which re-scores only
+the teams, venues and clubs a move touches (#11), and the operator mix adapts
+to which operators have been improving the schedule.
+
 Hard violations are folded into the cost as a large finite penalty rather than
 rejected outright, so the search can cross infeasible ground to reach
 something better; if the answer is still infeasible the report says which
@@ -48,6 +52,7 @@ from ..scoring.base import (
     ScheduleIndex,
     evaluate,
 )
+from ..scoring.incremental import DeltaScorer
 from ..slot_planner import SlotPlan
 from .base import (
     Candidate,
@@ -413,9 +418,10 @@ def _anneal(
     total_iterations = max(1, round(budget_s * _iterations_per_second(matches, request, calendars)))
 
     rng = random.Random(seed)
-    moves = _MoveSet(matches, pinned, request, calendars)
+    scorer = DeltaScorer(matches, constraints, ctx)
+    moves = _MoveSet(matches, pinned, request, calendars, live=scorer.live)
 
-    current_cost = _cost(matches, constraints, ctx).cost
+    current_cost = scorer.cost
     best_cost = current_cost
     best_snapshot = _capture_all(matches)
 
@@ -441,24 +447,32 @@ def _anneal(
             continue
         iterations += 1
 
-        evaluated = _cost(matches, constraints, ctx)
-        new_cost = evaluated.cost
+        new_cost, hard_ids = scorer.propose([entry[0] for entry in undo], prune=True)
         stats.investigated += 1
-        if evaluated.hard_ids:
+        if hard_ids:
             stats.hard_violation_scenarios += 1
-            stats.hard_violation_counts.update(evaluated.hard_ids)
+            stats.hard_violation_counts.update(hard_ids)
         else:
             stats.feasible += 1
 
         delta = new_cost - current_cost
+        moves.record(delta < -1e-9)
 
         if delta <= 0 or rng.random() < math.exp(-delta / max(temperature, 1e-9)):
+            scorer.accept()
             current_cost = new_cost
             if new_cost < best_cost:
                 best_cost = new_cost
                 best_snapshot = _capture_all(matches)
         else:
             _restore(matches, undo)
+            scorer.reject()
+
+        # Float drift in the running cost is negligible; this guards against
+        # a rule whose declared scope turns out not to decompose.
+        if iterations % _RESYNC_EVERY == 0:
+            scorer.resync()
+            current_cost = scorer.cost
 
         if request.progress is not None and iterations % report_every == 0:
             request.progress(
@@ -481,7 +495,8 @@ def _anneal(
 # number of iterations.
 _RATE_CACHE: dict[tuple[int, int], float] = {}
 
-_CALIBRATION_PROBES = 200
+_CALIBRATION_PROBES = 1000
+_RESYNC_EVERY = 4096
 _MAX_IDLE_DRAWS = 200_000
 
 
@@ -495,7 +510,8 @@ def _iterations_per_second(
     if cached is not None:
         return cached
 
-    probe_moves = _MoveSet(matches, set(), request, calendars)
+    scorer = DeltaScorer(matches, request.constraints, request.ctx)
+    probe_moves = _MoveSet(matches, set(), request, calendars, live=scorer.live)
     probe_rng = random.Random()
     snapshot = _capture_all(matches)
 
@@ -509,7 +525,9 @@ def _iterations_per_second(
             if idle_draws > _MAX_IDLE_DRAWS:
                 break
             continue
-        _cost(matches, request.constraints, request.ctx)
+        scorer.propose([entry[0] for entry in undo], prune=True)
+        _restore(matches, undo)
+        scorer.reject()
         completed += 1
     elapsed = time.perf_counter() - started
 
@@ -538,6 +556,12 @@ def _restore(matches: list[WorkingMatch], snapshot: list[_Snapshot]) -> None:
         match.slot = slot
 
 
+# shift_day / swap_rounds / flip_orientation / swap_teams
+_BASE_WEIGHTS = (0.55, 0.20, 0.15, 0.10)
+_MIN_WEIGHT = 0.03
+_REWEIGHT_EVERY = 500
+
+
 class _MoveSet:
     """The four move operators, plus the indexes they need to run cheaply.
 
@@ -552,19 +576,36 @@ class _MoveSet:
         pinned: set[str],
         request: SolveRequest,
         calendars: dict[str, SeasonCalendar],
+        live: ScheduleIndex | None = None,
     ) -> None:
         self._matches = matches
+        # The scorer's index, kept in step with `matches` between proposals;
+        # lets the neighbour check read two teams' lists instead of scanning
+        # the whole season.
+        self._live = live
         self._pinned = pinned
         self._world = request.world
         self._calendars = calendars
         self._competitions = {c.id: c for c in request.competitions}
         self._commitments = request.commitments
+        self._gap_by_competition = {c: comp.min_rest_days + 1 for c, comp in self._competitions.items()}
         self._club_of = {team_id: team.club_id for team_id, team in request.world.teams.items()}
 
         # Pinned matches are tracked by list position, not by key: a key
         # contains the home team, and the orientation moves rewrite that.
         self._pinned_indexes = {i for i, m in enumerate(matches) if m.key in pinned}
         self._movable = [i for i in range(len(matches)) if i not in self._pinned_indexes]
+
+        self._operators = (
+            self._shift_day,
+            self._swap_rounds,
+            self._flip_orientation,
+            self._swap_teams,
+        )
+        self._weights = list(_BASE_WEIGHTS)
+        self._tries = [0] * len(_BASE_WEIGHTS)
+        self._wins = [0] * len(_BASE_WEIGHTS)
+        self._last_operator = 0
 
         self._indexes_by_round: dict[tuple[str, int], list[int]] = {}
         for i, match in enumerate(matches):
@@ -596,14 +637,33 @@ class _MoveSet:
                 self._mirror_of[partner] = i
 
     def apply(self, rng: random.Random) -> list[_Snapshot] | None:
-        roll = rng.random()
-        if roll < 0.55:
-            return self._shift_day(rng)
-        if roll < 0.75:
-            return self._swap_rounds(rng)
-        if roll < 0.90:
-            return self._flip_orientation(rng)
-        return self._swap_teams(rng)
+        roll = rng.random() * sum(self._weights)
+        operator = 0
+        for operator, weight in enumerate(self._weights):  # noqa: B007
+            roll -= weight
+            if roll < 0:
+                break
+        self._last_operator = operator
+        return self._operators[operator](rng)
+
+    def record(self, improved: bool) -> None:
+        """Credit the last operator with an improving move, and every
+        `_REWEIGHT_EVERY` moves shift the mix towards the operators earning
+        their keep (#11)."""
+        op = self._last_operator
+        self._tries[op] += 1
+        self._wins[op] += improved
+        if sum(self._tries) % _REWEIGHT_EVERY:
+            return
+        rates = [
+            base * (wins + 1) / (tries + 4)
+            for base, wins, tries in zip(_BASE_WEIGHTS, self._wins, self._tries, strict=True)
+        ]
+        total = sum(rates)
+        self._weights = [
+            max(_MIN_WEIGHT, 0.5 * base + 0.5 * rate / total)
+            for base, rate in zip(_BASE_WEIGHTS, rates, strict=True)
+        ]
 
     # -- date admissibility ---------------------------------------------------
 
@@ -617,6 +677,8 @@ class _MoveSet:
     def _neighbours_ok(self, index: int, day: date) -> bool:
         """Whether `day` leaves both teams their rest and double-books neither
         the venue nor the club's home day, given every other match as placed."""
+        if self._live is not None:
+            return self._neighbours_ok_live(index, day)
         match = self._matches[index]
         home, away, venue = match.home_team, match.away_team, match.venue
         club = self._club_of[home]
@@ -634,6 +696,28 @@ class _MoveSet:
             if (home in (other.home_team, other.away_team)) or (
                 away in (other.home_team, other.away_team)
             ):
+                return False
+        return True
+
+    def _neighbours_ok_live(self, index: int, day: date) -> bool:
+        """`_neighbours_ok` from the live index: only the two teams' own
+        matches and the target day's matches can conflict."""
+        match = self._matches[index]
+        live = self._live
+        own_gap = self._gap_by_competition[match.competition_id]
+        gaps = self._gap_by_competition
+        for team in (match.home_team, match.away_team):
+            for other in live.by_team.get(team, ()):
+                if other is match:
+                    continue
+                delta = abs((other.date - day).days)
+                if delta < own_gap or delta < gaps[other.competition_id]:
+                    return False
+        club = self._club_of[match.home_team]
+        for other in live.by_date.get(day, ()):
+            if other is match:
+                continue
+            if other.venue == match.venue or self._club_of[other.home_team] == club:
                 return False
         return True
 

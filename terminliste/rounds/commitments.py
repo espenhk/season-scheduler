@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Literal
 
 CommitmentSource = Literal["cup", "uefa"]
@@ -70,6 +70,16 @@ class CommitmentSet:
             bucket.setdefault(commitment.team_id, []).append(commitment)
         self._hard = {team: tuple(items) for team, items in hard.items()}
         self._contingent = {team: tuple(items) for team, items in contingent.items()}
+        self._team_ids = sorted({c.team_id for c in self.commitments})
+        # Every day too close to a hard commitment, so `blocked` is one lookup.
+        self._forbidden: dict[str, frozenset[date]] = {
+            team: frozenset(
+                c.date + timedelta(days=offset)
+                for c in items
+                for offset in range(-c.min_rest_days, c.min_rest_days + 1)
+            )
+            for team, items in self._hard.items()
+        }
 
     def __len__(self) -> int:
         return len(self.commitments)
@@ -82,7 +92,7 @@ class CommitmentSet:
 
     @property
     def team_ids(self) -> list[str]:
-        return sorted({c.team_id for c in self.commitments})
+        return self._team_ids
 
     def hard_for(self, team_id: str) -> tuple[Commitment, ...]:
         return self._hard.get(team_id, ())
@@ -101,7 +111,8 @@ class CommitmentSet:
 
     def blocked(self, team_id: str, day: date) -> bool:
         """Whether `day` is too close to one of the team's hard commitments."""
-        return any(c.clashes(day) for c in self._hard.get(team_id, ()))
+        forbidden = self._forbidden.get(team_id)
+        return forbidden is not None and day in forbidden
 
     def contingent_weight(self, team_id: str, day: date) -> float:
         """The summed probability of the team's contingent commitments `day`
@@ -109,6 +120,26 @@ class CommitmentSet:
         return sum(
             c.reached_probability for c in self._contingent.get(team_id, ()) if c.clashes(day)
         )
+
+    def clash_table(
+        self, commitments: Iterable[Commitment], weighted: bool = False
+    ) -> dict[date, tuple[float, int]]:
+        """Day -> (summed rest shortfall, number of clashing commitments) over
+        `commitments`, which scoring rules turn into one lookup per match.
+        With `weighted`, each shortfall counts for the probability the
+        commitment is reached."""
+        table: dict[date, tuple[float, int]] = {}
+        for commitment in commitments:
+            reach = commitment.min_rest_days
+            for offset in range(-reach, reach + 1):
+                shortfall = reach - (abs(offset) - 1)
+                if shortfall <= 0:
+                    continue
+                day = commitment.date + timedelta(days=offset)
+                scaled = shortfall * commitment.reached_probability if weighted else shortfall
+                total, count = table.get(day, (0.0, 0))
+                table[day] = (total + scaled, count + 1)
+        return table
 
     def blocked_days(self, team_id: str, days: Iterable[date]) -> int:
         return sum(1 for day in days if self.blocked(team_id, day))

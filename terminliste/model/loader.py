@@ -117,11 +117,17 @@ class World:
 
     def dual_clubs(self) -> list[Club]:
         """Clubs fielding more than one senior team — the coupled ones."""
-        return [
-            c
-            for c in self.clubs.values()
-            if len([t for t in c.teams if t.level == "senior"]) > 1
-        ]
+        # Scoring asks per evaluation; the clubs do not change once loaded.
+        cached = self.__dict__.get("_dual_clubs")
+        if cached is None or cached[0] != len(self.clubs):
+            found = [
+                c
+                for c in self.clubs.values()
+                if len([t for t in c.teams if t.level == "senior"]) > 1
+            ]
+            cached = (len(self.clubs), found)
+            self.__dict__["_dual_clubs"] = cached
+        return cached[1]
 
 
 def _read_yaml(path: Path) -> dict:

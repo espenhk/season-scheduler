@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from typing import ClassVar
 
 from ..model.schema import Competition, FixedRequirement, FullRoundRequirement
 from ..rounds.commitments import CommitmentSet, CommitmentSource
@@ -26,6 +27,7 @@ class MinRestDays:
     sides without either rule knowing about the other.
     """
 
+    delta_scope: ClassVar[str | None] = "team"
     competitions: list[Competition]
     id: str = "min_rest_days"
     kind: str = "hard"
@@ -79,11 +81,17 @@ class BlackoutDates:
     """No match on a globally blacked-out date (a single one, or any day
     inside an excluded date range), or at a blacked-out venue."""
 
+    delta_scope: ClassVar[str | None] = "match"
     id: str = "blackout_dates"
     kind: str = "hard"
     weight: float = 1.0
 
-    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+    def _tables(self, ctx: EvalContext):
+        """Blackout lookups, built once per season: this rule is scored per
+        match during search, so rebuilding them per call would dominate."""
+        cached = self.__dict__.get("_cached")
+        if cached is not None and cached[0] is ctx.season:
+            return cached[1]
         season = ctx.season
         required_dates = {r.date for r in season.fixed_requirements if r.hard}
         global_blackouts = {
@@ -96,11 +104,6 @@ class BlackoutDates:
             for venue_id, dated in season.venue_blacked_out_dates.items()
             for day, reason in dated.items()
         }
-
-        count = 0
-        penalty = 0.0
-        events: list[Event] = []
-
         scoped_by_competition = {
             competition_id: {
                 day: reason
@@ -109,6 +112,17 @@ class BlackoutDates:
             }
             for competition_id, competition in ctx.world.competitions.items()
         }
+        tables = (global_blackouts, venue_blackouts, scoped_by_competition)
+        self.__dict__["_cached"] = (season, tables)
+        return tables
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        season = ctx.season
+        global_blackouts, venue_blackouts, scoped_by_competition = self._tables(ctx)
+
+        count = 0
+        penalty = 0.0
+        events: list[Event] = []
 
         for match in index.matches:
             reason = global_blackouts.get(match.date)
@@ -170,6 +184,7 @@ class VenueDoubleBooking:
     Also what binds Lillestrøm SK to LSK Kvinner: different clubs, one Åråsen.
     """
 
+    delta_scope: ClassVar[str | None] = "venue_date"
     id: str = "venue_double_booking"
     kind: str = "hard"
     weight: float = 1.0
@@ -211,6 +226,7 @@ class ClubHomeClash:
     the score breakdown misleading.
     """
 
+    delta_scope: ClassVar[str | None] = "club"
     id: str = "club_home_clash"
     kind: str = "hard"
     weight: float = 1.0
@@ -258,6 +274,7 @@ class LegOrdering:
     slip past an early second-leg one.
     """
 
+    delta_scope: ClassVar[str | None] = "competition"
     id: str = "leg_ordering"
     kind: str = "hard"
     weight: float = 1.0
@@ -270,9 +287,9 @@ class LegOrdering:
         for competition_id, matches in index.by_competition.items():
             last_of_leg: dict[int, date] = {}
             for match in matches:
-                current = last_of_leg.get(match.leg)
-                if current is None or match.date > current:
-                    last_of_leg[match.leg] = match.date
+                day = match.date
+                if day > last_of_leg.get(match.leg, _EARLIEST):
+                    last_of_leg[match.leg] = day
 
             for match in matches:
                 if match.leg < 2:
@@ -349,6 +366,7 @@ class OneMatchPerTeamPerDay:
     read plainly in the report.
     """
 
+    delta_scope: ClassVar[str | None] = "team"
     id: str = "one_match_per_team_per_day"
     kind: str = "hard"
     weight: float = 1.0
@@ -379,6 +397,8 @@ class OneMatchPerTeamPerDay:
         return ConstraintResult(self.id, "hard", penalty, count, events)
 
 
+_EARLIEST = date.min
+
 _CONFLICT_IDS = {"cup": "cup_round_conflict", "uefa": "european_commitment_conflict"}
 
 
@@ -396,6 +416,7 @@ class CommitmentConflict:
     `ContingentCommitmentConflict` scores the rest.
     """
 
+    delta_scope: ClassVar[str | None] = "match"
     commitments: CommitmentSet
     source: CommitmentSource
     id: str = ""
@@ -409,11 +430,29 @@ class CommitmentConflict:
             team_id: [c for c in self.commitments.hard_for(team_id) if c.source == self.source]
             for team_id in self.commitments.team_ids
         }
+        self._clash_by_team = {
+            team_id: self.commitments.clash_table(commitments)
+            for team_id, commitments in self._by_team.items()
+            if commitments
+        }
 
     def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
         count = 0
         penalty = 0.0
         events: list[Event] = []
+
+        if not ctx.detail:
+            # Search path: one lookup per match instead of one per commitment.
+            for team_id, matches in index.by_team.items():
+                table = self._clash_by_team.get(team_id)
+                if table is None:
+                    continue
+                for match in matches:
+                    hit = table.get(match.date)
+                    if hit is not None:
+                        count += hit[1]
+                        penalty -= self.weight * hit[0]
+            return ConstraintResult(self.id, "hard", penalty, count, events)
 
         for team_id, commitments in self._by_team.items():
             for match in index.by_team.get(team_id, ()):
@@ -450,6 +489,7 @@ class FinalRoundSameSlot:
     `rounds/kickoff.py` are what make it achievable.
     """
 
+    delta_scope: ClassVar[str | None] = "round"
     competitions: list[Competition]
     id: str = "final_round_same_slot"
     kind: str = "hard"
