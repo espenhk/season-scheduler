@@ -281,10 +281,12 @@ class CpSatScheduler:
 
         previous: list[_LevelOneSolution] = []
         previous_dates: list[dict[str, date]] = []
-        budget_per_pass = request.time_budget_s / max(1, request.top_n)
+        season_deadline = started + request.time_budget_s
 
         for pass_index in range(request.top_n):
-            deadline = started + budget_per_pass * (pass_index + 1)
+            # Time an earlier pass left over goes to the later ones.
+            now = time.perf_counter()
+            deadline = now + (season_deadline - now) / (request.top_n - pass_index)
             outcome = _run_pass(
                 cp_model, problem, previous, previous_dates, pass_index, deadline, stats, notes
             )
@@ -341,15 +343,26 @@ class CpSatScheduler:
 
 
 def _run_pass(cp_model, problem, previous, previous_dates, pass_index, deadline, stats, notes):
-    """Level 1, then Level 2, re-solving Level 1 when Level 2 cannot be met.
+    """Level 1, then Level 2, re-solving Level 1 when Level 2 is proven infeasible.
 
     Returns `(level_one_solution, matches, slot_plans)`, or `None` when the
-    pass found nothing (the reason is appended to `notes`).
+    pass found nothing (the reason is appended to `notes`). Retry diagnostics
+    reach `stats` only when the pass ends without a schedule.
     """
     request = problem.request
     cuts: list[_LevelOneSolution] = list(previous)
     tried: list[_LevelOneSolution] = []
-    last_level_two_culprits: list[str] = []
+    failed_culprits: list[list[str]] = []
+
+    def give_up_on_level_two() -> None:
+        culprits = sorted({c for group in failed_culprits for c in group})
+        stats.investigated += 1
+        stats.hard_violation_scenarios += 1
+        stats.hard_violation_counts.update(culprits or ["unknown"])
+        notes.append(
+            f"pass {pass_index}: no slot choice admitted a match-day assignment — level 2 "
+            "conflicts involve " + ", ".join(culprits)
+        )
 
     for attempt in range(_MAX_LEVEL_TWO_RETRIES):
         remaining = deadline - time.perf_counter()
@@ -368,22 +381,29 @@ def _run_pass(cp_model, problem, previous, previous_dates, pass_index, deadline,
                 f"{level_one.counts[1]} constraints"
             )
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            stats.investigated += 1
-            stats.hard_violation_scenarios += 1
-            culprits = _culprits(solver, status, level_one.assumptions, cp_model)
-            stats.hard_violation_counts.update(culprits or ["unknown"])
-            notes.extend(_level_one_report(problem, solver, status, culprits, cp_model, pass_index))
+            if status != cp_model.INFEASIBLE:
+                notes.extend(_level_one_report(problem, solver, status, [], cp_model, pass_index))
+            elif failed_culprits:
+                give_up_on_level_two()
+            elif cuts:
+                # Level 1 was feasible before the diversity cuts, so only they close it.
+                notes.append(f"pass {pass_index}: no further distinct slot assignment exists")
+            else:
+                culprits = _culprits(solver, status, level_one.assumptions, cp_model)
+                stats.investigated += 1
+                stats.hard_violation_scenarios += 1
+                stats.hard_violation_counts.update(culprits or ["unknown"])
+                notes.extend(
+                    _level_one_report(problem, solver, status, culprits, cp_model, pass_index)
+                )
             return None
 
         solution = _read_level_one(solver, level_one, problem)
         remaining = deadline - time.perf_counter()
         placed, domain_error = _place(problem, solution)
         if domain_error:
-            stats.investigated += 1
-            stats.hard_violation_scenarios += 1
-            stats.hard_violation_counts.update(["no_day_for_fixture"])
             tried.append(solution)
-            last_level_two_culprits = [domain_error]
+            failed_culprits.append(["no_day_for_fixture"])
             continue
 
         built = _build_level_two(cp_model, problem, placed, previous_dates, relax=False)
@@ -397,39 +417,45 @@ def _run_pass(cp_model, problem, previous, previous_dates, pass_index, deadline,
                 f"cpsat level 2 (match days): {built.counts[0]} variables, "
                 f"{built.counts[1]} constraints"
             )
-
-        if status2 not in (cp_model.OPTIMAL, cp_model.FEASIBLE) and request.relax_min_rest:
-            if status2 == cp_model.INFEASIBLE:
-                relaxed = _build_level_two(cp_model, problem, placed, previous_dates, relax=True)
-                two = cp_model.CpSolver()
-                two.parameters.max_time_in_seconds = max(1.0, deadline - time.perf_counter())
-                two.parameters.num_search_workers = 8
-                two.parameters.random_seed = request.seed + pass_index + attempt
-                status2 = two.Solve(relaxed.model)
-                if status2 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-                    built = relaxed
-                    notes.append(
-                        f"pass {pass_index}: min_rest_days RELAXED on request — some matches "
-                        "fall on short rest; see the min_rest_days row in the score breakdown."
-                    )
+        if status2 == cp_model.INFEASIBLE and request.relax_min_rest:
+            relaxed = _build_level_two(cp_model, problem, placed, previous_dates, relax=True)
+            two = cp_model.CpSolver()
+            two.parameters.max_time_in_seconds = max(1.0, deadline - time.perf_counter())
+            two.parameters.num_search_workers = 8
+            two.parameters.random_seed = request.seed + pass_index + attempt
+            relaxed_status = two.Solve(relaxed.model)
+            if relaxed_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                status2, built = relaxed_status, relaxed
+                notes.append(
+                    f"pass {pass_index}: min_rest_days RELAXED on request — some matches "
+                    "fall on short rest; see the min_rest_days row in the score breakdown."
+                )
+            elif relaxed_status == cp_model.UNKNOWN:
+                status2 = relaxed_status
 
         if status2 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            if failed_culprits:
+                notes.append(
+                    f"pass {pass_index}: {len(failed_culprits)} level 1 choice(s) rejected by "
+                    "level 2 before one fit"
+                )
             matches = _extract(two, built.placed, built.days)
             return solution, matches, _slot_plans(problem, solution)
 
-        stats.investigated += 1
-        stats.hard_violation_scenarios += 1
-        last_level_two_culprits = _culprits(two, status2, built.assumptions, cp_model) or [
-            two.StatusName(status2)
-        ]
-        stats.hard_violation_counts.update(last_level_two_culprits)
+        if status2 != cp_model.INFEASIBLE:
+            notes.append(
+                f"pass {pass_index}: level 2 timed out ({two.StatusName(status2)}) — "
+                "the match-day assignment was neither found nor proven impossible"
+            )
+            return None
+
+        failed_culprits.append(
+            _culprits(two, status2, built.assumptions, cp_model) or [two.StatusName(status2)]
+        )
         tried.append(solution)
 
-    if last_level_two_culprits:
-        notes.append(
-            f"pass {pass_index}: no slot choice admitted a match-day assignment — level 2 "
-            "conflicts involve " + ", ".join(sorted(set(last_level_two_culprits)))
-        )
+    if failed_culprits:
+        give_up_on_level_two()
     else:
         notes.append(f"pass {pass_index}: time budget ran out before a schedule was found")
     return None
@@ -654,7 +680,8 @@ def _build_level_one(cp_model, problem: _Problem, cuts, tried) -> _LevelOne:
                 model.Add(excess >= size - 2 * hosted - 2)
                 terms.append((-_scaled(balance_weight), excess))
 
-    # Back-to-back home weekends for a club's two teams.
+    # Back-to-back home weekends for a club's two teams; dual-club coupling
+    # lives here, not in `align_dual_clubs`, which this path does not use.
     for club in problem.world.dual_clubs():
         senior = [t.id for t in club.teams if t.level == "senior"]
         for i, team_a in enumerate(senior):

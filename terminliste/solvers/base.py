@@ -152,8 +152,9 @@ class SolveRequest:
     # solver rebuilds the frame from the cups and commitments above.
     frame: SeasonFrame | None = None
     slot_plans: dict[str, SlotPlan] | None = None
-    # CP-SAT only: when the strict model is infeasible, retry with
-    # `min_rest_days` as a penalty and say so in the result's notes.
+    # CP-SAT only: when Level 2 (match days) is infeasible, retry with
+    # `min_rest_days` as a penalty and say so in the result's notes. Level 1's
+    # minimum gap between consecutive rounds' slots is never relaxed.
     relax_min_rest: bool = False
     # Called periodically with a running `SearchStats` snapshot so the CLI can
     # print live progress. `None` means don't bother.

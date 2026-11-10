@@ -536,6 +536,141 @@ def test_cpsat_reports_model_sizes_and_orients_pairings_itself():
     assert set(result.slot_plans) == {"men", "women"}
 
 
+def _cpsat_request(top_n=1, budget=20.0, season=None):
+    world, base_season, competitions = _small_world()
+    season = season or base_season
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    return SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=1, top_n=top_n, time_budget_s=budget,
+    )
+
+
+class _Stub:
+    """Stands in for a CpSolver that ended with `status` and no solution."""
+
+    def __init__(self, status, name):
+        self.parameters = type("P", (), {})()
+        self._status, self._name = status, name
+
+    def Solve(self, model):
+        return self._status
+
+    def StatusName(self, status):
+        return self._name
+
+    def SufficientAssumptionsForInfeasibility(self):
+        return []
+
+
+def _fail_level_two(monkeypatch, statuses):
+    """Make the first level 2 solves end as `statuses` (cp_model status, name) in turn."""
+    from ortools.sat.python import cp_model
+
+    real = cp_model.CpSolver
+    calls = {"n": 0}
+    queue = list(statuses)
+
+    def factory():
+        calls["n"] += 1
+        # Level 1 and level 2 solvers alternate; only level 2 (even calls) is stubbed.
+        if calls["n"] % 2 == 0 and queue:
+            status, name = queue.pop(0)
+            return _Stub(status, name)
+        return real()
+
+    monkeypatch.setattr(cp_model, "CpSolver", factory)
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_re_solves_level_one_when_level_two_is_proven_infeasible(monkeypatch):
+    from ortools.sat.python import cp_model
+
+    _fail_level_two(monkeypatch, [(cp_model.INFEASIBLE, "INFEASIBLE")])
+    result = _get_scheduler("cpsat").solve(_cpsat_request())
+
+    assert result.best is not None and result.best.score.feasible
+    assert any("rejected by level 2" in n for n in result.notes), result.notes
+    stats = result.search_stats
+    assert stats.investigated == 1
+    assert stats.hard_violation_scenarios == 0
+    assert not stats.hard_violation_counts
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_reports_a_level_two_timeout_as_a_timeout(monkeypatch):
+    from ortools.sat.python import cp_model
+
+    _fail_level_two(monkeypatch, [(cp_model.UNKNOWN, "UNKNOWN")])
+    result = _get_scheduler("cpsat").solve(_cpsat_request())
+
+    assert result.best is None
+    assert any("level 2 timed out" in n for n in result.notes), result.notes
+    assert not any("no slot choice admitted" in n for n in result.notes)
+    stats = result.search_stats
+    assert stats.hard_violation_scenarios == 0
+    assert not stats.hard_violation_counts
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_later_options_use_different_slots_from_earlier_ones():
+    result = _get_scheduler("cpsat").solve(_cpsat_request(top_n=2, budget=40.0))
+
+    assert len(result.candidates) == 2, result.notes
+    first, second = (c.round_slots for c in result.candidates)
+    assert first != second
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_place_forces_a_fixed_requirements_date_once_the_home_team_is_placed():
+    from terminliste.model.calendar import build_calendar
+    from terminliste.model.schema import FixedRequirement
+    from terminliste.solvers.base import resolve_slot_plans
+    from terminliste.solvers.cpsat import _LevelOneSolution, _place, _Problem
+
+    request = _cpsat_request()
+    calendar = build_calendar(request.world, request.season)
+    problem = _Problem(request, calendar, resolve_slot_plans(request, calendar))
+    men = problem.by_id["men"]
+    round_index = 3
+    fixture = men.team_fixture[("m0", round_index)]
+    slot_index = round_index
+    slot = men.slots[slot_index]
+    opponent = fixture.away_team if fixture.home_team == "m0" else fixture.home_team
+    days = problem.fixture_days(men, "m0", opponent, slot)
+    assert len(days) > 1
+    target = days[-1]
+
+    problem.season = problem.season.model_copy(update={"fixed_requirements": [
+        FixedRequirement(id="pin", date=target, home_team="m0", competition="men")
+    ]})
+    solution = _LevelOneSolution(
+        slot_of={(lg.id, r): r for lg in problem.leagues for r in range(lg.rounds)},
+        flipped={
+            (lg.id, frozenset(pair)): (
+                lg.id == "men"
+                and frozenset(pair) == frozenset((fixture.home_team, fixture.away_team))
+                and fixture.home_team != "m0"
+            )
+            for lg in problem.leagues for pair in lg.pairs
+        },
+    )
+    placed, error = _place(problem, solution)
+
+    assert error is None
+    pinned = next(
+        p for p in placed
+        if p.league.id == "men" and p.fixture.round_index == round_index and p.fixture.home_team == "m0"
+    )
+    assert pinned.days == [target]
+    others = [
+        p for p in placed
+        if p.league.id == "men" and p.fixture.round_index == round_index and p is not pinned
+    ]
+    assert any(len(p.days) > 1 for p in others)
+
+
 @pytest.mark.parametrize("solver_name", SOLVERS)
 def test_every_round_sits_in_one_planned_slot_and_both_backends_share_the_plan(solver_name):
     """Anchors come from the slot plan (#6): the result carries the plan, and

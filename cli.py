@@ -553,7 +553,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_generate.add_argument(
         "--relax-min-rest",
         action="store_true",
-        help="cpsat only: if no schedule keeps every rest rule, retry with min_rest_days as a penalty",
+        help=(
+            "cpsat only: if match-day rest (min_rest_days) makes the season infeasible, "
+            "retry with it as a penalty; slot spacing between rounds is never relaxed"
+        ),
     )
     p_generate.add_argument("--out", default=str(SCHEDULES_ROOT))
     p_generate.set_defaults(func=cmd_generate)
