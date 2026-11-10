@@ -12,15 +12,18 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 
 import yaml
 
+from .calendar import build_calendar, calendars_by_competition
 from .schema import (
     NORWAY_LAT_RANGE,
     NORWAY_LON_RANGE,
     Club,
     Competition,
+    CupRound,
     FixedRequirement,
     GlobalBlackoutRange,
     Season,
@@ -28,6 +31,7 @@ from .schema import (
     TravelOverride,
     Venue,
 )
+from .slots import candidate_slots, max_compatible_slots
 
 
 class DataError(Exception):
@@ -369,6 +373,12 @@ def _validate_cup_rounds(competition: Competition) -> list[str]:
 
     seen_ids: set[str] = set()
     previous_round = None
+    gap = max(competition.min_gap_days, 1)
+    if "match_window_days" in competition.model_fields_set:
+        errors.append(
+            f"cup competition {competition.id!r} sets match_window_days, which only applies "
+            f"to a league's fixtures — a cup round's span is its own window_start/window_end"
+        )
     for round_ in competition.cup_rounds:
         if round_.id in seen_ids:
             errors.append(
@@ -381,6 +391,7 @@ def _validate_cup_rounds(competition: Competition) -> list[str]:
                     f"competition {competition.id!r} cup round {round_.id!r} overrides "
                     f"{team_id!r}, which is not one of its teams"
                 )
+        errors.extend(_validate_team_overrides(competition, round_, previous_round, gap))
         if previous_round is not None and round_.latest < previous_round.earliest:
             errors.append(
                 f"competition {competition.id!r} cup round {round_.id!r} "
@@ -388,6 +399,25 @@ def _validate_cup_rounds(competition: Competition) -> list[str]:
                 f"round {previous_round.id!r} ({previous_round.earliest}..{previous_round.latest})"
             )
         previous_round = round_
+    return errors
+
+
+def _validate_team_overrides(
+    competition: Competition, round_: CupRound, previous_round: CupRound | None, gap: int
+) -> list[str]:
+    """An override may run later than a forced round's date (a club busy in
+    Europe) but never before the round or the rest gap after the previous one;
+    a windowed round also caps it at the window's end."""
+    errors: list[str] = []
+    floor = round_.earliest
+    if previous_round is not None:
+        floor = max(floor, previous_round.earliest + timedelta(days=gap))
+    for team_id, day in round_.team_overrides.items():
+        where = f"competition {competition.id!r} cup round {round_.id!r} override for {team_id!r}"
+        if day < floor:
+            errors.append(f"{where} ({day}) is before the earliest allowed date {floor}")
+        elif not round_.is_forced and day > round_.latest:
+            errors.append(f"{where} ({day}) is after the round's window end {round_.latest}")
     return errors
 
 
@@ -791,17 +821,8 @@ def _validate_rivalry_fixtures(world: World, season: Season) -> list[str]:
 
 
 def _validate_calendar_capacity(world: World, season: Season) -> list[str]:
-    """Catch a league with fewer usable round slots than rounds.
-
-    Counts slots, not days: a Fri-Mon weekend hosts one round however many
-    days it has, and the World Cup break or a FIFA window removes whole
-    slots. Cup weekends need the resolved cups, so `cli.py validate` checks
-    those afterwards through the slot planner.
-    """
-    # Local imports: the calendar and slot modules import this one.
-    from .calendar import build_calendar, calendars_by_competition
-    from .slots import candidate_slots, max_compatible_slots
-
+    """Catch a league with fewer usable round slots than rounds. Cup weekends
+    need the resolved cups, so `cli.py validate` checks those via the planner."""
     errors: list[str] = []
     calendar = build_calendar(world, season)
     for competition_id in season.competitions:

@@ -272,9 +272,8 @@ def _round_slots(matches: list[WorkingMatch]) -> dict[tuple[str, int], RoundSlot
 def _assign_missing_slots(
     matches: list[WorkingMatch], slot_plans: dict[str, SlotPlan]
 ) -> None:
-    """Give matches with no slot the planned slot their round's earliest date
-    falls in (else the nearest). Only for states built outside `solve`, which
-    sets slots exactly."""
+    """Fallback slots for states built outside `solve` (tests); `solve` sets
+    them exactly, so production never reaches this."""
     dates_by_round: dict[tuple[str, int], list[date]] = {}
     for match in matches:
         if match.slot is None:

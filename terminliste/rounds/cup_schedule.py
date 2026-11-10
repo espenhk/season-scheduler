@@ -87,6 +87,7 @@ class CupSchedule:
     competition_short_name: str | None
     min_rest_days: int
     rounds: list[CupRoundPlacement] = field(default_factory=list)
+    solver_commitments: bool = True
 
 
 def schedule_cup(
@@ -132,6 +133,12 @@ def schedule_cup(
         team_dates.update(
             {t: d for t, d in round_.team_overrides.items() if t in competition.teams}
         )
+        for team_id, day in sorted(round_.team_overrides.items()):
+            if day in blackouts:
+                warnings.append(
+                    f"{competition.name}: {round_.name} override for {team_id} falls on "
+                    f"blackout date {day}"
+                )
         placement = CupRoundPlacement(
             round_id=round_.id,
             round_name=round_.name,
@@ -151,6 +158,7 @@ def schedule_cup(
             competition_short_name=competition.short_name,
             min_rest_days=competition.min_rest_days,
             rounds=placements,
+            solver_commitments=competition.solver_commitments,
         ),
         warnings,
     )

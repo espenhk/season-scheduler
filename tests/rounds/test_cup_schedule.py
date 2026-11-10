@@ -286,6 +286,22 @@ def test_team_override_moves_only_that_team():
     assert schedule.rounds[0].dates == {"t1": date(2026, 8, 22), "t2": date(2026, 9, 2)}
 
 
+def test_team_override_on_a_blackout_date_warns():
+    cup = f.competition(
+        "cup",
+        ["t1", "t2"],
+        format="cup",
+        cup_rounds=[
+            f.cup_round(
+                "r1", forced_date=date(2026, 8, 22), name="Round 1",
+                team_overrides={"t2": date(2026, 9, 2)},
+            )
+        ],
+    )
+    _, warnings = schedule_cup(cup, blackouts={date(2026, 9, 2)})
+    assert len(warnings) == 1 and "t2" in warnings[0] and "2026-09-02" in warnings[0]
+
+
 def test_a_weekend_preference_keeps_the_final_on_one_weekend_date():
     cup = f.competition(
         "cup",

@@ -194,3 +194,30 @@ def test_clashes_are_ranked_not_fatal_when_no_clear_slot_exists():
     assert all(s.clashing_teams == ("t0",) for s in plan.chosen)
     assert len(plan.warnings) == 3
     assert all("no clear slot was available" in w for w in plan.warnings)
+
+
+def _slot(kind, start, end=None):
+    from terminliste.model.slots import RoundSlot
+
+    end = end or start
+    return RoundSlot("l", kind, start, end, (start, end), start)
+
+
+def test_combinations_count_only_mutually_compatible_slots():
+    from terminliste.slot_planner import SlotPlan
+
+    weekend = _slot("weekend", date(2026, 4, 3), date(2026, 4, 6))
+    easter_monday = _slot("holiday", date(2026, 4, 6))
+    later = _slot("weekend", date(2026, 4, 10), date(2026, 4, 13))
+    plan = SlotPlan("l", 2, [weekend, easter_monday, later], [weekend, later])
+    # The holiday slot is inside the weekend, so only two pairs are usable.
+    assert plan.combinations == 2
+    assert plan.overlapping == 1
+
+
+def test_2026_holiday_slots_inside_a_weekend_are_reported_as_overlapping(plans):
+    import math
+
+    plan = plans["eliteserien_2026"]
+    assert plan.overlapping >= 1
+    assert plan.combinations < math.comb(len(plan.candidates), plan.rounds)

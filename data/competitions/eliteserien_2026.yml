@@ -94,6 +94,7 @@ weights:
   home_away_balance: 6.0
   rest_comfort: 3.0
   soft_venue_preference: 5.0
+  grass_season_edge: 1.5
 
 # Rest beyond the hard minimum that we would like every team to get.
 comfortable_rest_days: 5

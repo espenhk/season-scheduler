@@ -495,6 +495,10 @@ class Competition(BaseModel):
     # Cup-only: the real-world rounds this competition's teams are entered
     # into, in playing order.
     cup_rounds: list[CupRound] = Field(default_factory=list)
+    # Cup-only: false keeps the cup in the frame and report but out of the
+    # solvers' and scorer's hard cup constraints, for cups whose round dates
+    # assume every club survives to the final.
+    solver_commitments: bool = True
 
     # European-only: the UEFA qualifying rounds this competition's Norwegian
     # entrant(s) play, in playing order (#29). Empty for a main tournament,
@@ -692,6 +696,7 @@ class ExtraRoundSlot(BaseModel):
     kind: Literal["holiday", "midweek"] = "holiday"
     competitions: list[str] = Field(default_factory=list)
     reason: str = ""
+    verified: bool = True
 
 
 class RivalryFixture(BaseModel):

@@ -82,7 +82,7 @@ def competition(
     preferred_weekday: str = "sunday",
     matchday_weekdays: list[str] | None = None,
     min_rest_days: int = 3,
-    match_window_days: int = 3,
+    match_window_days: int | None = None,
     comfortable_rest_days: int = 5,
     weights: dict | None = None,
     rounds_per_pairing: int = 2,
@@ -106,7 +106,9 @@ def competition(
     color: str | None = _AUTO_COLOR,  # type: ignore[assignment]
     short_name: str | None = _AUTO_SHORT_NAME,  # type: ignore[assignment]
 ) -> Competition:
+    optional = {} if match_window_days is None else {"match_window_days": match_window_days}
     return Competition(
+        **optional,
         id=id,
         name=id,
         short_name=(id[:3].upper() if short_name is _AUTO_SHORT_NAME else short_name),
@@ -119,7 +121,6 @@ def competition(
         preferred_weekday=preferred_weekday,
         matchday_weekdays=matchday_weekdays or [],
         min_rest_days=min_rest_days,
-        match_window_days=match_window_days,
         comfortable_rest_days=comfortable_rest_days,
         weights=weights or {},
         rounds_per_pairing=rounds_per_pairing,
