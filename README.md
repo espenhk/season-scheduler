@@ -188,7 +188,10 @@ one and warns rather than failing. Each resolved date becomes a `CupDay` in
 the season frame (`terminliste/frame.py`): `cup_week` when midweek,
 `cup_weekend` when it falls Fri-Mon, queryable per gender, competition and
 team. `validate` warns when a forced date sits in a UEFA week. Slot planning
-skips any league weekend holding a `cup_weekend` day of the league's gender. See
+skips any league weekend holding a `cup_weekend` day of the league's gender. A cup
+sets `solver_commitments: false` to stay in the frame and report without
+binding the scorer or solvers (the spring 2026 cups, whose rounds assume every
+club survives); `match_window_days` is league-only and rejected on a cup. See
 `data/competitions/cup_men_2027.yml` and `cup_women_2027.yml` for the
 2026-27 Norwegian Cup, and `cup_men_2026.yml` / `cup_women_2026.yml` for the
 spring 2026 rounds of the previous edition.
@@ -433,12 +436,12 @@ hard requirements no retry relaxes. This mirrors local search, which was
 never all-or-nothing about hard rules to begin with: both backends now
 publish their best-effort schedule with whatever hard-rule violations
 remain called out in the score breakdown, rather than one of them refusing
-to answer at all. Loosening `match_window_days` specifically for teams with
+to answer at all. Widening a league's `match_window_days` only for teams with
 active European commitments was considered as a more surgical alternative
-but not pursued — it would need per-team scheduling flexibility the model
-doesn't have anywhere else, for a conflict that's a real, once-in-a-while
-calendar squeeze rather than a recurring modelling gap worth that extra
-machinery.
+but not pursued — the setting is per league, so it would need per-team
+scheduling flexibility the model doesn't have anywhere else, for a conflict
+that's a real, once-in-a-while calendar squeeze rather than a recurring
+modelling gap worth that extra machinery.
 
 `resolve_main_tournament_commitments` (`rounds/european_schedule.py`)
 resolves each main tournament's own dates once — no branching to walk, since
@@ -506,6 +509,8 @@ penalty negative), and shown ranked in the report:
 by travel time, capped at an 8h default), `home_away_breaks`,
 `home_away_balance`, `rest_comfort`, `soft_venue_preference`,
 `grass_away_round_one` (grass-pitch clubs reward playing away in round 1),
+`grass_season_edge` (grass-venue home matches outside mid-April to mid-November,
+shifted by latitude),
 `late_kickoff_long_travel` (penalises a late Sunday kickoff for an away team
 with a long trip home — tunable `late_from`/`long_travel_hours`),
 `rivalry_fixture_on_date` (a fixed annual pairing, home side alternating by

@@ -1,10 +1,4 @@
-"""Typed round slots: the places a league's rounds can live (#6).
-
-A weekend slot spans Fri-Mon; holiday and midweek slots are single declared
-days. Slots are built from a competition's own calendar, so blackouts and
-scoped breaks (World Cup, FIFA windows) shrink or remove them before any
-planning starts.
-"""
+"""Typed round slots: the places a league's rounds can live (#6)."""
 
 from __future__ import annotations
 

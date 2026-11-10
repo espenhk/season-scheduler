@@ -113,6 +113,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
             )
 
     for season in world.seasons.values():
+        # Every season, so slot planning below checks each one's capacity.
         try:
             frame, frame_warnings = build_season_frame(world, season)
         except (CupSchedulingError, EuropeanCascadeError) as exc:
@@ -159,7 +160,10 @@ def _slot_kind_counts(plan: SlotPlan) -> str:
     counts: dict[str, int] = {}
     for slot in plan.candidates:
         counts[slot.kind] = counts.get(slot.kind, 0) + 1
-    return ", ".join(f"{n} {kind}" for kind, n in counts.items())
+    summary = ", ".join(f"{n} {kind}" for kind, n in counts.items())
+    if plan.overlapping:
+        summary += f"; {plan.overlapping} overlap a weekend"
+    return summary
 
 
 def _print_slot_plans(world, season, competitions, plans: dict[str, SlotPlan]) -> None:
@@ -175,7 +179,7 @@ def _print_slot_plans(world, season, competitions, plans: dict[str, SlotPlan]) -
         for line in slot_table_lines(plan, world.team_label):
             print(f"  {line}")
         print(
-            f"  Search space: {plan.combinations:,} ways to pick the slots; per-match dates "
+            f"  Search space: {plan.combinations:,} ways to pick compatible slots; per-match dates "
             f"~10^{search_space_log10(plan, competition, calendar, within_slot=True):.0f} "
             f"within the slots' own days"
         )
@@ -188,7 +192,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
     frame, frame_warnings = _build_frame_or_exit(world, season)
-    cup_schedules, european_commitments = frame.cup_schedules, frame.european_commitments
+    cup_schedules, european_commitments = frame.solver_cup_schedules, frame.european_commitments
     constraints = build_constraints(
         world, season, competitions, cup_schedules, european_commitments
     )
@@ -254,7 +258,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         html_path,
         title=f"{season.year} season schedule",
         warnings=frame_warnings,
-        cup_schedules=cup_schedules,
+        cup_schedules=frame.cup_schedules,
         european_competitions=european_competitions,
         resolved_legs=resolved_legs,
     )
@@ -270,7 +274,7 @@ def cmd_score(args: argparse.Namespace) -> int:
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
     frame, frame_warnings = _build_frame_or_exit(world, season)
-    cup_schedules, european_commitments = frame.cup_schedules, frame.european_commitments
+    cup_schedules, european_commitments = frame.solver_cup_schedules, frame.european_commitments
     constraints = build_constraints(
         world, season, competitions, cup_schedules, european_commitments
     )
@@ -313,7 +317,7 @@ def cmd_score(args: argparse.Namespace) -> int:
         title=f"Score report — {Path(args.schedule).name}",
         full_diagnostics=True,
         warnings=warnings,
-        cup_schedules=cup_schedules,
+        cup_schedules=frame.cup_schedules,
         european_competitions=european_competitions,
         resolved_legs=resolved_legs,
     )

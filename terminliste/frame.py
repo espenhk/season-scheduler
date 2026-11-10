@@ -99,6 +99,11 @@ class SeasonFrame:
             cup_days=build_cup_days(cup_schedules, genders),
         )
 
+    @property
+    def solver_cup_schedules(self) -> list[CupSchedule]:
+        """The cups that bind the scorer and solvers (`solver_commitments`)."""
+        return [s for s in self.cup_schedules if s.solver_commitments]
+
     def cup_days_of(
         self,
         *,
@@ -124,7 +129,10 @@ class SeasonFrame:
     def cup_weekend_blocks(self, *, gender: Gender | None = None) -> dict[date, str]:
         """`cup_weekend_dates` with a reason per date, in the shape
         `SeasonCalendar.without` takes."""
-        return {d.date: d.label for d in self.cup_days_of(gender=gender, kind="cup_weekend")}
+        blocks: dict[date, str] = {}
+        for day in self.cup_days_of(gender=gender, kind="cup_weekend"):
+            blocks[day.date] = f"{blocks[day.date]}; {day.label}" if day.date in blocks else day.label
+        return blocks
 
 
 def _cup_gender(world: World, schedule: CupSchedule) -> Gender:
