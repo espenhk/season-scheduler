@@ -6,6 +6,8 @@
     python cli.py score my_schedule.csv --season 2026
                                                    # score a real/proposed schedule
     python cli.py explain schedules/2026.json      # score breakdown in the terminal
+    python cli.py explain schedules/2026.json --scenarios 200
+                                                   # ...plus robustness to cup/UEFA outcomes
     python cli.py refresh-reference-data           # diff data/*.yml against a live API
     python cli.py refresh-travel-times             # fetch real ground travel times
 
@@ -31,6 +33,7 @@ SCHEDULES_ROOT = PROJECT_ROOT / "schedules"
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from terminliste.contingency import ContingencyPlanner  # noqa: E402
 from terminliste.external_schedule import (  # noqa: E402
     ExternalScheduleError,
     load_external_schedule,
@@ -38,6 +41,7 @@ from terminliste.external_schedule import (  # noqa: E402
 from terminliste.frame import build_season_frame  # noqa: E402
 from terminliste.model.calendar import build_calendar, calendars_by_competition  # noqa: E402
 from terminliste.model.loader import DataError, load_world  # noqa: E402
+from terminliste.model.schema import Match  # noqa: E402
 from terminliste.model.travel import ApiTravelModel  # noqa: E402
 from terminliste.refdata import refresh_competition, refresh_travel_times  # noqa: E402
 from terminliste.report.render import render_report, write_json  # noqa: E402
@@ -48,6 +52,7 @@ from terminliste.rounds.european_schedule import (  # noqa: E402
     resolve_all_legs,
     teams_reaching,
 )
+from terminliste.scenarios import evaluate_robustness  # noqa: E402
 from terminliste.scoring.base import EvalContext, Score, evaluate  # noqa: E402
 from terminliste.scoring.registry import build_constraints  # noqa: E402
 from terminliste.slot_planner import (  # noqa: E402
@@ -244,6 +249,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
             print(f"  - {note}", file=sys.stderr)
         return 1
 
+    if args.scenarios:
+        for candidate in result.candidates:
+            _attach_robustness(world, season, competitions, frame, candidate, ctx, args.scenarios, args.seed)
+
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     html_path = out_dir / f"{season.id}.html"
@@ -260,6 +269,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         cup_schedules=frame.cup_schedules,
         european_competitions=european_competitions,
         resolved_legs=resolved_legs,
+        commitments=commitments,
     )
     write_json(result, json_path)
 
@@ -317,6 +327,7 @@ def cmd_score(args: argparse.Namespace) -> int:
         cup_schedules=frame.cup_schedules,
         european_competitions=european_competitions,
         resolved_legs=resolved_legs,
+        commitments=commitments,
     )
     print(f"\nWrote {out_path}")
 
@@ -337,6 +348,15 @@ def cmd_explain(args: argparse.Namespace) -> int:
         print("FAIL: no matching option in that file.", file=sys.stderr)
         return 1
 
+    scenarios = None
+    if args.scenarios:
+        world = _load_world_or_exit()
+        season = _season_or_exit(world, args.season)
+        competitions = [world.competition(c) for c in season.competitions]
+        frame, _ = _build_frame_or_exit(world, season)
+        ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+        scenarios = (world, season, competitions, frame, ctx)
+
     for option in options:
         print(f"=== {option['label']} (seed {option.get('seed', '?')}) ===")
         print(f"  points:          {option.get('points', '?')} / 100")
@@ -346,8 +366,53 @@ def cmd_explain(args: argparse.Namespace) -> int:
             if not row["count"]:
                 continue
             print(f"    {row['constraint']:<28} {row['total']:>9.1f}  (kind={row['kind']}, n={row['count']})")
+        if scenarios is not None:
+            report = _robustness_from_json(option, *scenarios, count=args.scenarios, seed=args.seed)
+            print(f"  robustness over {args.scenarios} outcomes (seed {args.seed}):")
+            for line in report.summary_lines():
+                print(f"    {line}")
         print()
     return 0
+
+
+def _robustness_from_json(option, world, season, competitions, frame, ctx, *, count, seed):
+    """Re-plan and re-score a schedule read back from `generate`'s JSON."""
+    matches = [
+        Match(
+            competition_id=m["competition"],
+            home_team=m["home"],
+            away_team=m["away"],
+            leg=m["leg"],
+            round_index=m["round"] - 1,
+            date=m["date"],
+            venue=m["venue"],
+            kickoff_time=m.get("kickoff_time"),
+        )
+        for m in option["matches"]
+    ]
+    constraints = build_constraints(world, season, competitions, frame.commitments)
+    base = evaluate(matches, constraints, ctx)
+    plan = ContingencyPlanner(world, season, competitions, frame.commitments).plan(matches)
+    return evaluate_robustness(
+        world, season, competitions, frame, matches, plan, base, ctx, count, seed
+    )
+
+
+def _attach_robustness(world, season, competitions, frame, candidate, ctx, count, seed) -> None:
+    if candidate.contingency_plan is None:
+        return
+    candidate.robustness = evaluate_robustness(
+        world,
+        season,
+        competitions,
+        frame,
+        candidate.matches,
+        candidate.contingency_plan,
+        candidate.score,
+        ctx,
+        count,
+        seed,
+    )
 
 
 def cmd_refresh_reference_data(args: argparse.Namespace) -> int:
@@ -442,6 +507,9 @@ def _print_summary(result: SolverResult) -> None:
     for candidate in result.candidates:
         badge = "feasible" if candidate.score.feasible else f"{candidate.score.hard_violations} HARD VIOLATIONS"
         print(f"  {candidate.label}: {candidate.score.points:.0f}/100 ({badge})")
+        if candidate.robustness is not None:
+            for line in candidate.robustness.summary_lines():
+                print(f"    {line}")
 
 
 def _print_score(score: Score) -> None:
@@ -544,6 +612,13 @@ def build_parser() -> argparse.ArgumentParser:
             "next steps')"
         ),
     )
+    p_generate.add_argument(
+        "--scenarios",
+        type=int,
+        default=0,
+        metavar="N",
+        help="also re-score each option over N cup/UEFA outcomes (robustness; not part of the objective)",
+    )
     p_generate.add_argument("--out", default=str(SCHEDULES_ROOT))
     p_generate.set_defaults(func=cmd_generate)
 
@@ -556,6 +631,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_explain = sub.add_parser("explain", help="print a generated schedule's score breakdown")
     p_explain.add_argument("schedule_json")
     p_explain.add_argument("--option", default=None, help="only this option's label, e.g. 'Option 1'")
+    p_explain.add_argument(
+        "--scenarios",
+        type=int,
+        default=0,
+        metavar="N",
+        help="re-score the schedule over N sampled cup/UEFA outcomes (all of them when fewer exist)",
+    )
+    p_explain.add_argument("--season", default="2026", help="season the schedule was generated for (with --scenarios)")
+    p_explain.add_argument("--seed", type=int, default=42, help="outcome sampling seed (with --scenarios)")
     p_explain.set_defaults(func=cmd_explain)
 
     p_refresh = sub.add_parser(

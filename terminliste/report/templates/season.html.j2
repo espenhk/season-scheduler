@@ -278,6 +278,27 @@
   .day-row .vs { color: var(--muted); margin: 0 1px; }
   .day-row .d { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+  .cal-dot.maybe { background: transparent; border: 1.5px solid var(--muted); width: 5px; height: 5px; }
+  .day-row.maybe-row { color: var(--muted); }
+  .day-row.maybe-row .tag { font-size: 11px; border: 1px dashed var(--muted); border-radius: 4px; padding: 0 5px; }
+
+  /* -- contingencies and robustness (#10) -- stacked blocks, no table, so a phone needs no side scroll -- */
+  .cgroup { border-left: 3px solid var(--accent); margin: 12px 0 0; padding: 2px 0 2px 12px; }
+  .cgroup h4 { margin: 0 0 4px; font-size: 14px; }
+  .cgroup h4 .p { color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+  .cmove { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; font-size: 13.5px; padding: 4px 0; border-top: 1px solid var(--line); }
+  .cmove:first-of-type { border-top: none; }
+  .cmove .fixture { font-weight: 600; flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+  .cmove .shift { font-variant-numeric: tabular-nums; }
+  .cmove .shift .arrow { color: var(--muted); margin: 0 4px; }
+  .ckind { font-size: 11px; padding: 1px 7px; border-radius: 4px; background: #eeeee9; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+  .ckind.reserve_date { background: #fdf6ea; color: var(--warn); }
+  .ckind.next_free_slot { background: #fdf0ee; color: var(--bad); }
+  .rob-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 12px 0; }
+  .rob-stat { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+  .rob-stat .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .rob-stat .l { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
   @media (max-width: 480px) {
     .round { grid-template-columns: 1fr; gap: 4px; }
     .fx { white-space: normal; }
@@ -665,6 +686,70 @@
   </details>
   {% endif %}
 
+  {% if option.contingency %}
+  <details class="contingencies">
+    <summary>Contingency plan — {{ option.contingency.stats.covered }} match{{ 'es' if option.contingency.stats.covered != 1 }} move if a cup or European round is reached</summary>
+    <div class="desc" style="margin-top:8px">
+      Each trigger is a round a team only reaches by winning the one before; if it does,
+      these league matches move as shown. Probabilities are the chance of reaching the round.
+    </div>
+    {% for group in option.contingency.groups %}
+    <div class="cgroup">
+      <h4>{{ group.trigger }} <span class="p">({{ group.p_label }})</span></h4>
+      {% for row in group.rows %}
+      <div class="cmove">
+        <span class="fixture">{{ row.fixture }}</span>
+        <span class="shift">{{ row.from }}<span class="arrow">→</span>{{ row.to }}</span>
+        <span class="ckind {{ row.kind_id }}">{{ row.kind }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+    {% if option.contingency.uncovered %}
+    <div class="warnings">
+      <b>No fallback found for</b>
+      {% for label in option.contingency.uncovered %}<div>{{ label }}</div>{% endfor %}
+    </div>
+    {% endif %}
+  </details>
+  {% endif %}
+
+  {% if option.robustness %}
+  <details class="robustness" open>
+    <summary>Robustness — does the plan survive the cup and European results?</summary>
+    <div class="desc" style="margin-top:8px">
+      Each {{ option.robustness.mode }} ({{ option.robustness.report.outcomes }}, seed {{ option.robustness.report.seed }})
+      plays out a set of cup and European results, applies the moves above and re-scores with every rule.
+    </div>
+    <div class="rob-stats">
+      <div class="rob-stat"><div class="v">{{ option.robustness.feasible_pct }}%</div><div class="l">outcomes feasible</div></div>
+      <div class="rob-stat"><div class="v">{{ '%.1f'|format(option.robustness.report.expected_moves) }}</div><div class="l">expected moves</div></div>
+      <div class="rob-stat"><div class="v">{{ option.robustness.report.max_moves }}</div><div class="l">most moves</div></div>
+      <div class="rob-stat"><div class="v">{{ '%.0f'|format(option.robustness.report.mean_points) }}</div><div class="l">mean points (min {{ '%.0f'|format(option.robustness.report.min_points) }})</div></div>
+    </div>
+    {% if option.robustness.worst %}
+    <div class="desc">
+      Worst case, every trigger that can fire together does ({{ option.robustness.worst.moves }} moves):
+      {% if option.robustness.worst.feasible %}still feasible, {{ option.robustness.worst.points }}/100.
+      {% else %}<b>{{ option.robustness.worst.violations }} hard violation{{ 's' if option.robustness.worst.violations != 1 }}</b>
+      ({{ option.robustness.worst.rules | join(', ') }}).{% endif %}
+    </div>
+    {% endif %}
+    {% if option.robustness.failing %}
+    <h3 style="font-size:13px;margin:14px 0 4px">Most common failing rules</h3>
+    {% for rule in option.robustness.failing %}
+    <div class="item down">
+      <div class="top"><span class="name">{{ rule.id.replace('_', ' ') }}</span>
+        <span class="delta">{{ rule.pct }}% of outcomes</span></div>
+      <div class="desc">{{ rule.description }} Averages {{ rule.mean }} violation{{ 's' if rule.mean != 1 }} when it fails.</div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="desc">No hard rule fails in any outcome.</div>
+    {% endif %}
+  </details>
+  {% endif %}
+
   <div class="controls">
     <div class="view-toggle">
       <button type="button" class="view-btn" data-view="by-competition">By competition</button>
@@ -765,6 +850,7 @@
       {% for comp in option.calendar_legend %}
       <span><span class="cal-dot" style="background:{{ comp.color }}" aria-hidden="true"></span><b>{{ comp.short }}</b> {{ comp.name }}</span>
       {% endfor %}
+      {% if option.has_maybes %}<span><span class="cal-dot maybe" aria-hidden="true"></span>a team plays here if it advances</span>{% endif %}
     </div>
     {% endif %}
     {% for month in option.month_calendar %}
@@ -782,6 +868,7 @@
                   aria-label="{{ day.date_iso }}{% if day.dots %}: {{ day.dots | map(attribute='name') | join(', ') }}{% endif %}">
             <span class="cal-daynum">{{ day.day_num }}</span>
             <span class="cal-dots">
+              {% if day.maybe_clubs %}<span class="cal-dot maybe" data-clubs="{{ day.maybe_clubs | join(' ') }}" title="a team plays here if it advances" aria-hidden="true"></span>{% endif %}
               {% for dot in day.dots %}
               <span class="cal-dot" data-clubs="{{ dot.club_ids | join(' ') }}"
                     style="background:{{ dot.color }}" title="{{ dot.name }}" aria-hidden="true"></span>
@@ -801,6 +888,13 @@
         <div class="rlabel"><b>{{ day.label }}</b></div>
         <div class="fixtures">
           {% for match in day.matches %}{{ day_row(match) }}{% endfor %}
+          {% for maybe in day.maybes %}
+          <div class="day-row maybe-row" data-clubs="{{ maybe.club_id }}">
+            <span class="tag">if they advance</span>
+            <b>{{ maybe.team }}</b> {{ maybe.what }}
+            <span class="d">p={{ '%.2f'|format(maybe.probability) }}</span>
+          </div>
+          {% endfor %}
         </div>
       </div>
       {% endfor %}

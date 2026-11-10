@@ -22,12 +22,14 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from ..model.calendar import build_calendar, calendars_by_competition
 from ..model.loader import World
 from ..model.schema import WEEKDAYS, Competition, EuropeanRound, Match, Season
+from ..rounds.commitments import CommitmentSet
 from ..rounds.cup_schedule import NEUTRAL_CUP_VENUE, CupRoundPlacement, CupSchedule
 from ..rounds.european_schedule import ResolvedLegs
 from ..scoring.base import ConstraintResult, Event, Score
 from ..scoring.registry import describe
 from ..slot_planner import search_space_log10
 from ..solvers.base import Candidate, SearchStats, SolverResult
+from .contingency_view import contingency_view, maybe_by_day, robustness_view
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -68,6 +70,7 @@ def render_report(
     cup_schedules: list[CupSchedule] | None = None,
     european_competitions: list[Competition] | None = None,
     resolved_legs: ResolvedLegs | None = None,
+    commitments: CommitmentSet | None = None,
 ) -> Path:
     """Render a solver result (or a single scored schedule) as one HTML page.
 
@@ -78,7 +81,8 @@ def render_report(
 
     `cup_schedules`, and `european_competitions` + `resolved_legs` (pass both
     or neither), arrive already resolved — the caller resolves once rather
-    than this doing it per render.
+    than this doing it per render. `commitments` words the contingency table's
+    triggers and marks the days a team plays only if it advances on the calendar.
     """
     env = Environment(
         loader=FileSystemLoader(TEMPLATE_DIR),
@@ -109,6 +113,7 @@ def render_report(
             resolved_legs,
             competition_colors,
             full_diagnostics,
+            commitments or CommitmentSet(),
         )
         for candidate in result.candidates
     ]
@@ -142,6 +147,7 @@ def _build_option(
     resolved_legs: ResolvedLegs,
     competition_colors: dict[str, dict],
     full_diagnostics: bool = False,
+    commitments: CommitmentSet | None = None,
 ) -> dict:
     score = candidate.score
     limit = 200 if full_diagnostics else 4
@@ -153,7 +159,10 @@ def _build_option(
     combined_entries = entries + cup_entries + european_entries
     headlines = _headlines(world, candidate)
     club_headlines = _club_headlines(world, candidate, dual_club_ids)
-    month_calendar, month_calendar_details = _month_calendar_view(combined_entries)
+    commitments = commitments or CommitmentSet()
+    month_calendar, month_calendar_details = _month_calendar_view(
+        combined_entries, maybe_by_day(world, season, commitments)
+    )
     calendar_legend = _calendar_legend(world, competition_colors)
     return {
         "label": candidate.label,
@@ -187,6 +196,9 @@ def _build_option(
         "month_calendar": month_calendar,
         "month_calendar_details": month_calendar_details,
         "calendar_legend": calendar_legend,
+        "contingency": contingency_view(world, candidate.contingency_plan, candidate.matches, commitments),
+        "robustness": robustness_view(candidate.robustness),
+        "has_maybes": any(day["maybes"] for day in month_calendar_details),
     }
 
 
@@ -630,7 +642,9 @@ def _combined_list_view(entries: list[dict]) -> list[dict]:
     )
 
 
-def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
+def _month_calendar_view(
+    entries: list[dict], maybes: dict[date, list[dict]] | None = None
+) -> tuple[list[dict], list[dict]]:
     """A month-grid calendar (#77): one cell per day, with at most one dot per
     competition that has something on it.
 
@@ -646,18 +660,22 @@ def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
     by_day: dict[date, list[dict]] = defaultdict(list)
     for entry in entries:
         by_day[entry["date"]].append(entry)
+    maybes = maybes or {}
+    for day in maybes:
+        by_day.setdefault(day, [])
 
     months: list[dict] = []
     cursor = date(min(by_day).year, min(by_day).month, 1)
     last = date(max(by_day).year, max(by_day).month, 1)
     while cursor <= last:
-        months.append(_month_grid(cursor, by_day))
+        months.append(_month_grid(cursor, by_day, maybes))
         cursor = date(cursor.year + 1, 1, 1) if cursor.month == 12 else date(cursor.year, cursor.month + 1, 1)
 
     day_details = [
         {
             "date_iso": day.isoformat(),
             "label": day.strftime("%A %d %B %Y"),
+            "maybes": maybes.get(day, []),
             # Earliest kickoff first; an entry without one — every cup and
             # European entry — sorts after the timed ones, not before them.
             "matches": sorted(
@@ -674,7 +692,9 @@ def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
     return months, day_details
 
 
-def _month_grid(month_start: date, by_day: dict[date, list[dict]]) -> dict:
+def _month_grid(
+    month_start: date, by_day: dict[date, list[dict]], maybes: dict[date, list[dict]]
+) -> dict:
     """One calendar month's Monday-first weeks, each day carrying its own
     deduped competition dots. Padding days from neighbouring months are kept
     (`in_month=False`) so every week is a full row."""
@@ -687,6 +707,7 @@ def _month_grid(month_start: date, by_day: dict[date, list[dict]]) -> dict:
                     "day_num": day.day,
                     "in_month": day.month == month_start.month,
                     "dots": _day_dots(by_day.get(day, [])),
+                    "maybe_clubs": sorted({m["club_id"] for m in maybes.get(day, [])}),
                 }
                 for day in week
             ]
@@ -1143,6 +1164,11 @@ def write_json(result: SolverResult, output_path: Path) -> Path:
                 **(
                     {"contingency_plan": candidate.contingency_plan.to_dict()}
                     if candidate.contingency_plan is not None
+                    else {}
+                ),
+                **(
+                    {"robustness": candidate.robustness.to_dict()}
+                    if candidate.robustness is not None
                     else {}
                 ),
             }

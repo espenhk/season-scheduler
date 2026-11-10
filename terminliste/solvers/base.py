@@ -21,6 +21,7 @@ from ..model.schema import Competition, Match, Season
 from ..model.slots import RoundSlot
 from ..rounds.commitments import CommitmentSet
 from ..rounds.cup_schedule import CupSchedule
+from ..scenarios import RobustnessReport
 from ..scoring.base import Constraint, EvalContext, Score
 from ..slot_planner import SlotPlan, plan_slots
 
@@ -113,6 +114,8 @@ class Candidate:
     round_slots: dict[tuple[str, int], RoundSlot] = field(default_factory=dict)
     # Where each match goes if a later cup or UEFA round displaces it (#9).
     contingency_plan: ContingencyPlan | None = None
+    # How the plan holds up across cup and UEFA outcomes (#10); set on request.
+    robustness: RobustnessReport | None = None
 
     def assignment(self) -> dict[str, object]:
         """Fixture key -> date, the fingerprint used for diversity checks."""

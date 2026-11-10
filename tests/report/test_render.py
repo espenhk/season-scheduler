@@ -944,3 +944,33 @@ def test_render_report_lists_the_round_slots_and_search_space():
     assert "ways to pick compatible slots" in rendered
     first = plans["elite"].chosen[0]
     assert f"default {first.default_day.strftime('%a %d %b')}" in rendered
+
+
+def test_contingency_moves_render_trigger_probability_dates_and_kind(world, season):
+    from terminliste.contingency import ContingencyPlan, Fallback
+    from terminliste.frame import build_season_frame
+    from terminliste.report.contingency_view import contingency_view
+
+    frame = build_season_frame(world, season)[0]
+    node = next(c for c in frame.commitments if c.team_id == "bodo_glimt_m" and not c.hard)
+    match = f.match("eliteserien_2026", "molde_m", "bodo_glimt_m", date(2026, 8, 23), "aker_stadion", round_index=19)
+    plan = ContingencyPlan(probabilities={node.node_id: 0.5})
+    plan.fallbacks[match.key] = Fallback(
+        match_key=match.key,
+        competition_id=match.competition_id,
+        home_team=match.home_team,
+        away_team=match.away_team,
+        date=date(2026, 9, 2),
+        venue=match.venue,
+        kickoff=None,
+        trigger_node_ids=(node.node_id,),
+        kind="reserve_date",
+        from_date=match.date,
+    )
+
+    view = contingency_view(world, plan, [match], frame.commitments)
+    group = view["groups"][0]
+    row = group["rows"][0]
+
+    assert group["trigger"].startswith("If ") and group["p_label"] == "p=0.50"
+    assert (row["from"], row["to"], row["kind"]) == ("Sun 23 Aug", "Wed 2 Sep", "reserve")
