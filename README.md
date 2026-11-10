@@ -493,6 +493,8 @@ penalty negative), and shown ranked in the report:
 by travel time, capped at an 8h default), `home_away_breaks`,
 `home_away_balance`, `rest_comfort`, `soft_venue_preference`,
 `grass_away_round_one` (grass-pitch clubs reward playing away in round 1),
+`grass_season_edge` (grass-venue home matches outside mid-April to mid-November,
+shifted by latitude),
 `late_kickoff_long_travel` (penalises a late Sunday kickoff for an away team
 with a long trip home — tunable `late_from`/`long_travel_hours`),
 `rivalry_fixture_on_date` (a fixed annual pairing, home side alternating by
