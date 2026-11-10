@@ -221,6 +221,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         seed=args.seed,
         top_n=args.top_n,
         time_budget_s=args.time_budget,
+        relax_min_rest=args.relax_min_rest,
         progress=_print_progress if live else None,
     )
 
@@ -544,6 +545,11 @@ def build_parser() -> argparse.ArgumentParser:
             "to reliably reach a feasible schedule; see README's 'Suggested "
             "next steps')"
         ),
+    )
+    p_generate.add_argument(
+        "--relax-min-rest",
+        action="store_true",
+        help="cpsat only: if no schedule keeps every rest rule, retry with min_rest_days as a penalty",
     )
     p_generate.add_argument("--out", default=str(SCHEDULES_ROOT))
     p_generate.set_defaults(func=cmd_generate)

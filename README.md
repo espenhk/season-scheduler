@@ -82,9 +82,15 @@ gitignored `data/.refdata_cache/`, never to `data/*.yml`. See
     (default 0.25) is the share of the time budget phase two gets; a
     polished candidate only replaces the original when it scores strictly
     better, so this phase can only help. No extra dependencies.
-  - `cpsat.py` (`--solver cpsat`): OR-Tools CP-SAT, assigning dates to a
-    fixed pairing structure. Needs the optional `football-scheduler-cpsat`
-    dependency group.
+  - `cpsat.py` (`--solver cpsat`): OR-Tools CP-SAT as a two-level model
+    (#12). Level 1 puts each league's rounds in the planner's typed slots
+    and orients every pairing home or away (breaks, home/away balance and
+    dual-club home weekends are objective terms); Level 2 picks a match day
+    per fixture inside its slot. Hard rules carry assumption literals, so an
+    infeasible level names the rule families and the frame entries that close
+    slots. `min_rest_days` is never relaxed unless `--relax-min-rest` is
+    passed, and the result notes say so. Needs the optional
+    `football-scheduler-cpsat` dependency group.
 - **`terminliste/report/`** — Jinja2 → one self-contained HTML file. Tabs
   between candidate schedules, a score header, ranked "biggest upsides /
   biggest problems", a full per-rule breakdown table, and a calendar grid
@@ -377,6 +383,13 @@ where it used to dominate. Closing the *remaining* gap on the real 2026 data
 (Bodø/Glimt's and Viking's dense, non-branching Champions League qualifying
 calendar) is unrelated to cascade branching — see below for how issue #95
 handles it instead.
+
+> **Superseded by the two-level CP-SAT model (#12).** The paragraphs below
+> describe the date-only model and its automatic `min_rest_days` retry, which
+> no longer exist: rounds now move between slots, so the August crunch no
+> longer makes the model infeasible, and relaxing `min_rest_days` needs
+> `--relax-min-rest`. They are kept for the reasoning about Bodø/Glimt's and
+> Viking's qualifying calendar.
 
 **A fundamentally tight month (issue #95).** Even with cascade branching
 handled, `cli.py generate --season 2026 --solver cpsat` still came back
