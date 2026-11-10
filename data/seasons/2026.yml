@@ -176,15 +176,14 @@ rivalry_fixtures:
 # one only when it beats the weekend it overlaps or the weekends run short (#6).
 # With the World Cup break, three FIFA windows and the cup weekends removed,
 # Eliteserien has only 28 usable weekends for 30 rounds, hence the midweek
-# candidates. The midweek dates are placeholders (verified: false) chosen clear
-# of the resolved cup and UEFA dates.
+# candidates. The midweek dates are placeholders chosen clear of cup and UEFA dates.
 extra_round_slots:
   - {date: 2026-04-06, kind: holiday, reason: "Andre påskedag (Easter Monday)"}
   - {date: 2026-05-14, kind: holiday, reason: "Kristi himmelfartsdag (Ascension Day)"}
   - {date: 2026-05-25, kind: holiday, reason: "Andre pinsedag (Whit Monday)"}
-  - {date: 2026-04-29, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round"}
-  - {date: 2026-05-06, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round"}
-  - {date: 2026-07-08, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round"}
-  - {date: 2026-07-15, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round"}
-  - {date: 2026-10-28, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round"}
-  - {date: 2026-11-18, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round"}
+  - {date: 2026-04-29, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round", verified: false}
+  - {date: 2026-05-06, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round", verified: false}
+  - {date: 2026-07-08, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round", verified: false}
+  - {date: 2026-07-15, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round", verified: false}
+  - {date: 2026-10-28, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round", verified: false}
+  - {date: 2026-11-18, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round", verified: false}

@@ -29,6 +29,7 @@ from .soft import (
     ConsecutiveHomeDays,
     ContingentCommitmentConflict,
     GrassAwayRoundOne,
+    GrassSeasonEdge,
     HomeAwayBalance,
     HomeAwayBreaks,
     LateKickoffLongTravel,
@@ -84,6 +85,7 @@ def build_constraints(
             RestComfort(competitions=competitions),
             SoftVenuePreference(competitions=competitions),
             GrassAwayRoundOne(competitions=competitions),
+            GrassSeasonEdge(competitions=competitions),
             LateKickoffLongTravel(competitions=competitions),
             TvTimeSpread(competitions=competitions),
         ]
@@ -133,6 +135,7 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
     "final_round_same_slot": "Every league's final round shares one date and kickoff time.",
     "full_round_on_date": "Every team in a competition has a match on a named date.",
     "grass_away_round_one": "Grass-pitch clubs play away in round 1.",
+    "grass_season_edge": "Grass-pitch home matches avoid the cold edges of the season, with the window shifted by latitude.",
     "late_kickoff_long_travel": "Away teams with a long trip avoid late Sunday kickoffs.",
     "rivalry_fixture_on_date": "A fixed annual pairing lands on its date, home side alternating by year.",
     "tv_time_spread": "A round's preferred-weekday matches spread across an early, primary, and late kickoff time, clear of other competitions' kickoffs.",

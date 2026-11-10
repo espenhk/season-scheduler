@@ -138,7 +138,10 @@ class SeasonFrame:
     def cup_weekend_blocks(self, *, gender: Gender | None = None) -> dict[date, str]:
         """`cup_weekend_dates` with a reason per date, in the shape
         `SeasonCalendar.without` takes."""
-        return {d.date: d.label for d in self._hard_cup_weekends(gender)}
+        blocks: dict[date, str] = {}
+        for day in self._hard_cup_weekends(gender):
+            blocks[day.date] = f"{blocks[day.date]}; {day.label}" if day.date in blocks else day.label
+        return blocks
 
 
 def _cup_gender(world: World, schedule: CupSchedule) -> Gender:
