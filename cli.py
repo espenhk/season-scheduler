@@ -186,7 +186,7 @@ def _print_slot_plans(world, season, competitions, plans: dict[str, SlotPlan]) -
             print(f"  {line}")
         print(
             f"  Search space: {plan.combinations:,} ways to pick compatible slots; per-match dates "
-            f"~10^{search_space_log10(plan, competition, calendar, within_slot=True):.0f} "
+            f"~10^{search_space_log10(plan, competition, calendar):.0f} "
             f"within the slots' own days"
         )
         for warning in plan.warnings:
@@ -227,6 +227,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         seed=args.seed,
         top_n=args.top_n,
         time_budget_s=args.time_budget,
+        relax_min_rest=args.relax_min_rest,
         progress=_print_progress if live else None,
     )
 
@@ -618,6 +619,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         metavar="N",
         help="also re-score each option over N cup/UEFA outcomes (robustness; not part of the objective)",
+    )
+    p_generate.add_argument(
+        "--relax-min-rest",
+        action="store_true",
+        help=(
+            "cpsat only: if match-day rest (min_rest_days) makes the season infeasible, "
+            "retry with it as a penalty; slot spacing between rounds is never relaxed"
+        ),
     )
     p_generate.add_argument("--out", default=str(SCHEDULES_ROOT))
     p_generate.set_defaults(func=cmd_generate)
