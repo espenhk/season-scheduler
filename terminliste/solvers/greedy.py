@@ -16,6 +16,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from typing import TYPE_CHECKING
 
 from ..frame import SeasonFrame
 from ..model.calendar import (
@@ -24,12 +25,15 @@ from ..model.calendar import (
     calendars_by_competition,
 )
 from ..model.loader import World
-from ..model.schema import WEEKDAYS, Competition, Fixture, Match, Season
+from ..model.schema import WEEKDAYS, Competition, Fixture, Match, Season, fixture_identity
 from ..model.slots import RoundSlot
 from ..rounds.commitments import CommitmentSet
 from ..rounds.cup_schedule import CupSchedule
 from ..rounds.round_robin import generate_fixtures
 from ..slot_planner import SlotPlan, plan_slots
+
+if TYPE_CHECKING:
+    from ..replan import ReplanSpec
 
 # Local-heuristic weights. Deliberately crude — the real scoring lives in
 # terminliste/scoring/, and these only have to rank candidate dates sensibly.
@@ -46,6 +50,9 @@ _OFF_PREFERRED_WEEKDAY = 12.0
 _DISCOURAGED_DATE = 20.0
 _CONSECUTIVE_HOME_BONUS = 40.0
 _DRIFT_FROM_ANCHOR = 3.0
+# Pull towards the date a match had in the schedule being revised (#13): larger
+# than any soft preference above, far below a forbidden date.
+_KEEP_REFERENCE_DATE = 60.0
 
 _ONE_DAY = timedelta(days=1)
 
@@ -92,8 +99,12 @@ def plan_competitions(
     calendar: SeasonCalendar,
     rng: random.Random | None = None,
     slot_plans: dict[str, SlotPlan] | None = None,
+    replan: ReplanSpec | None = None,
 ) -> list[PlannedCompetition]:
     """Generate fixtures and take each round's slot and anchor from the plan.
+
+    A `replan` supplies the fixtures instead — the ones of the schedule being
+    revised, untouched — so no pairing is regenerated or relabelled (#13).
 
     An `rng` shuffles the team order before the circle method runs — the only
     lever producing structurally different tournaments rather than the same
@@ -109,10 +120,13 @@ def plan_competitions(
         slot_plans = plan_slots(world, season, competitions, calendar)
     planned: list[PlannedCompetition] = []
     for competition in competitions:
-        teams = list(competition.teams)
-        if rng is not None:
-            rng.shuffle(teams)
-        fixtures = generate_fixtures(competition.id, teams, competition.rounds_per_pairing)
+        if replan is not None and competition.id in replan.fixtures:
+            fixtures = list(replan.fixtures[competition.id])
+        else:
+            teams = list(competition.teams)
+            if rng is not None:
+                rng.shuffle(teams)
+            fixtures = generate_fixtures(competition.id, teams, competition.rounds_per_pairing)
         slot_plan = slot_plans[competition.id]
         planned.append(
             PlannedCompetition(
@@ -468,6 +482,7 @@ def build_initial_schedule(
     cup_schedules: list[CupSchedule] | None = None,
     commitments: CommitmentSet | None = None,
     slot_plans: dict[str, SlotPlan] | None = None,
+    replan: ReplanSpec | None = None,
 ) -> tuple[list[Match], set[str], list[str]]:
     """Return a complete schedule, the keys of fixtures pinned to a date, and
     any warnings from resolving those pins.
@@ -485,19 +500,25 @@ def build_initial_schedule(
 
     `slot_plans` fix which slot each round sits in; without them they are
     planned from the same cups and commitments.
+
+    A `replan` starts from the schedule being revised: its frozen matches are
+    placed as they were and pinned, and every other fixture is pulled towards
+    the date it had (#13).
     """
     rng = random.Random(seed)
     calendar = calendar or build_calendar(world, season)
     by_competition = calendars_by_competition(calendar, competitions)
     if slot_plans is None:
         frame = SeasonFrame.from_resolved(world, cup_schedules or [], commitments or CommitmentSet())
-        slot_plans = plan_slots(world, season, competitions, calendar, frame)
-    planned = plan_competitions(world, season, competitions, calendar, rng, slot_plans)
-    if align:
+        freezes = replan.slot_freezes if replan else None
+        slot_plans = plan_slots(world, season, competitions, calendar, frame, freezes)
+    planned = plan_competitions(world, season, competitions, calendar, rng, slot_plans, replan)
+    if align and replan is None:
         align_dual_clubs(world, planned)
     commitments = commitments or CommitmentSet()
     round_pins, pin_warnings = resolve_round_pins(season, planned, by_competition, commitments)
-    align_home_teams_to_requirements(season, planned)
+    if replan is None:
+        align_home_teams_to_requirements(season, planned)
 
     state = PlacementState()
     matches: list[Match] = []
@@ -509,11 +530,27 @@ def build_initial_schedule(
     # Fixed requirements first: the least flexible thing in the season, and
     # placing them last would mean unpicking everything around them.
     claimed: set[tuple[str, int, str, str]] = set()
+    if replan is not None:
+        for plan in planned:
+            for fixture in list(remaining[plan.competition.id]):
+                frozen = replan.frozen.get(fixture_identity(fixture))
+                if frozen is None:
+                    continue
+                matches.append(frozen)
+                state.place(world, frozen)
+                pinned.add(frozen.key)
+                remaining[plan.competition.id].remove(fixture)
+                claimed.add((fixture.competition_id, fixture.round_index, fixture.home_team, fixture.away_team))
+
     for requirement in season.fixed_requirements:
         if not requirement.hard:
             continue
         plan = by_id.get(requirement.competition)
         if plan is None:
+            continue
+        if replan is not None and replan.frozen_requirement(
+            requirement.competition, requirement.home_team, requirement.date
+        ):
             continue
         fixture = pick_fixture_for_requirement(
             plan, requirement.home_team, requirement.date, claimed
@@ -585,6 +622,7 @@ def build_initial_schedule(
             state,
             rng,
             commitments,
+            replan.reference_date(fixture) if replan else None,
         )
         matches.append(match)
         state.place(world, match)
@@ -627,6 +665,7 @@ def _place_fixture(
     state: PlacementState,
     rng: random.Random,
     commitments: CommitmentSet,
+    reference_day: date | None = None,
 ) -> Match:
     competition = plan.competition
     venue = world.team(fixture.home_team).home_venue
@@ -643,6 +682,8 @@ def _place_fixture(
             world, calendar, competition, fixture, venue, day, anchor, preferred_weekday, state,
             commitments,
         )
+        if day == reference_day:
+            cost -= _KEEP_REFERENCE_DATE
         # Noise so different seeds explore different starting points, small
         # enough never to outweigh a real preference.
         cost += rng.random() * 0.5

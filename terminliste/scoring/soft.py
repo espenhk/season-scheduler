@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from ..contingency import ContingencyPlanner
-from ..model.schema import WEEKDAYS, Competition, Match, RivalryFixture
+from ..model.schema import WEEKDAYS, Competition, Match, RivalryFixture, fixture_identity
 from ..model.schema import TvTimeSpread as TvTimeSpreadConfig
 from .base import ConstraintResult, EvalContext, Event, ScheduleIndex
 
@@ -850,3 +850,37 @@ __all__ = [
     "SoftVenuePreference",
     "TvTimeSpread",
 ]
+
+
+@dataclass
+class ScheduleStability:
+    """Penalise every match that sits differently from the schedule being
+    revised, so a re-plan moves only what the new facts force (#13).
+
+    `reference` maps each fixture's identity (`model.schema.fixture_identity`)
+    to its date and home team in that schedule; only a re-plan builds this rule.
+    """
+
+    reference: dict[tuple[str, int, str, str], tuple[date, str]]
+    id: str = "schedule_stability"
+    kind: str = "soft"
+    weight: float = 10.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        events: list[Event] = []
+        count = 0
+        for match in index.matches:
+            before = self.reference.get(fixture_identity(match))
+            if before is None or (match.date, match.home_team) == before:
+                continue
+            count += 1
+            if ctx.detail:
+                events.append(
+                    Event(
+                        delta=-self.weight,
+                        detail=f"{match.key} moved from {before[0]} to {match.date}",
+                        match_keys=(match.key,),
+                        team_ids=(match.home_team, match.away_team),
+                    )
+                )
+        return ConstraintResult(self.id, "soft", -self.weight * count, count, events)

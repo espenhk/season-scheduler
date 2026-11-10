@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
@@ -36,6 +36,23 @@ class RawEntry:
     home_team: str
     away_team: str
     venue: str | None = None
+    # Optional bookkeeping a previous `generate` writes (or a hand-made file
+    # may add); inferred when absent.
+    round_number: int | None = None
+    leg: int | None = None
+    kickoff_time: str | None = None
+    locked: bool = False
+
+
+@dataclass
+class ExternalSchedule:
+    """A loaded schedule plus the matches its file marked `locked` (#13)."""
+
+    matches: list[Match]
+    warnings: list[str] = field(default_factory=list)
+    locked: frozenset[str] = frozenset()
+    # Whether every row said which round it belongs to.
+    has_rounds: bool = False
 
 
 def load_external_schedule(path: Path, world: World) -> tuple[list[Match], list[str]]:
@@ -46,6 +63,16 @@ def load_external_schedule(path: Path, world: World) -> tuple[list[Match], list[
     problems like a pair meeting the wrong number of times come back as
     warnings so the rest of the schedule still scores.
     """
+    loaded = load_schedule(path, world)
+    return loaded.matches, loaded.warnings
+
+
+def load_schedule(path: Path, world: World, option: str | None = None) -> ExternalSchedule:
+    """`load_external_schedule` with the `locked` rows kept.
+
+    A JSON file may be a previous `generate`'s output; `option` names which of
+    its options to read (the first by default).
+    """
     path = Path(path)
     if not path.exists():
         raise ExternalScheduleError(f"no such file: {path}")
@@ -53,7 +80,7 @@ def load_external_schedule(path: Path, world: World) -> tuple[list[Match], list[
     if path.suffix.lower() == ".csv":
         entries = _parse_csv(path)
     elif path.suffix.lower() == ".json":
-        entries = _parse_json(path)
+        entries = _parse_json(path, option)
     else:
         raise ExternalScheduleError(
             f"unrecognised schedule format {path.suffix!r} — use .csv or .json"
@@ -62,7 +89,9 @@ def load_external_schedule(path: Path, world: World) -> tuple[list[Match], list[
     _validate_entries(world, entries, path)
     matches = _build_matches(entries, world)
     warnings = _coverage_warnings(world, entries)
-    return matches, warnings
+    locked = frozenset(m.key for m, entry in zip(matches, entries, strict=True) if entry.locked)
+    has_rounds = bool(entries) and all(e.round_number is not None for e in entries)
+    return ExternalSchedule(matches, warnings, locked, has_rounds)
 
 
 def _parse_csv(path: Path) -> list[RawEntry]:
@@ -84,14 +113,32 @@ def _parse_csv(path: Path) -> list[RawEntry]:
                     home_team=row["home_team"].strip(),
                     away_team=row["away_team"].strip(),
                     venue=(row.get("venue") or "").strip() or None,
+                    round_number=_optional_int(row.get("round"), path, line_number),
+                    leg=_optional_int(row.get("leg"), path, line_number),
+                    kickoff_time=(row.get("kickoff_time") or "").strip() or None,
+                    locked=str(row.get("locked") or "").strip().lower() in _TRUE,
                 )
             )
     return entries
 
 
-def _parse_json(path: Path) -> list[RawEntry]:
+_TRUE = {"1", "true", "yes", "y"}
+
+
+def _optional_int(raw: object, path: Path, where: object) -> int | None:
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return int(str(raw).strip())
+    except ValueError:
+        raise ExternalScheduleError(f"{path}, entry {where}: {raw!r} is not a whole number") from None
+
+
+def _parse_json(path: Path, option: str | None = None) -> list[RawEntry]:
     with path.open(encoding="utf-8") as fh:
         raw = json.load(fh)
+    if isinstance(raw, dict) and isinstance(raw.get("options"), list):
+        raw = _pick_option(raw["options"], option, path)
     rows = raw.get("matches", raw) if isinstance(raw, dict) else raw
     if not isinstance(rows, list):
         raise ExternalScheduleError(
@@ -106,14 +153,31 @@ def _parse_json(path: Path) -> list[RawEntry]:
                 RawEntry(
                     competition_id=str(row["competition"]).strip(),
                     date=_parse_date(str(row["date"]).strip(), path, i),
-                    home_team=str(row["home_team"]).strip(),
-                    away_team=str(row["away_team"]).strip(),
+                    home_team=str(row["home_team"] if "home_team" in row else row["home"]).strip(),
+                    away_team=str(row["away_team"] if "away_team" in row else row["away"]).strip(),
                     venue=(str(row["venue"]).strip() if row.get("venue") else None),
+                    round_number=_optional_int(row.get("round"), path, i),
+                    leg=_optional_int(row.get("leg"), path, i),
+                    kickoff_time=(
+                        str(row["kickoff_time"]).strip() if row.get("kickoff_time") else None
+                    ),
+                    locked=bool(row.get("locked", False)),
                 )
             )
         except KeyError as exc:
             raise ExternalScheduleError(f"{path}: entry {i} is missing field {exc}") from None
     return entries
+
+
+def _pick_option(options: list, label: str | None, path: Path) -> dict:
+    """One option of a `generate` JSON: the one labelled `label`, else the first."""
+    if label is None:
+        return options[0]
+    for option in options:
+        if option.get("label") == label:
+            return option
+    labels = ", ".join(str(o.get("label")) for o in options)
+    raise ExternalScheduleError(f"{path}: no option {label!r} (has {labels})")
 
 
 def _parse_date(raw: str, path: Path, where: object) -> date:
@@ -156,10 +220,13 @@ def _build_matches(entries: list[RawEntry], world: World) -> list[Match]:
                 competition_id=entry.competition_id,
                 home_team=entry.home_team,
                 away_team=entry.away_team,
-                leg=leg_by_index[i],
-                round_index=round_by_index[i],
+                leg=entry.leg if entry.leg is not None else leg_by_index[i],
+                round_index=(
+                    entry.round_number - 1 if entry.round_number is not None else round_by_index[i]
+                ),
                 date=entry.date,
                 venue=venue,
+                kickoff_time=entry.kickoff_time,
             )
         )
     return matches
@@ -255,4 +322,4 @@ def _label(world: World, pair: tuple[str, str]) -> str:
         return f"{pair[0]} v {pair[1]}"
 
 
-__all__ = ["ExternalScheduleError", "load_external_schedule"]
+__all__ = ["ExternalSchedule", "ExternalScheduleError", "load_external_schedule", "load_schedule"]

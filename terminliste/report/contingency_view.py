@@ -133,6 +133,37 @@ def maybe_by_day(world: World, season: Season, commitments: CommitmentSet) -> di
     }
 
 
+def replan_view(world: World, diff) -> dict | None:
+    """Template data for the "changes since the input schedule" block (#13)."""
+    if diff is None:
+        return None
+    return {
+        "diff": diff,
+        "moved": [
+            {
+                "fixture": (
+                    f"{world.competition(m.competition_id).short_name} R{m.round_number} "
+                    f"{world.team_label(m.home_team)}–{world.team_label(m.away_team)}"
+                ),
+                "from": day_label(m.from_date),
+                "to": day_label(m.to_date),
+                "flipped": m.flipped,
+            }
+            for m in diff.moved
+        ],
+        "contingencies": [
+            {
+                "team": world.team_label(c.team_id),
+                "node": c.node_id.split("/", 1)[1],
+                "status": c.status,
+                "p": f"{c.probability_before:.2f}",
+                "matches": len(c.matches),
+            }
+            for c in diff.contingencies
+        ],
+    }
+
+
 def robustness_view(report: RobustnessReport | None) -> dict | None:
     if report is None:
         return None

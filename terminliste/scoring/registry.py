@@ -40,6 +40,7 @@ from .soft import (
     PreferredWeekday,
     RestComfort,
     RivalryFixtureOnDate,
+    ScheduleStability,
     SoftVenuePreference,
     TvTimeSpread,
 )
@@ -50,6 +51,7 @@ def build_constraints(
     season: Season,
     competitions: list[Competition],
     commitments: CommitmentSet | None = None,
+    reference: dict | None = None,
 ) -> list[Constraint]:
     """Every rule in force for this season, hard first.
 
@@ -118,6 +120,10 @@ def build_constraints(
             RivalryFixtureOnDate(fixtures=season.rivalry_fixtures, season_year=season.year)
         )
 
+    # `reference` is a re-plan's input schedule (`ReplanSpec.stability_reference`).
+    if reference:
+        constraints.append(ScheduleStability(reference=reference))
+
     return constraints
 
 
@@ -151,6 +157,7 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
     "grass_season_edge": "Grass-pitch home matches avoid the cold edges of the season, with the window shifted by latitude.",
     "late_kickoff_long_travel": "Away teams with a long trip avoid late Sunday kickoffs.",
     "rivalry_fixture_on_date": "A fixed annual pairing lands on its date, home side alternating by year.",
+    "schedule_stability": "Matches stay where the schedule being revised had them unless the new results force a move.",
     "tv_time_spread": "A round's preferred-weekday matches spread across an early, primary, and late kickoff time, clear of other competitions' kickoffs.",
 }
 

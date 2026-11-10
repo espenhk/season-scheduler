@@ -29,7 +29,7 @@ from ..scoring.base import ConstraintResult, Event, Score
 from ..scoring.registry import describe
 from ..slot_planner import search_space_log10
 from ..solvers.base import Candidate, SearchStats, SolverResult
-from .contingency_view import contingency_view, maybe_by_day, robustness_view
+from .contingency_view import contingency_view, maybe_by_day, replan_view, robustness_view
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -198,6 +198,7 @@ def _build_option(
         "calendar_legend": calendar_legend,
         "contingency": contingency_view(world, candidate.contingency_plan, candidate.matches, commitments),
         "robustness": robustness_view(candidate.robustness),
+        "replan": replan_view(world, candidate.replan),
         "has_maybes": any(day["maybes"] for day in month_calendar_details),
     }
 
@@ -1158,9 +1159,15 @@ def write_json(result: SolverResult, output_path: Path) -> Path:
                         "away": m.away_team,
                         "venue": m.venue,
                         "kickoff_time": m.kickoff_time,
+                        **({"locked": True} if m.key in candidate.locked_keys else {}),
                     }
                     for m in candidate.matches
                 ],
+                **(
+                    {"replan": candidate.replan.to_dict()}
+                    if candidate.replan is not None
+                    else {}
+                ),
                 **(
                     {"contingency_plan": candidate.contingency_plan.to_dict()}
                     if candidate.contingency_plan is not None

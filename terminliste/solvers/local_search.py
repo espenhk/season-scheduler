@@ -168,6 +168,7 @@ class LocalSearchScheduler:
                     cup_schedules=request.cup_schedules,
                     commitments=request.commitments,
                     slot_plans=slot_plans,
+                    replan=request.replan,
                 )
             except ValueError as exc:
                 notes.append(f"restart {restart}: {exc}")

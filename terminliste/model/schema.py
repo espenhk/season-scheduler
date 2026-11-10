@@ -724,6 +724,10 @@ class Season(BaseModel):
     extra_round_slots: list[ExtraRoundSlot] = Field(default_factory=list)
     contingency_policy: ContingencyPolicy = Field(default_factory=ContingencyPolicy)
     reserve_dates: list[ReserveDate] = Field(default_factory=list)
+    # Results already in, as team -> competition -> round -> won|lost|reached
+    # (#13). Folded into the cup and UEFA outcome trees, so what they settle
+    # stops being a contingency.
+    known_outcomes: dict[str, dict[str, dict[str, str]]] = Field(default_factory=dict)
 
     @cached_property
     def reserve_date_set(self) -> frozenset[date]:
@@ -821,3 +825,10 @@ class Match(BaseModel):
     @property
     def key(self) -> str:
         return f"{self.competition_id}:{self.round_index}:{self.home_team}-{self.away_team}"
+
+
+def fixture_identity(match: Match | Fixture) -> tuple[str, int, str, str]:
+    """What makes two matches the same fixture: competition, leg and the pair,
+    whichever side is at home and whatever date it falls on (#13)."""
+    low, high = sorted((match.home_team, match.away_team))
+    return (match.competition_id, match.leg, low, high)

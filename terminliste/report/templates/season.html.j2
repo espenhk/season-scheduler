@@ -686,6 +686,28 @@
   </details>
   {% endif %}
 
+  {% if option.replan %}
+  <details class="replan" open>
+    <summary>Changes since the input schedule — {{ option.replan.diff.moved | length }} moved, {{ option.replan.diff.frozen }} frozen</summary>
+    <div class="desc" style="margin-top:8px">
+      {{ option.replan.diff.unchanged }} open match{{ 'es' if option.replan.diff.unchanged != 1 }} kept their date;
+      fallbacks {{ option.replan.diff.fallbacks_before }} → {{ option.replan.diff.fallbacks_after }}.
+    </div>
+    {% for row in option.replan.moved %}
+    <div class="cmove">
+      <span class="fixture">{{ row.fixture }}</span>
+      <span class="shift">{{ row.from }}<span class="arrow">→</span>{{ row.to }}{% if row.flipped %} (home/away swapped){% endif %}</span>
+    </div>
+    {% endfor %}
+    {% for c in option.replan.contingencies %}
+    <div class="cmove">
+      <span class="fixture">{{ c.team }} · {{ c.node }}</span>
+      <span class="shift">{{ c.status }} (was p={{ c.p }}), {{ c.matches }} fallback{{ 's' if c.matches != 1 }}</span>
+    </div>
+    {% endfor %}
+  </details>
+  {% endif %}
+
   {% if option.contingency %}
   <details class="contingencies">
     <summary>Contingency plan — {{ option.contingency.stats.covered }} match{{ 'es' if option.contingency.stats.covered != 1 }} move if a cup or European round is reached</summary>

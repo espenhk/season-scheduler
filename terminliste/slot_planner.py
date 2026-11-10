@@ -23,10 +23,33 @@ _DISCOURAGED_COST = 3.0
 # so a slot hitting more than a few at once gets quadratically worse (#9).
 _CONTINGENT_CROWDING_COST = 0.5
 _CONTINGENT_CROWD_FREE = 3
+# A re-planned round leaving the slot it had in the schedule being revised (#13).
+_MOVED_SLOT_COST = 20.0
+_MOVED_SLOT_WEEK_COST = 2.0
 
 
 class SlotPlanningError(ValueError):
     """A league has fewer usable round slots than rounds."""
+
+
+@dataclass(frozen=True)
+class SlotFreeze:
+    """What a re-plan keeps of one league's existing round slots (#13).
+
+    `pinned` rounds keep the slot they have; every other round gets a slot of
+    `earliest` or later, as near its `previous` slot as the frame allows. Both
+    are keyed by round index. Rounds keep their order in time, so a pinned
+    round is still the n-th round once the others are re-placed.
+    """
+
+    earliest: date
+    pinned: dict[int, RoundSlot]
+    previous: dict[int, RoundSlot]
+
+    def order(self) -> list[int]:
+        """Every round index, earliest slot first."""
+        slots = {**self.previous, **self.pinned}
+        return sorted(slots, key=lambda r: (slots[r].start, r))
 
 
 @dataclass
@@ -84,14 +107,22 @@ def plan_slots(
     competitions: list[Competition],
     calendar: SeasonCalendar,
     frame: SeasonFrame | None = None,
+    freezes: dict[str, SlotFreeze] | None = None,
 ) -> dict[str, SlotPlan]:
     """A `SlotPlan` per league. Raises `SlotPlanningError` for the first
-    league with too few slots."""
+    league with too few slots. A league in `freezes` is re-planned around the
+    slots it already has (#13)."""
     frame = frame or SeasonFrame()
     by_competition = calendars_by_competition(calendar, competitions)
+    freezes = freezes or {}
     return {
         competition.id: plan_league_slots(
-            world, season, competition, by_competition[competition.id], frame
+            world,
+            season,
+            competition,
+            by_competition[competition.id],
+            frame,
+            freezes.get(competition.id),
         )
         for competition in competitions
         if competition.format == "league"
@@ -104,12 +135,15 @@ def plan_league_slots(
     competition: Competition,
     calendar: SeasonCalendar,
     frame: SeasonFrame,
+    freeze: SlotFreeze | None = None,
 ) -> SlotPlan:
     rounds = competition.rounds
     pins = frozenset(
         r.date
         for r in season.full_round_requirements
-        if r.hard and r.competition == competition.id
+        if r.hard
+        and r.competition == competition.id
+        and (freeze is None or r.date >= freeze.earliest)
     )
     candidates = candidate_slots(
         season,
@@ -119,6 +153,8 @@ def plan_league_slots(
         pinned_days=pins,
     )
     candidates = [_with_clashes(s, competition, frame, pins) for s in candidates]
+    if freeze is not None:
+        return _plan_frozen_league(world, season, competition, candidates, pins, freeze, calendar)
 
     if len(candidates) < rounds:
         raise SlotPlanningError(
@@ -164,6 +200,82 @@ def plan_league_slots(
             f"clashes with a hard cup or UEFA commitment for {teams}; no clear slot was available"
         )
     return plan
+
+
+def _plan_frozen_league(
+    world: World,
+    season: Season,
+    competition: Competition,
+    candidates: list[RoundSlot],
+    pins: frozenset[date],
+    freeze: SlotFreeze,
+    calendar: SeasonCalendar,
+) -> SlotPlan:
+    """Re-plan one league keeping `freeze.pinned` rounds where they are.
+
+    The n-th round in time stays the n-th round, so a pinned slot is forced
+    into the position its round already had and the others fill the rest, each
+    pulled towards the slot it held before (#13).
+    """
+    order = freeze.order()
+    if len(order) != competition.rounds:
+        raise SlotPlanningError(
+            f"{competition.id}: the schedule being revised has {len(order)} rounds, "
+            f"the competition {competition.rounds}"
+        )
+    position = {round_index: i for i, round_index in enumerate(order, start=1)}
+    usable = [t for s in candidates if (t := _from_day(s, freeze.earliest)) is not None]
+    pinned = [freeze.pinned[r] for r in order if r in freeze.pinned]
+    slots = sorted([*usable, *pinned], key=lambda s: (s.default_day, s.start, s.kind))
+    forced = {
+        next(i for i, slot in enumerate(slots) if slot is freeze.pinned[r]): position[r]
+        for r in freeze.pinned
+    }
+    stay = {position[r]: slot for r, slot in freeze.previous.items() if r not in freeze.pinned}
+
+    window_start, window_end = competition_window(season, competition)
+    requirements = sorted(
+        r.date
+        for r in season.fixed_requirements
+        if r.hard
+        and r.competition == competition.id
+        and max(window_start, freeze.earliest) <= r.date <= window_end
+    )
+    picked = _choose(
+        slots, competition, season, calendar, pins, requirements, forced=forced, stay=stay
+    )
+    if picked is None:
+        raise SlotPlanningError(
+            f"{competition.id}: no way to place the {competition.rounds - len(freeze.pinned)} "
+            f"open rounds in the slots after {freeze.earliest} around the frozen ones"
+        )
+    protected = set(pins) | {d for slot in pinned for d in slot.days} | set(requirements)
+    picked = _trim_unusable_days(picked, competition, protected)
+
+    chosen: list[RoundSlot | None] = [None] * competition.rounds
+    for round_index in order:
+        chosen[round_index] = picked[position[round_index] - 1]
+    plan = SlotPlan(
+        competition.id, competition.rounds, slots, chosen, min_gap_days=competition.min_gap_days
+    )
+    for round_index, slot in plan.clashing_rounds.items():
+        teams = ", ".join(world.team_label(t) for t in slot)
+        plan.warnings.append(
+            f"{competition.id}: round {round_index + 1} on {plan.chosen[round_index].default_day} "
+            f"clashes with a hard cup or UEFA commitment for {teams}; no clear slot was available"
+        )
+    return plan
+
+
+def _from_day(slot: RoundSlot, earliest: date) -> RoundSlot | None:
+    """The part of `slot` on or after `earliest`, or None if nothing is left."""
+    days = tuple(d for d in slot.days if d >= earliest)
+    if not days:
+        return None
+    if len(days) == len(slot.days):
+        return slot
+    default = slot.default_day if slot.default_day in days else days[0]
+    return replace(slot, days=days, start=days[0], default_day=default)
 
 
 def _with_clashes(
@@ -291,7 +403,18 @@ def _choose(
     calendar: SeasonCalendar,
     pins: frozenset[date],
     requirements: list[date],
+    forced: dict[int, int] | None = None,
+    stay: dict[int, RoundSlot] | None = None,
 ) -> list[RoundSlot] | None:
+    """The cheapest `competition.rounds` compatible slots, in date order.
+
+    `forced` maps a slot index to the 1-based position it must take, and that
+    position is then closed to every other slot; `stay` maps a position to the
+    slot it held before a re-plan, which other slots pay to replace (#13).
+    """
+    forced = forced or {}
+    stay = stay or {}
+    reserved = set(forced.values())
     n, k = len(slots), competition.rounds
     positions = _positions(slots)
     weekend_positions = [p for p, s in zip(positions, slots, strict=True) if s.kind == "weekend"]
@@ -307,22 +430,37 @@ def _choose(
         return cost
 
     node = [_slot_cost(s, competition, calendar) for s in slots]
+
+    def allowed(c: int, j: int) -> bool:
+        return forced.get(j) == c if j in forced else c not in reserved
+
+    def moved(c: int, j: int) -> float:
+        before = stay.get(c)
+        if before is None or slots[j].end >= before.start and before.end >= slots[j].start:
+            return 0.0
+        weeks = abs((slots[j].default_day - before.default_day).days) / 7
+        return _MOVED_SLOT_COST + _MOVED_SLOT_WEEK_COST * weeks
+
     inf = math.inf
     # best[c][j]: cheapest plan whose c-th round (1-based) is slot j.
     best = [[inf] * n for _ in range(k + 1)]
     back = [[-1] * n for _ in range(k + 1)]
     for j in range(n):
-        best[1][j] = (
-            node[j] + (positions[j] - low) ** 2 + uncovered(None, slots[j].start)
-        )
+        if allowed(1, j):
+            best[1][j] = (
+                node[j] + moved(1, j) + (positions[j] - low) ** 2 + uncovered(None, slots[j].start)
+            )
     for c in range(2, k + 1):
         for j in range(n):
+            if not allowed(c, j):
+                continue
             for i in range(j):
                 if best[c - 1][i] == inf or not slots_compatible(slots[i], slots[j], gap_days):
                     continue
                 cost = (
                     best[c - 1][i]
                     + node[j]
+                    + moved(c, j)
                     + (positions[j] - positions[i] - ideal) ** 2
                     + uncovered(slots[i].end, slots[j].start)
                 )

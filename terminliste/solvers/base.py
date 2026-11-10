@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from ..contingency import ContingencyPlan, ContingencyPlanner
 from ..frame import SeasonFrame
@@ -24,6 +24,9 @@ from ..rounds.cup_schedule import CupSchedule
 from ..scenarios import RobustnessReport
 from ..scoring.base import Constraint, EvalContext, Score
 from ..slot_planner import SlotPlan, plan_slots
+
+if TYPE_CHECKING:
+    from ..replan import ReplanSpec, ScheduleDiff
 
 # Two candidates must differ on at least this share of their match dates to
 # count as genuinely different schedules. Three near-identical options are not
@@ -116,6 +119,10 @@ class Candidate:
     contingency_plan: ContingencyPlan | None = None
     # How the plan holds up across cup and UEFA outcomes (#10); set on request.
     robustness: RobustnessReport | None = None
+    # What a re-plan changed against the schedule it revised, and the matches
+    # its input marked `locked` (#13).
+    replan: ScheduleDiff | None = None
+    locked_keys: frozenset[str] = frozenset()
 
     def assignment(self) -> dict[str, object]:
         """Fixture key -> date, the fingerprint used for diversity checks."""
@@ -159,6 +166,9 @@ class SolveRequest:
     # solver rebuilds the frame from the cups and commitments above.
     frame: SeasonFrame | None = None
     slot_plans: dict[str, SlotPlan] | None = None
+    # Set when revising an existing schedule: its frozen matches and the
+    # fixtures to re-place (#13).
+    replan: ReplanSpec | None = None
     # Called periodically with a running `SearchStats` snapshot so the CLI can
     # print live progress. `None` means don't bother.
     progress: Callable[[ProgressUpdate], None] | None = None
@@ -180,7 +190,10 @@ def resolve_slot_plans(request: SolveRequest, calendar: SeasonCalendar) -> dict[
     frame = request.frame or SeasonFrame.from_resolved(
         request.world, request.cup_schedules, request.commitments
     )
-    return plan_slots(request.world, request.season, request.competitions, calendar, frame)
+    freezes = request.replan.slot_freezes if request.replan else None
+    return plan_slots(
+        request.world, request.season, request.competitions, calendar, frame, freezes
+    )
 
 
 class Scheduler(Protocol):

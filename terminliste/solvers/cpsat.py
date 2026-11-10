@@ -24,7 +24,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from ..model.calendar import build_calendar, calendars_by_competition
-from ..model.schema import Match
+from ..model.schema import Match, fixture_identity
 from ..rounds.commitments import CommitmentSet
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import evaluate
@@ -53,6 +53,9 @@ _ONE_DAY = timedelta(days=1)
 # cheaper than some other preference.
 _MIN_REST_RELAX_PENALTY = 500.0
 
+# Reward for keeping a match on the date it had in the schedule being revised.
+_STAY_WEIGHT = 10.0
+
 
 class CpSatScheduler:
     name = "cpsat"
@@ -72,18 +75,20 @@ class CpSatScheduler:
         slot_plans = resolve_slot_plans(request, calendar)
         planned = plan_competitions(
             request.world, request.season, request.competitions, calendar,
-            slot_plans=slot_plans,
+            slot_plans=slot_plans, replan=request.replan,
         )
         round_slots = {
             (plan.competition.id, round_index): slot
             for plan in planned
             for round_index, slot in plan.slots.items()
         }
-        align_dual_clubs(request.world, planned)
+        if request.replan is None:
+            align_dual_clubs(request.world, planned)
         round_pins, pin_warnings = resolve_round_pins(
             request.season, planned, by_competition, request.commitments
         )
-        align_home_teams_to_requirements(request.season, planned)
+        if request.replan is None:
+            align_home_teams_to_requirements(request.season, planned)
 
         candidates: list[Candidate] = []
         notes: list[str] = list(pin_warnings)
@@ -284,6 +289,9 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
     # date leak into a late round and drag the leg boundary with it.
     required_dates: dict[tuple[str, int, str, str], date] = {}
     claimed: set[tuple[str, int, str, str]] = set()
+    replan = request.replan
+    if replan is not None:
+        claimed |= {_fixture_id(f) for p in planned for f in p.fixtures if replan.is_frozen(f)}
     for requirement in season.fixed_requirements:
         if not requirement.hard:
             continue
@@ -291,6 +299,10 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
             (p for p in planned if p.competition.id == requirement.competition), None
         )
         if plan is None:
+            continue
+        if replan is not None and replan.frozen_requirement(
+            requirement.competition, requirement.home_team, requirement.date
+        ):
             continue
         target = pick_fixture_for_requirement(
             plan, requirement.home_team, requirement.date, claimed
@@ -306,7 +318,10 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
         for fixture in plan.fixtures:
             venue = world.team(fixture.home_team).home_venue
             pin_date = round_pins.get((competition.id, fixture.round_index))
-            if pin_date is not None:
+            frozen = replan.frozen.get(fixture_identity(fixture)) if replan else None
+            if frozen is not None:
+                window = [frozen.date]
+            elif pin_date is not None:
                 # One candidate date forces the pin without a separate
                 # assumption literal — `AddExactlyOne` has nothing else to pick.
                 window = [pin_date]
@@ -551,8 +566,16 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
                 model.Add(sum(window_vars) <= 1).OnlyEnforceIf(clear)
                 objective_terms.append((_scaled(weight), clear))
 
+    # S8 stay where the schedule being revised had the match (#13)
+    if replan is not None:
+        for index, (fixture, _, _) in enumerate(fixtures):
+            kept = replan.reference_date(fixture)
+            if kept in placement[index]:
+                objective_terms.append((_scaled(_STAY_WEIGHT), placement[index][kept]))
+
     # -- diversity: forbid re-deriving an earlier pass's answer --------------
-    for previous in forbidden:
+    # A re-plan wants the nearest schedule, not three different ones.
+    for previous in [] if replan is not None else forbidden:
         same: list[object] = []
         for index, (fixture, _, _) in enumerate(fixtures):
             wanted = previous.get(fixture.key)
