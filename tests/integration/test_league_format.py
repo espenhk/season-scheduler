@@ -11,7 +11,7 @@ import pytest
 from terminliste.frame import SeasonFrame, build_playoff_weeks, build_season_frame
 from terminliste.model.calendar import build_calendar
 from terminliste.model.loader import validate_world
-from terminliste.model.schema import FixedRoundDate, LeaguePhase, PlayoffRound
+from terminliste.model.schema import DatedNote, FixedRoundDate, LeaguePhase, PlayoffRound
 from terminliste.model.travel import ApiTravelModel
 from terminliste.scoring.base import EvalContext
 from terminliste.scoring.registry import build_constraints
@@ -236,6 +236,39 @@ def test_cpsat_never_breaks_the_day_quota():
                 continue
             for weekday, limit in quota.items():
                 assert counts[weekday] <= limit, (round_index, weekday, counts)
+
+
+def test_cpsat_plays_the_whole_fixed_round_on_its_date():
+    pytest.importorskip("ortools")
+    from terminliste.solvers.cpsat import CpSatScheduler
+
+    # A Saturday, so the league's Sunday default can't land on it by chance.
+    target = date(2026, 4, 18)
+    world, league = _league(fixed_round_dates=[FixedRoundDate(round=2, date=target)])
+    season = _season()
+
+    result = CpSatScheduler().solve(_request(world, season, league))
+
+    assert result.candidates
+    for candidate in result.candidates:
+        assert {m.date for m in candidate.matches if m.round_index == 1} == {target}
+
+
+def test_a_fixed_round_keeps_its_slot_even_when_the_slot_misses_the_quota():
+    """The quota exempts fixed-date rounds, so a slot holding one stays usable."""
+    target = date(2026, 4, 18)
+    quota = {"friday": 0, "saturday": 2, "sunday": 2, "monday": 0}
+    world, league = _league(
+        n_teams=8, day_quota=quota, fixed_round_dates=[FixedRoundDate(round=2, date=target)]
+    )
+    # Without its Sunday, the 17-20 Apr weekend can host only 2 of the 4 matches.
+    season = _season(
+        end=date(2026, 9, 30), global_blackouts=[DatedNote(date=date(2026, 4, 19), reason="blocked")]
+    )
+
+    plan = _plan(world, season, league)
+
+    assert target in plan.chosen[1].days
 
 
 # -- schema and loader checks ---------------------------------------------------

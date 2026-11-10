@@ -28,6 +28,7 @@ playoff_rounds:
   - id: coop_ligaen_playoff
     kind: promotion_playoff
     label: "COOP-ligaen play-off (3rd v 4th, two legs)"
+    # Unconfirmed: no NFF or league page found for these two dates.
     dates: [2026-10-31, 2026-11-07]
     reserves_league: false
     source: "https://no.wikipedia.org/wiki/Kvalifisering_til_Toppserien_i_fotball_for_kvinner_2027"
@@ -53,9 +54,10 @@ teams:
   - stabak_w
   - valerenga_w
 
-# The real 2026 Toppserien window (verified 2026-08-16 via web search —
-# multiple sources agree on 20 March kickoff and 7 November final round,
-# excluding playoffs). Ends almost a month before Eliteserien/the season's
+# The real 2026 Toppserien window: round 1 is Saturday 21 March, but its
+# Bodø/Glimt v Hønefoss match was brought forward to Friday 20 March
+# (toppserien.no "Slik spilles Toppserien 2026"); final round 7 November,
+# excluding playoffs. Ends almost a month before Eliteserien/the season's
 # outer envelope; 22 rounds fit that window comfortably. See
 # `terminliste/model/loader.py::_validate_calendar_capacity` for the check
 # that enforces this.

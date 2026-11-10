@@ -66,7 +66,9 @@ teams:
   - valerenga_m
   - viking_m
 
-# 14 March kickoff; final round Sunday 13 December per eliteserien.no (#15).
+# 14 March kickoff. NFF's board moved the final round from 6 to Sunday 13 December
+# (https://www.fotball.no/turneringer/eliteserien/2026/runde-12-i-eliteserien-flyttes-til-25.-oktober);
+# eliteserien.no/terminliste lists round 30 on 13 December (#15).
 # Equal to the season's own start/end, set explicitly so both leagues'
 # windows are spelled out here.
 start: 2026-03-14

@@ -129,7 +129,8 @@ def plan_league_slots(
     candidates = [
         _with_clashes(s, competition, frame, pins)
         for s in candidates
-        if _fits_quota(competition, s)
+        # A pinned day hosts a fixed or final-style round, which the quota exempts.
+        if _fits_quota(competition, s) or any(d in pins for d in s.days)
     ]
 
     if len(candidates) < rounds:
@@ -169,7 +170,10 @@ def plan_league_slots(
     }
     chosen = _trim_unusable_days(chosen, competition, protected)
 
-    if not all(_fits_quota(competition, slot) for slot in chosen):
+    exempt = competition.day_quota_exempt_rounds
+    if not all(
+        _fits_quota(competition, slot) for i, slot in enumerate(chosen) if i not in exempt
+    ):
         raise SlotPlanningError(
             f"{competition.id}: trimming days for rest left a round slot that cannot hold "
             f"its matches under day_quota"
