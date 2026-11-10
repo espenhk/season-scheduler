@@ -923,3 +923,31 @@ def test_render_report_sorts_season_exclusions_by_start_date_across_all_four_sou
         rendered = out.read_text(encoding="utf-8")
 
     assert rendered.index("March break") < rendered.index("Christmas Eve")
+
+
+def test_render_report_lists_the_round_slots_and_search_space():
+    from terminliste.model.calendar import build_calendar
+    from terminliste.slot_planner import plan_slots
+
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    season = f.season(
+        competitions=["elite", "topp"], start=date(2026, 3, 1), end=date(2026, 6, 30)
+    )
+    plans = plan_slots(world, season, [comp_m, comp_w], build_calendar(world, season))
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    candidate = _candidate(world, season, matches, [])
+    result = SolverResult(candidates=[candidate], solver="test", slot_plans=plans)
+
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rendered = render_report(world, season, result, Path(tmp) / "out.html").read_text(
+            encoding="utf-8"
+        )
+
+    assert "Round slots" in rendered
+    assert f"{comp_m.rounds} rounds in {len(plans['elite'].candidates)} candidate slots" in rendered
+    assert "ways to pick compatible slots" in rendered
+    first = plans["elite"].chosen[0]
+    assert f"default {first.default_day.strftime('%a %d %b')}" in rendered

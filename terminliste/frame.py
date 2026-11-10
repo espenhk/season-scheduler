@@ -3,8 +3,8 @@ around, resolved before any league match is placed (#110).
 
 UEFA match weeks come first (#112): each leg of each European round, with
 the teams that might play it. Cup days follow (#5): each cup round's resolved
-date, midweek (`cup_week`) or on a league weekend (`cup_weekend`). Later
-stages add league slots alongside them.
+date, midweek (`cup_week`) or on a league weekend (`cup_weekend`). League round
+slots are planned from this frame in `slot_planner.py` (#6).
 """
 
 from __future__ import annotations
@@ -82,6 +82,23 @@ class SeasonFrame:
     cup_schedules: list[CupSchedule] = field(default_factory=list)
     cup_days: list[CupDay] = field(default_factory=list)
 
+    @classmethod
+    def from_resolved(
+        cls,
+        world: World,
+        cup_schedules: list[CupSchedule],
+        european_commitments: dict[str, list[EuropeanCommitmentDate]],
+    ) -> SeasonFrame:
+        """A frame rebuilt from already-resolved cups and commitments, for
+        callers that hold those rather than the frame."""
+        genders = {c.competition_id: _cup_gender(world, c) for c in cup_schedules}
+        return cls(
+            uefa_weeks=build_uefa_weeks(european_commitments),
+            european_commitments=european_commitments,
+            cup_schedules=cup_schedules,
+            cup_days=build_cup_days(cup_schedules, genders),
+        )
+
     @property
     def solver_cup_schedules(self) -> list[CupSchedule]:
         """The cups that bind the scorer and solvers (`solver_commitments`)."""
@@ -116,6 +133,18 @@ class SeasonFrame:
         for day in self.cup_days_of(gender=gender, kind="cup_weekend"):
             blocks[day.date] = f"{blocks[day.date]}; {day.label}" if day.date in blocks else day.label
         return blocks
+
+
+def _cup_gender(world: World, schedule: CupSchedule) -> Gender:
+    """The cup's gender: declared, else its entrants'."""
+    competition = world.competitions.get(schedule.competition_id)
+    if competition is not None:
+        return competition.gender
+    for placement in schedule.rounds:
+        for team_id in placement.dates:
+            if team_id in world.teams:
+                return world.teams[team_id].gender
+    return "men"
 
 
 def build_uefa_weeks(

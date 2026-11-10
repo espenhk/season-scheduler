@@ -10,6 +10,8 @@ on:
     branches: [main]
     paths:
       - "terminliste/solvers/**"
+      - "terminliste/slot_planner.py"
+      - "terminliste/frame.py"
       - "tests/solvers/**"
       - "tests/integration/**"
       - ".github/workflows/fs-tests-solvers.yml"

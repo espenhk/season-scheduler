@@ -29,7 +29,14 @@ from ..rounds.cup_schedule import cup_conflict, resolved_cup_windows
 from ..rounds.european_schedule import european_conflict
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import evaluate
-from .base import Candidate, SearchStats, SolveRequest, SolverResult, select_diverse
+from .base import (
+    Candidate,
+    SearchStats,
+    SolveRequest,
+    SolverResult,
+    resolve_slot_plans,
+    select_diverse,
+)
 from .greedy import (
     align_dual_clubs,
     align_home_teams_to_round_pins,
@@ -61,9 +68,16 @@ class CpSatScheduler:
         started = time.perf_counter()
         calendar = build_calendar(request.world, request.season)
         by_competition = calendars_by_competition(calendar, request.competitions)
+        slot_plans = resolve_slot_plans(request, calendar)
         planned = plan_competitions(
-            request.world, request.season, request.competitions, calendar
+            request.world, request.season, request.competitions, calendar,
+            slot_plans=slot_plans,
         )
+        round_slots = {
+            (plan.competition.id, round_index): slot
+            for plan in planned
+            for round_index, slot in plan.slots.items()
+        }
         align_dual_clubs(request.world, planned)
         cup_windows = resolved_cup_windows(request.cup_schedules)
         round_pins, pin_warnings = resolve_round_pins(
@@ -172,6 +186,7 @@ class CpSatScheduler:
                     score=score,
                     label=f"Candidate (CP-SAT pass {pass_index + 1})",
                     seed=request.seed + pass_index,
+                    round_slots=round_slots,
                 )
             )
             forbidden.append({m.key: m.date for m in matches})
@@ -191,6 +206,7 @@ class CpSatScheduler:
             elapsed_s=time.perf_counter() - started,
             notes=notes,
             search_stats=stats,
+            slot_plans=slot_plans,
         )
 
 

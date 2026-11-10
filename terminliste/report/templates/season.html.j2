@@ -334,6 +334,35 @@
 </details>
 {% endif %}
 
+{% if slot_views %}
+<details>
+  <summary>
+    Round slots
+    <span style="font-weight:400;color:var(--muted)">
+      · {% for view in slot_views %}{{ view.rounds }} rounds in {{ view.candidates }} candidate slots{% if view.overlapping %} ({{ view.overlapping }} overlap a weekend){% endif %}{{ ', ' if not loop.last }}{% endfor %}
+    </span>
+  </summary>
+  <div class="item-body">
+    {% for view in slot_views %}
+    <div class="desc" style="font-weight:700;margin-top:8px">{{ view.name }}</div>
+    <div class="desc">
+      {{ '{:,}'.format(view.combinations) }} ways to pick compatible slots; per-match dates
+      ~10<sup>{{ '%.0f'|format(view.dates_log10) }}</sup> within ±{{ view.window_days }} days of each slot,
+      ~10<sup>{{ '%.0f'|format(view.dates_in_slot_log10) }}</sup> within the slot's own days.
+    </div>
+    {% for row in view.rows %}
+    <div class="desc">
+      R{{ row.round }} · {{ row.kind }} ·
+      {{ row.start.strftime('%d %b') }}{% if row.end != row.start %} – {{ row.end.strftime('%d %b') }}{% endif %}
+      · default {{ row.default_day.strftime('%a %d %b') }}
+      {%- if row.clashes %} · ⚠ clashes: {{ row.clashes|join(', ') }}{% endif %}
+    </div>
+    {% endfor %}
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
+
 {% if search_stats %}
 <details class="search-stats">
   <summary>

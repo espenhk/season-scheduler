@@ -943,10 +943,10 @@ def test_two_competitions_sharing_a_short_name_are_caught():
     assert any("comp_a" in e and "comp_b" in e and "'X'" in e for e in errors)
 
 
-def test_capacity_check_uses_a_tight_lower_bound_not_rounds_times_rest():
-    """A season with exactly `(rounds - 1) * min_gap_days + 1` days validates
-    clean: the first round needs no rest before it, so only the gaps between
-    rounds count."""
+def test_capacity_check_counts_slots_not_days():
+    """A weekend hosts one round however many days it has, and the rest gap
+    thins which weekends can be used together: 11 days of gap fits every
+    other weekend only, so 5 rounds need 9 weeks, not 5."""
     import factories as f
 
     from terminliste.model.loader import _validate_calendar_capacity
@@ -954,13 +954,41 @@ def test_capacity_check_uses_a_tight_lower_bound_not_rounds_times_rest():
     v = f.venue("v1")
     teams = [f.team(f"t{i}", f"c{i}", "v1") for i in range(6)]
     clubs = [f.club(f"c{i}", [teams[i]]) for i in range(6)]
-    # 6 teams, single league -> 5 rounds. min_rest_days=10 -> min_gap_days=11.
-    # Tight bound: (5-1)*11 + 1 = 45 days.
     comp = f.competition("comp", [t.id for t in teams], min_rest_days=10, rounds_per_pairing=1)
     assert comp.rounds == 5
     world = f.world(clubs, [v], [comp])
-    season = f.season(
-        competitions=["comp"], start=date(2026, 1, 1), end=date(2026, 2, 14)  # 45 days
+
+    nine_weeks = f.season(competitions=["comp"], start=date(2026, 1, 1), end=date(2026, 3, 5))
+    assert _validate_calendar_capacity(world, nine_weeks) == []
+
+    seven_weeks = f.season(competitions=["comp"], start=date(2026, 1, 1), end=date(2026, 2, 19))
+    errors = _validate_calendar_capacity(world, seven_weeks)
+    assert len(errors) == 1
+    assert "4 usable round slots" in errors[0] and "needs 5" in errors[0]
+
+
+def test_capacity_check_counts_extra_round_slots():
+    import factories as f
+
+    from terminliste.model.loader import _validate_calendar_capacity
+    from terminliste.model.schema import ExtraRoundSlot
+
+    v = f.venue("v1")
+    teams = [f.team(f"t{i}", f"c{i}", "v1") for i in range(6)]
+    clubs = [f.club(f"c{i}", [teams[i]]) for i in range(6)]
+    comp = f.competition(
+        "comp", [t.id for t in teams], rounds_per_pairing=1, min_rest_days=1
     )
-    errors = _validate_calendar_capacity(world, season)
-    assert errors == []
+    world = f.world(clubs, [v], [comp])
+    # Four weekends (Jan 2026: 2-5, 9-12, 16-19, 23-26) for 5 rounds.
+    short = f.season(competitions=["comp"], start=date(2026, 1, 2), end=date(2026, 1, 28))
+    assert _validate_calendar_capacity(world, short)
+
+    extra = ExtraRoundSlot(date=date(2026, 1, 14), kind="midweek", reason="Midweek round")
+    with_midweek = f.season(
+        competitions=["comp"],
+        start=date(2026, 1, 2),
+        end=date(2026, 1, 28),
+        extra_round_slots=[extra],
+    )
+    assert _validate_calendar_capacity(world, with_midweek) == []

@@ -19,12 +19,14 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from ..model.calendar import build_calendar, calendars_by_competition
 from ..model.loader import World
 from ..model.schema import WEEKDAYS, Competition, EuropeanRound, Match, Season
 from ..rounds.cup_schedule import NEUTRAL_CUP_VENUE, CupRoundPlacement, CupSchedule
 from ..rounds.european_schedule import ResolvedLegs
 from ..scoring.base import ConstraintResult, Event, Score
 from ..scoring.registry import describe
+from ..slot_planner import search_space_log10
 from ..solvers.base import Candidate, SearchStats, SolverResult
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -122,6 +124,7 @@ def render_report(
         dual_clubs=sorted(world.dual_clubs(), key=lambda c: c.name),
         warnings=warnings or [],
         season_exclusions=_season_exclusions(world, season),
+        slot_views=_slot_views(world, season, result),
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")
@@ -185,6 +188,47 @@ def _build_option(
         "month_calendar_details": month_calendar_details,
         "calendar_legend": calendar_legend,
     }
+
+
+def _slot_views(world: World, season: Season, result: SolverResult) -> list[dict]:
+    """One entry per league for the "Round slots" overview (#6): the slot each
+    round sits in and how far the slot choice narrowed the search."""
+    if not result.slot_plans:
+        return []
+    calendars = calendars_by_competition(
+        build_calendar(world, season),
+        [world.competition(competition_id) for competition_id in result.slot_plans],
+    )
+    views = []
+    for competition_id, plan in result.slot_plans.items():
+        competition = world.competition(competition_id)
+        league_calendar = calendars[competition_id]
+        views.append(
+            {
+                "name": competition.name,
+                "rounds": plan.rounds,
+                "candidates": len(plan.candidates),
+                "overlapping": plan.overlapping,
+                "combinations": plan.combinations,
+                "dates_log10": search_space_log10(plan, competition, league_calendar),
+                "dates_in_slot_log10": search_space_log10(
+                    plan, competition, league_calendar, within_slot=True
+                ),
+                "window_days": competition.match_window_days,
+                "rows": [
+                    {
+                        "round": round_index,
+                        "kind": slot.kind,
+                        "start": slot.start,
+                        "end": slot.end,
+                        "default_day": slot.default_day,
+                        "clashes": [world.team_label(t) for t in slot.clashing_teams],
+                    }
+                    for round_index, slot in enumerate(plan.chosen, start=1)
+                ],
+            }
+        )
+    return views
 
 
 def _season_exclusions(world: World, season: Season) -> list[dict]:

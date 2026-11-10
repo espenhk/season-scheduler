@@ -465,3 +465,88 @@ def test_cpsat_still_reports_zero_candidates_when_relaxing_min_rest_days_is_not_
     assert result.best is None
     assert result.notes
     assert not any("min_rest_days relaxed" in note for note in result.notes)
+
+
+@pytest.mark.parametrize("solver_name", SOLVERS)
+def test_every_round_sits_in_one_planned_slot_and_both_backends_share_the_plan(solver_name):
+    """Anchors come from the slot plan (#6): the result carries the plan, and
+    every candidate maps each round to a slot of it."""
+    world, season, competitions = _small_world()
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=3, top_n=1, time_budget_s=6.0,
+    )
+    result = _get_scheduler(solver_name).solve(request)
+
+    assert set(result.slot_plans) == {c.id for c in competitions}
+    for candidate in result.candidates:
+        for competition in competitions:
+            plan = result.slot_plans[competition.id]
+            slots = [candidate.round_slots[(competition.id, r)] for r in range(competition.rounds)]
+            assert len(set(slots)) == competition.rounds
+            assert set(slots) == set(plan.chosen)
+            # Rounds stay near their slot: no match strays beyond the window.
+            for match in candidate.matches:
+                if match.competition_id != competition.id:
+                    continue
+                slot = candidate.round_slots[(competition.id, match.round_index)]
+                drift = abs((match.date - slot.default_day).days)
+                assert drift <= competition.match_window_days * 3
+
+
+def test_solve_fails_clearly_when_a_league_has_too_few_slots():
+    from terminliste.slot_planner import SlotPlanningError
+
+    world, season, competitions = _small_world()
+    season = f.season(competitions=["men", "women"], start=date(2026, 3, 1), end=date(2026, 3, 22))
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=3, top_n=1, time_budget_s=2.0,
+    )
+
+    with pytest.raises(SlotPlanningError, match="round slots for"):
+        LocalSearchScheduler(restarts=1).solve(request)
+
+
+def test_a_round_swap_moves_the_slot_with_the_round_and_undo_restores_it():
+    import random
+
+    from terminliste.model.calendar import build_calendar, calendars_by_competition
+    from terminliste.slot_planner import plan_slots
+    from terminliste.solvers.greedy import build_initial_schedule
+    from terminliste.solvers.local_search import WorkingMatch, _MoveSet, _restore
+
+    world, season, competitions = _small_world()
+    calendar = build_calendar(world, season)
+    plans = plan_slots(world, season, competitions, calendar)
+    initial, pinned, _ = build_initial_schedule(
+        world, season, competitions, 5, calendar, slot_plans=plans
+    )
+    working = [
+        WorkingMatch(
+            competition_id=m.competition_id, home_team=m.home_team, away_team=m.away_team,
+            leg=m.leg, round_index=m.round_index, date=m.date, venue=m.venue,
+            anchor=plans[m.competition_id].slot_of(m.round_index).default_day,
+        )
+        for m in initial
+    ]
+    moves = _MoveSet(
+        working, pinned, world, competitions, calendars_by_competition(calendar, competitions)
+    )
+    before = [(m.date, m.anchor) for m in working]
+
+    rng = random.Random(1)
+    snapshot = None
+    while snapshot is None:
+        snapshot = moves._swap_rounds(rng)
+    moved = [i for i, (m, b) in enumerate(zip(working, before, strict=True)) if (m.date, m.anchor) != b]
+    assert moved
+    for i in moved:
+        assert working[i].anchor != before[i][1]
+
+    _restore(working, snapshot)
+    assert [(m.date, m.anchor) for m in working] == before

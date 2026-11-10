@@ -35,7 +35,7 @@ tests having run first.
 | `terminliste/rounds/european_schedule.py` | **all** |
 | `terminliste/rounds/round_robin.py`, `terminliste/rounds/kickoff.py` | `rounds`, `solvers`, `integration` |
 | `terminliste/scoring/**` | `scoring`, `solvers`, `report`, `integration` |
-| `terminliste/solvers/**` | `solvers`, `integration` |
+| `terminliste/solvers/**`, `terminliste/slot_planner.py`, `terminliste/frame.py` | `solvers`, `integration` |
 | `terminliste/report/**` | `report` |
 | `terminliste/refdata/**` | `refdata`, `scripts` |
 | `terminliste/external_schedule.py`, `terminliste/baseline.py` | `integration` |
