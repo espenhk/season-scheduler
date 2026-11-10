@@ -36,13 +36,17 @@ teams:
 
 min_rest_days: 2
 
+# Early rounds are played against lower divisions, so a top-flight side usually
+# advances; the competition default (0.5) covers the later rounds (#8).
 cup_rounds:
   - id: r2
     name: Round 2
+    advance_probability: 0.85
     forced_date: 2026-05-12
     note: "Tuesday 12 May 2026; Toppserien enters here."
   - id: r3
     name: Round 3
+    advance_probability: 0.85
     forced_date: 2026-05-20
     note: "Wednesday 20 May 2026."
   - id: r4

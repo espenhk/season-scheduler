@@ -10,7 +10,6 @@ import pytest
 from terminliste.model.schema import Competition, CupRound, DatedNote
 from terminliste.rounds.cup_schedule import (
     CupSchedulingError,
-    resolved_cup_windows,
     schedule_cup,
     schedule_cups,
 )
@@ -216,10 +215,10 @@ def test_windowed_round_avoids_every_entrants_uefa_leg():
             )
         ],
     )
-    commitments = {
-        "t1": [_uefa("t1", date(2026, 9, 2))],  # kills Wed 2 Sep and its rest days
-        "t2": [_uefa("t2", date(2026, 9, 9))],  # kills Wed 9 Sep
-    }
+    commitments = f.commitment_set(
+        _uefa("t1", date(2026, 9, 2)),  # kills Wed 2 Sep and its rest days
+        _uefa("t2", date(2026, 9, 9)),  # kills Wed 9 Sep
+    )
     schedule, warnings = schedule_cup(cup, blackouts=set(), european_commitments=commitments)
     assert schedule.rounds[0].earliest_date == date(2026, 9, 16)
     assert warnings == []
@@ -240,7 +239,7 @@ def test_windowed_round_ignores_a_team_with_an_override_when_dodging_uefa():
             )
         ],
     )
-    commitments = {"t1": [_uefa("t1", date(2026, 9, 2))]}
+    commitments = f.commitment_set(_uefa("t1", date(2026, 9, 2)))
     schedule, _ = schedule_cup(cup, blackouts=set(), european_commitments=commitments)
     assert schedule.rounds[0].dates == {"t1": date(2026, 9, 10), "t2": date(2026, 9, 2)}
 
@@ -252,7 +251,7 @@ def test_forced_round_inside_a_uefa_week_warns_but_keeps_its_date():
         format="cup",
         cup_rounds=[f.cup_round("r1", forced_date=date(2026, 8, 22), name="Round 1")],
     )
-    commitments = {"t1": [_uefa("t1", date(2026, 8, 20))]}
+    commitments = f.commitment_set(_uefa("t1", date(2026, 8, 20)))
     schedule, warnings = schedule_cup(cup, blackouts=set(), european_commitments=commitments)
     assert set(schedule.rounds[0].dates.values()) == {date(2026, 8, 22)}
     assert len(warnings) == 1 and "UEFA" in warnings[0] and "t1" in warnings[0]
@@ -265,7 +264,7 @@ def test_forced_round_clear_of_uefa_does_not_warn():
         format="cup",
         cup_rounds=[f.cup_round("r1", forced_date=date(2026, 8, 22), name="Round 1")],
     )
-    commitments = {"t1": [_uefa("t1", date(2026, 8, 27))]}
+    commitments = f.commitment_set(_uefa("t1", date(2026, 8, 27)))
     _, warnings = schedule_cup(cup, blackouts=set(), european_commitments=commitments)
     assert warnings == []
 
@@ -305,12 +304,8 @@ def test_a_weekend_preference_keeps_the_final_on_one_weekend_date():
     assert set(schedule.rounds[0].dates.values()) == {date(2027, 5, 30)}
 
 
-def _uefa(team: str, day: date, *, certain: bool = True):
-    from terminliste.rounds.european_schedule import EuropeanCommitmentDate
-
-    return EuropeanCommitmentDate(
-        team_id=team, date=day, min_rest_days=2, label="x", competition_id="cl", certain=certain
-    )
+def _uefa(team: str, day: date, *, hard: bool = True):
+    return f.commitment(team, day, hard=hard, label="x", competition_id="cl")
 
 
 # -- schedule_cup: home/away resolution --------------------------------------
@@ -458,7 +453,7 @@ def test_schedule_cup_rejects_a_cup_with_no_rounds():
         schedule_cup(cup, blackouts=set())
 
 
-# -- schedule_cups / resolved_cup_windows ------------------------------------
+# -- schedule_cups ------------------------------------
 
 
 def test_schedule_cups_pools_warnings_across_competitions():
@@ -544,20 +539,6 @@ def test_schedule_cups_ignores_venue_blackout_ranges():
     placement = schedules[0].rounds[0]
     assert placement.earliest_date == date(2026, 9, 1)
     assert warnings == []
-
-
-def test_resolved_cup_windows_reads_each_teams_own_date():
-    schedule = f.cup_schedule(
-        "cup",
-        min_rest_days=4,
-        rounds=[
-            f.cup_placement("r1", {"t1": date(2026, 8, 22), "t2": date(2026, 8, 24)}, "Round 1"),
-            f.cup_placement("r2", {"t1": date(2026, 9, 16)}, "Round 2"),
-        ],
-    )
-    windows = resolved_cup_windows([schedule])
-    assert windows["t1"] == [(date(2026, 8, 22), 4), (date(2026, 9, 16), 4)]
-    assert windows["t2"] == [(date(2026, 8, 24), 4)]
 
 
 def test_schedule_cups_applies_blackouts_beyond_the_seasons_own_dates():

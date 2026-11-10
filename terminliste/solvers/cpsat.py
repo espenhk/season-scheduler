@@ -25,8 +25,7 @@ from datetime import date, timedelta
 
 from ..model.calendar import build_calendar, calendars_by_competition
 from ..model.schema import Match
-from ..rounds.cup_schedule import cup_conflict, resolved_cup_windows
-from ..rounds.european_schedule import european_conflict
+from ..rounds.commitments import CommitmentSet
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import evaluate
 from .base import (
@@ -80,9 +79,8 @@ class CpSatScheduler:
             for round_index, slot in plan.slots.items()
         }
         align_dual_clubs(request.world, planned)
-        cup_windows = resolved_cup_windows(request.cup_schedules)
         round_pins, pin_warnings = resolve_round_pins(
-            request.season, planned, by_competition, cup_windows, request.european_commitments
+            request.season, planned, by_competition, request.commitments
         )
         align_home_teams_to_requirements(request.season, planned)
 
@@ -265,8 +263,7 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
     season = request.season
     model = cp_model.CpModel()
     by_competition = calendars_by_competition(calendar, request.competitions)
-    cup_windows = resolved_cup_windows(request.cup_schedules)
-    european_commitments = request.european_commitments
+    commitments = request.commitments
 
     # -- decision variables: one boolean per (fixture, candidate date) --------
     fixtures: list[tuple[object, object, str]] = []  # (fixture, competition, venue)
@@ -306,18 +303,14 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
                 # assumption literal — `AddExactlyOne` has nothing else to pick.
                 window = [pin_date]
             else:
-                window = _european_clear(
-                    _cup_clear(
-                        [
-                            day
-                            for day in plan.slots[fixture.round_index].days
-                            if competition_calendar.is_allowed(day, venue)
-                        ],
-                        fixture,
-                        cup_windows,
-                    ),
+                window = _commitment_clear(
+                    [
+                        day
+                        for day in plan.slots[fixture.round_index].days
+                        if competition_calendar.is_allowed(day, venue)
+                    ],
                     fixture,
-                    european_commitments,
+                    commitments,
                 )
                 extra = required_dates.get(_fixture_id(fixture))
                 if extra is not None:
@@ -478,9 +471,9 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
                 for day, var in placement[i].items():
                     model.Add(day.toordinal() > split).OnlyEnforceIf([var, leg_literal])
 
-    # H6 cup round conflict has no constraint here: conflicting dates are
-    # excluded from each fixture's candidate set up front (`_cup_clear`), so
-    # a cup conflict cannot occur in a solution at all.
+    # H6 commitment conflict has no constraint here: dates within rest of a
+    # hard commitment are excluded from each fixture's candidate set up front
+    # (`_commitment_clear`), so such a conflict cannot occur in a solution.
 
     # -- objective: the soft rules CP-SAT can see ---------------------------
     objective_terms: list[tuple[int, object]] = []
@@ -631,29 +624,19 @@ def _infeasibility_note(solver, status, culprits: list[str], cp_model, pass_inde
     return f"pass {pass_index}: infeasible, and the solver could not isolate which rules conflict"
 
 
-def _cup_clear(window: list[date], fixture, cup_windows: dict[str, list[tuple[date, int]]]) -> list[date]:
-    """Drop candidate dates that conflict with either side's cup commitment.
+def _commitment_clear(window: list[date], fixture, commitments: CommitmentSet) -> list[date]:
+    """Drop candidate dates within rest of either side's hard commitment.
 
     Excluded up front, the way a blackout date already is, rather than
-    modelled as a constraint to satisfy after the fact.
+    modelled as a constraint to satisfy after the fact. Contingent
+    commitments stay in the domain; `ContingentCommitmentConflict` scores
+    them.
     """
     return [
         day
         for day in window
-        if not cup_conflict(cup_windows, fixture.home_team, day)
-        and not cup_conflict(cup_windows, fixture.away_team, day)
-    ]
-
-
-def _european_clear(window: list[date], fixture, european_commitments) -> list[date]:
-    """`_cup_clear`'s counterpart for European dates. Only binding ones narrow
-    the domain (#93, #112); `EuropeanCommitmentSoftConflict` discourages the
-    rest instead of this excluding them outright."""
-    return [
-        day
-        for day in window
-        if not european_conflict(european_commitments, fixture.home_team, day)
-        and not european_conflict(european_commitments, fixture.away_team, day)
+        if not commitments.blocked(fixture.home_team, day)
+        and not commitments.blocked(fixture.away_team, day)
     ]
 
 

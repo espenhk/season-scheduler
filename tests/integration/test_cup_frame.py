@@ -71,8 +71,8 @@ def test_no_cup_date_is_within_rest_days_of_an_entrants_uefa_leg(frame):
             if (schedule.competition_id, placement.round_id) == ("cup_men_2027", "r1"):
                 continue
             for team, day in placement.dates.items():
-                for leg in frame.european_commitments.get(team, ()):
-                    if not leg.binding:
+                for leg in frame.commitments.hard_for(team):
+                    if leg.source != "uefa":
                         continue
                     gap = abs((day - leg.date).days) - 1
                     assert gap >= max(schedule.min_rest_days, leg.min_rest_days), (
@@ -104,12 +104,29 @@ def test_cup_dates_avoid_blackouts_including_2027(world, season, frame):
             assert day.date not in blocked, (cup_id, day.date)
 
 
+def test_only_hard_cup_weekends_block_league_rounds(frame):
+    """The semi-final is reached with probability 0.25 at best, so its Saturday
+    is contingent and stays available to the league (#8); the entry round is not."""
+    women = frame.cup_days_of(gender="women", kind="cup_weekend")
+    semi = next(d for d in women if d.competition_id == "cup_women_2026" and d.round_id == "sf")
+    assert semi.date == date(2026, 6, 27) and semi.hard_teams == ()
+    assert date(2026, 6, 27) not in frame.cup_weekend_dates(gender="women")
+
+    round_one = next(
+        d for d in frame.cup_days_of(gender="men") if d.competition_id == "cup_men_2027" and d.round_id == "r1"
+    )
+    assert set(round_one.hard_teams) == set(round_one.teams)
+    assert date(2026, 8, 22) in frame.cup_weekend_dates(gender="men")
+
+
 def test_league_anchors_skip_cup_weekends_when_the_calendar_excludes_them(world, season, frame):
     """The women's 2026 semi-final falls on a Toppserien Saturday. The frame
     supplies the dates to exclude; the solvers don't pass them yet (slot
     planning, #6)."""
     league = world.competition("toppserien_2026")
-    blocks = frame.cup_weekend_blocks(gender="women")
+    blocks = {
+        d.date: d.label for d in frame.cup_days_of(gender="women", kind="cup_weekend")
+    }
     assert date(2026, 6, 27) in blocks
 
     calendar = build_calendar(world, season).narrowed(

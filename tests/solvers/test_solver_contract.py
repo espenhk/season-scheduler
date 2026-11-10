@@ -14,7 +14,7 @@ import factories as f
 import pytest
 
 from terminliste.model.travel import ApiTravelModel
-from terminliste.rounds.cup_schedule import schedule_cups
+from terminliste.rounds.cup_schedule import cup_commitments, schedule_cups
 from terminliste.scoring.base import EvalContext
 from terminliste.scoring.registry import build_constraints
 from terminliste.solvers.base import SolveRequest, divergence
@@ -104,7 +104,7 @@ def test_cup_schedule_is_respected_by_both_backends(solver_name):
     window around a round anchor chosen without cup awareness, so unlike the
     greedy/annealing backend it has no way to route around a cup conflict
     discovered only after the fact — it must exclude conflicting dates from
-    the candidate set up front (see `_cup_clear` in `solvers/cpsat.py`), or a
+    the candidate set up front (see `_commitment_clear` in `solvers/cpsat.py`), or a
     real cup schedule can push the whole model to a false "infeasible"."""
     world, season, competitions = _small_world()
     men_team_ids = competitions[0].teams
@@ -128,11 +128,15 @@ def test_cup_schedule_is_respected_by_both_backends(solver_name):
     cup_schedules, cup_warnings = schedule_cups([cup], season)
     assert cup_warnings == []
 
-    constraints = build_constraints(world, season, competitions, cup_schedules)
+    # A threshold of 0.5 makes round 2 (reached with probability 0.5) hard too.
+    commitments = cup_commitments([cup], cup_schedules, hard_threshold=0.5)
+    assert all(c.hard for c in commitments)
+    constraints = build_constraints(world, season, competitions, commitments)
     ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
     request = SolveRequest(
         world=world, season=season, competitions=competitions, cup_schedules=cup_schedules,
-        constraints=constraints, ctx=ctx, seed=11, top_n=1, time_budget_s=15.0,
+        commitments=commitments, constraints=constraints, ctx=ctx, seed=11, top_n=1,
+        time_budget_s=15.0,
     )
     result = _get_scheduler(solver_name).solve(request)
     assert result.best is not None

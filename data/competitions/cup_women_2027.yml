@@ -45,13 +45,17 @@ teams:
 
 min_rest_days: 2
 
+# Early rounds are played against lower divisions, so a top-flight side usually
+# advances; the competition default (0.5) covers the later rounds (#8).
 cup_rounds:
   - id: r2
     name: Round 2
+    advance_probability: 0.85
     forced_date: 2026-10-21
     note: "Confirmed — NFF terminliste. Toppserien enters at Round 2; Round 1 (9 Sep 2026) is lower-division only."
   - id: r3
     name: Round 3
+    advance_probability: 0.85
     window_start: 2027-03-01
     window_end: 2027-03-31
     granularity: month

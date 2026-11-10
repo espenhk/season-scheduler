@@ -8,6 +8,12 @@ ones. Where a section says "implemented", the corresponding code and data
 already exist and are tested; "sketched" means the mechanism supports it
 but the real 2026-27 data doesn't currently exercise it.
 
+> **Superseded in part (#8).** `EuropeanCommitmentDate`, its `certain` flag,
+> `Competition.reachable_from` and `EuropeanCommitmentSoftConflict` below are
+> now `Commitment` (with `reached_probability` and `hard`), the `on_win_main` /
+> `on_loss_main` routing on qualifying rounds, and `ContingentCommitmentConflict`.
+> The README's "Elimination-aware commitments" section describes the current model.
+
 ## The problem, restated
 
 Champions League, Europa League and Conference League qualifying interact:

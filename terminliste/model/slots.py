@@ -27,7 +27,7 @@ class RoundSlot:
 
     `days` are the allowed dates inside `start`..`end`; `default_day` is where
     the round's matches sit unless a clash moves one. `clashing_teams` are the
-    teams with a binding cup or UEFA date too close to `default_day`.
+    teams with a hard cup or UEFA commitment too close to `default_day`.
     """
 
     competition_id: str

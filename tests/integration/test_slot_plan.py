@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 
 import factories as f
@@ -10,7 +11,6 @@ import pytest
 from terminliste.frame import CupDay, SeasonFrame, build_season_frame
 from terminliste.model.calendar import build_calendar
 from terminliste.model.schema import ExtraRoundSlot
-from terminliste.rounds.european_schedule import EuropeanCommitmentDate
 from terminliste.slot_planner import SlotPlanningError, plan_slots
 from terminliste.solvers.greedy import plan_competitions
 
@@ -36,28 +36,22 @@ def test_every_round_has_exactly_one_distinct_slot(plans, competitions):
         assert all(s.default_day in s.days for s in plan.chosen)
 
 
-def test_no_round_anchor_clashes_with_a_certain_cup_or_uefa_date(
+def test_no_round_anchor_clashes_with_a_hard_cup_or_uefa_commitment(
     plans, competitions, frame
 ):
-    """Checked from the raw resolved commitments, not the planner's own flags."""
+    """Checked from the raw commitments, not the planner's own flags."""
     for competition in competitions:
         for round_index, anchor in plans[competition.id].anchors.items():
             for team_id in competition.teams:
-                cup = [
-                    (day, schedule.min_rest_days)
-                    for schedule in frame.cup_schedules
-                    for placement in schedule.rounds
-                    for t, day in placement.dates.items()
-                    if t == team_id
-                ]
-                european = [
-                    (c.date, c.min_rest_days)
-                    for c in frame.european_commitments.get(team_id, ())
-                    if c.certain
-                ]
-                for day, min_rest in cup + european:
-                    rest = abs((anchor - day).days) - 1
-                    assert rest >= min_rest, (competition.id, round_index, anchor, team_id, day)
+                for commitment in frame.commitments.hard_for(team_id):
+                    rest = abs((anchor - commitment.date).days) - 1
+                    assert rest >= commitment.min_rest_days, (
+                        competition.id,
+                        round_index,
+                        anchor,
+                        team_id,
+                        commitment.date,
+                    )
 
 
 def test_no_league_round_shares_a_weekend_with_a_cup_day_of_its_gender(
@@ -66,9 +60,16 @@ def test_no_league_round_shares_a_weekend_with_a_cup_day_of_its_gender(
     """Closes the cup-weekend criterion deferred from #5."""
     for competition in competitions:
         blocked = frame.cup_weekend_dates(gender=competition.gender)
-        assert blocked
+        assert blocked or competition.gender == "women"
         for slot in plans[competition.id].chosen:
             assert not any(slot.contains(day) for day in blocked), (competition.id, slot)
+
+
+def test_a_contingent_cup_weekend_leaves_its_slot_available(plans):
+    """The women's semi-final Saturday is reached only with some probability,
+    so Toppserien keeps a candidate slot there (#8)."""
+    candidates = plans["toppserien_2026"].candidates
+    assert any(slot.contains(date(2026, 6, 27)) for slot in candidates)
 
 
 def test_full_round_and_final_round_requirements_land_on_their_dates(plans):
@@ -165,8 +166,12 @@ def test_a_cup_weekend_that_leaves_too_few_slots_fails_the_plan():
         teams=("t0", "t1"),
     )
     assert cup_day.kind == "cup_weekend"
+    hard_day = replace(cup_day, hard_teams=("t0", "t1"))
     with pytest.raises(SlotPlanningError, match="2 round slots for 3 rounds"):
-        plan_slots(world, season, [league], calendar, SeasonFrame(cup_days=[cup_day]))
+        plan_slots(world, season, [league], calendar, SeasonFrame(cup_days=[hard_day]))
+    # The same day, contingent for everyone, leaves the slot in place.
+    plans = plan_slots(world, season, [league], calendar, SeasonFrame(cup_days=[cup_day]))
+    assert len(plans["league"].chosen) == 3
 
 
 def test_clashes_are_ranked_not_fatal_when_no_clear_slot_exists():
@@ -178,14 +183,11 @@ def test_clashes_are_ranked_not_fatal_when_no_clear_slot_exists():
     sundays = [date(2026, 3, d) for d in (1, 8, 15, 22, 29)]
 
     def commitment(team, day):
-        return EuropeanCommitmentDate(
-            team_id=team, date=day, min_rest_days=10, label="x", competition_id="cl"
-        )
+        return f.commitment(team, day, min_rest_days=10, label="x", competition_id="cl")
 
-    commitments = {
-        "t0": [commitment("t0", day) for day in sundays],
-        "t1": [commitment("t1", sundays[0])],
-    }
+    commitments = f.commitment_set(
+        *(commitment("t0", day) for day in sundays), commitment("t1", sundays[0])
+    )
     frame = SeasonFrame.from_resolved(world, [], commitments)
 
     plan = plan_slots(world, season, [league], build_calendar(world, season), frame)["league"]

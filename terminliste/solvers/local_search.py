@@ -40,8 +40,6 @@ from datetime import date
 from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
 from ..model.schema import Match
 from ..model.slots import RoundSlot
-from ..rounds.cup_schedule import cup_conflict, resolved_cup_windows
-from ..rounds.european_schedule import european_conflict
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import (
     HARD_PENALTY,
@@ -167,7 +165,7 @@ class LocalSearchScheduler:
                     seed,
                     calendar,
                     cup_schedules=request.cup_schedules,
-                    european_commitments=request.european_commitments,
+                    commitments=request.commitments,
                     slot_plans=slot_plans,
                 )
             except ValueError as exc:
@@ -561,8 +559,7 @@ class _MoveSet:
         self._world = request.world
         self._calendars = calendars
         self._competitions = {c.id: c for c in request.competitions}
-        self._cup_windows = resolved_cup_windows(request.cup_schedules)
-        self._european = request.european_commitments
+        self._commitments = request.commitments
         self._club_of = {team_id: team.club_id for team_id, team in request.world.teams.items()}
 
         # Pinned matches are tracked by list position, not by key: a key
@@ -612,15 +609,11 @@ class _MoveSet:
     # -- date admissibility ---------------------------------------------------
 
     def _date_ok(self, home: str, away: str, venue: str, competition_id: str, day: date) -> bool:
-        """Whether `day` clears the blackouts and the binding cup and European
-        dates of both teams."""
+        """Whether `day` clears the blackouts and the hard commitments of both
+        teams."""
         if not self._calendars[competition_id].is_allowed(day, venue):
             return False
-        return not any(
-            cup_conflict(self._cup_windows, team, day)
-            or european_conflict(self._european, team, day)
-            for team in (home, away)
-        )
+        return not (self._commitments.blocked(home, day) or self._commitments.blocked(away, day))
 
     def _neighbours_ok(self, index: int, day: date) -> bool:
         """Whether `day` leaves both teams their rest and double-books neither

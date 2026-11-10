@@ -11,8 +11,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from ..model.schema import Competition, FixedRequirement, FullRoundRequirement
-from ..rounds.cup_schedule import CupSchedule, resolved_cup_windows
-from ..rounds.european_schedule import EuropeanCommitmentDate
+from ..rounds.commitments import CommitmentSet, CommitmentSource
 from .base import Constraint, ConstraintResult, EvalContext, Event, ScheduleIndex
 
 
@@ -380,93 +379,45 @@ class OneMatchPerTeamPerDay:
         return ConstraintResult(self.id, "hard", penalty, count, events)
 
 
-@dataclass
-class CupRoundConflict:
-    """No league match too close to a team's resolved cup commitment.
+_CONFLICT_IDS = {"cup": "cup_round_conflict", "uefa": "european_commitment_conflict"}
 
-    Cup ties are not `Match` objects — real opponents are unknown — so the
-    (date, minimum) windows come from `resolved_cup_windows` rather than the
-    schedule index.
+
+@dataclass
+class CommitmentConflict:
+    """No league match too close to a team's hard commitment (#8).
+
+    One rule for both sources, split into two ids so the report names which
+    one a clash came from: `cup_round_conflict` for cup rounds and
+    `european_commitment_conflict` for UEFA legs. Cup ties are not `Match`
+    objects — real opponents are unknown — and a UEFA leg is one date rather
+    than a span, so a normal Thu-Sun-Thu week stays legal.
+
+    Only commitments the season's `contingency_policy` makes hard count;
+    `ContingentCommitmentConflict` scores the rest.
     """
 
-    cup_schedules: list[CupSchedule]
-    id: str = "cup_round_conflict"
+    commitments: CommitmentSet
+    source: CommitmentSource
+    id: str = ""
     kind: str = "hard"
     weight: float = 1.0
-    _windows_by_team: dict[str, list[tuple[date, int, str]]] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
-        cup_name_by_team_date = {
-            (team_id, day): schedule.competition_name
-            for schedule in self.cup_schedules
-            for placement in schedule.rounds
-            for team_id, day in placement.dates.items()
+        if not self.id:
+            self.id = _CONFLICT_IDS[self.source]
+        self._by_team = {
+            team_id: [c for c in self.commitments.hard_for(team_id) if c.source == self.source]
+            for team_id in self.commitments.team_ids
         }
-        for team_id, windows in resolved_cup_windows(self.cup_schedules).items():
-            self._windows_by_team[team_id] = [
-                (round_date, minimum, cup_name_by_team_date[(team_id, round_date)])
-                for round_date, minimum in windows
-            ]
 
     def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
         count = 0
         penalty = 0.0
         events: list[Event] = []
 
-        for team_id, windows in self._windows_by_team.items():
-            for match in index.by_team.get(team_id, ()):
-                for round_date, minimum, cup_name in windows:
-                    rest_days = abs((match.date - round_date).days) - 1
-                    if rest_days >= minimum:
-                        continue
-                    count += 1
-                    shortfall = minimum - rest_days
-                    penalty -= self.weight * shortfall
-                    if ctx.detail:
-                        events.append(
-                            Event(
-                                delta=-self.weight * shortfall,
-                                detail=(
-                                    f"{ctx.world.team_label(team_id)} plays {match.date} in "
-                                    f"{match.competition_id}, {rest_days} rest day(s) from "
-                                    f"{cup_name} on {round_date} — needs {minimum}"
-                                ),
-                                match_keys=(match.key,),
-                            )
-                        )
-
-        return ConstraintResult(self.id, "hard", penalty, count, events)
-
-
-@dataclass
-class EuropeanCommitmentConflict:
-    """No league match too close to a team's resolved European qualifying leg.
-
-    `CupRoundConflict`'s counterpart, reading from
-    `resolve_european_commitments`. Each commitment is one leg date rather
-    than a span covering a whole tie (#29), so a normal Thu-Sun-Thu European
-    week stays legal.
-
-    Only `commitment.binding` dates count (#93, #112): one reachable solely
-    via a mutually-exclusive cascade branch isn't a guaranteed fixture, so it
-    lands in `EuropeanCommitmentSoftConflict` as a penalty instead.
-    """
-
-    commitments_by_team: dict[str, list[EuropeanCommitmentDate]]
-    id: str = "european_commitment_conflict"
-    kind: str = "hard"
-    weight: float = 1.0
-
-    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
-        count = 0
-        penalty = 0.0
-        events: list[Event] = []
-
-        for team_id, commitments in self.commitments_by_team.items():
+        for team_id, commitments in self._by_team.items():
             for match in index.by_team.get(team_id, ()):
                 for commitment in commitments:
-                    if not commitment.binding:
-                        continue
                     rest_days = abs((match.date - commitment.date).days) - 1
                     if rest_days >= commitment.min_rest_days:
                         continue
@@ -595,8 +546,7 @@ __all__: list[str] = [
     "BlackoutDates",
     "ClubHomeClash",
     "Constraint",
-    "CupRoundConflict",
-    "EuropeanCommitmentConflict",
+    "CommitmentConflict",
     "FinalRoundSameSlot",
     "FixedDateRequirement",
     "FullRoundOnDate",

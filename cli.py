@@ -46,6 +46,7 @@ from terminliste.rounds.european_schedule import (  # noqa: E402
     EuropeanCascadeError,
     build_main_tournament_rounds_for_display,
     resolve_all_legs,
+    teams_reaching,
 )
 from terminliste.scoring.base import EvalContext, Score, evaluate  # noqa: E402
 from terminliste.scoring.registry import build_constraints  # noqa: E402
@@ -132,7 +133,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 print("     UEFA weeks:")
             for week in frame.uefa_weeks:
                 teams = ", ".join(
-                    world.team_label(t) + ("" if t in week.binding_teams else " (if reached)")
+                    world.team_label(t) + ("" if t in week.hard_teams else " (if reached)")
                     for t in week.teams
                 )
                 print(f"       {week.date} {week.weekday[:3]} {week.label}: {teams}")
@@ -188,10 +189,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
     frame, frame_warnings = _build_frame_or_exit(world, season)
-    cup_schedules, european_commitments = frame.cup_schedules, frame.european_commitments
-    constraints = build_constraints(
-        world, season, competitions, cup_schedules, european_commitments
-    )
+    cup_schedules, commitments = frame.cup_schedules, frame.commitments
+    constraints = build_constraints(world, season, competitions, commitments)
     travel = ApiTravelModel(world)
     ctx = EvalContext(world=world, season=season, travel=travel)
 
@@ -211,7 +210,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         season=season,
         competitions=competitions,
         cup_schedules=cup_schedules,
-        european_commitments=european_commitments,
+        commitments=commitments,
         frame=frame,
         slot_plans=slot_plans,
         constraints=constraints,
@@ -246,7 +245,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     html_path = out_dir / f"{season.id}.html"
     json_path = out_dir / f"{season.id}.json"
 
-    european_competitions, resolved_legs = _european_report_data(world, season)
+    european_competitions, resolved_legs = _european_report_data(world, season, frame)
     render_report(
         world,
         season,
@@ -270,10 +269,8 @@ def cmd_score(args: argparse.Namespace) -> int:
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
     frame, frame_warnings = _build_frame_or_exit(world, season)
-    cup_schedules, european_commitments = frame.cup_schedules, frame.european_commitments
-    constraints = build_constraints(
-        world, season, competitions, cup_schedules, european_commitments
-    )
+    cup_schedules, commitments = frame.cup_schedules, frame.commitments
+    constraints = build_constraints(world, season, competitions, commitments)
     travel = ApiTravelModel(world)
 
     try:
@@ -304,7 +301,7 @@ def cmd_score(args: argparse.Namespace) -> int:
         solver="external",
     )
     out_path = Path(args.out) if args.out else SCHEDULES_ROOT / f"{Path(args.schedule).stem}_scored.html"
-    european_competitions, resolved_legs = _european_report_data(world, season)
+    european_competitions, resolved_legs = _european_report_data(world, season, frame)
     render_report(
         world,
         season,
@@ -492,7 +489,7 @@ def _build_frame_or_exit(world, season):
         sys.exit(1)
 
 
-def _european_report_data(world, season):
+def _european_report_data(world, season, frame):
     """The season's European competitions with their rounds resolved to real
     leg dates — what `render_report` needs, as opposed to
     the frame's flattened commitment list, which is shaped
@@ -511,7 +508,7 @@ def _european_report_data(world, season):
     for competition in european_competitions:
         if competition.is_main_tournament:
             rounds, main_resolved_legs = build_main_tournament_rounds_for_display(
-                competition, european_competitions, blackouts
+                competition, teams_reaching(frame.uefa_trees.values(), competition.id), blackouts
             )
             competition = competition.model_copy(update={"european_rounds": rounds})
             resolved_legs.update(main_resolved_legs)
