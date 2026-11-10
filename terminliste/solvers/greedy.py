@@ -30,6 +30,7 @@ from ..rounds.cup_schedule import CupSchedule, cup_conflict, resolved_cup_window
 from ..rounds.european_schedule import EuropeanCommitmentDate, european_conflict
 from ..rounds.round_robin import generate_fixtures
 from ..slot_planner import SlotPlan, plan_slots
+from .base import round_for_date
 
 # Local-heuristic weights. Deliberately crude — the real scoring lives in
 # terminliste/scoring/, and these only have to rank candidate dates sensibly.
@@ -287,7 +288,7 @@ def resolve_round_pins(
         plan = next((p for p in planned if p.competition.id == requirement.competition), None)
         if plan is None or not plan.anchors:
             continue
-        round_index = _round_for_date(plan, requirement.date)
+        round_index = round_for_date(plan.slots, plan.anchors, requirement.date)
         _, warning = _clear_pin_date(
             requirement.date, plan, None, cup_windows, european_commitments, movable=False
         )
@@ -296,14 +297,6 @@ def resolve_round_pins(
             warnings.append(warning)
 
     return pins, warnings
-
-
-def _round_for_date(plan: PlannedCompetition, day: date) -> int:
-    """The round whose slot holds `day`, else the one whose anchor is nearest."""
-    for round_index, slot in plan.slots.items():
-        if slot.contains(day):
-            return round_index
-    return min(plan.anchors, key=lambda r: abs((plan.anchors[r] - day).days))
 
 
 def _clear_pin_date(
@@ -368,7 +361,7 @@ def align_home_teams_to_requirements(season: Season, planned: list[PlannedCompet
         if not requirement.hard or plan is None or not plan.anchors:
             continue
         required.setdefault(plan.competition.id, []).append(
-            (requirement.home_team, _round_for_date(plan, requirement.date))
+            (requirement.home_team, round_for_date(plan.slots, plan.anchors, requirement.date))
         )
 
     for competition_id, needs in required.items():
@@ -628,7 +621,7 @@ def pick_fixture_for_requirement(
     ]
     if not candidates:
         return None
-    round_index = _round_for_date(plan, target)
+    round_index = round_for_date(plan.slots, plan.anchors, target)
     in_round = [f for f in candidates if f.round_index == round_index]
     if in_round:
         return in_round[0]
