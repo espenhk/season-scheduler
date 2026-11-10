@@ -10,7 +10,7 @@ year: 2026
 # file carried a single hand-guessed `start: 2026-03-28` for both leagues,
 # which was simply wrong for either one.
 start: 2026-03-14
-end: 2026-12-06
+end: 2026-12-13
 
 competitions:
   - eliteserien_2026

@@ -49,7 +49,7 @@ teams:
 # start/end, so this is redundant in effect — set explicitly anyway so both
 # leagues' windows are spelled out here rather than one being implicit.
 start: 2026-03-14
-end: 2026-12-06
+end: 2026-12-13
 
 # Eliteserien wants the bulk of its matches on Sunday.
 preferred_weekday: sunday
