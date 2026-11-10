@@ -316,7 +316,7 @@ class ContingencyPlanner:
 
     def _plan_match(self, match, per_team, state: _PlanState) -> Fallback | None:
         competition = self._competitions.get(match.competition_id)
-        if competition is None or self._immovable(match):
+        if competition is None or self._immovable(match, competition):
             return None
         trigger_ids = tuple(sorted(n for nodes in per_team.values() for n in nodes))
         scenario = {
@@ -349,8 +349,11 @@ class ContingencyPlanner:
             from_date=match.date,
         )
 
-    def _immovable(self, match) -> bool:
-        """A match pinned to its date by a hard requirement."""
+    def _immovable(self, match, competition: Competition) -> bool:
+        """A match pinned to its date: a final-round match must keep the shared
+        final date, and a hard requirement fixes its own."""
+        if competition.format == "league" and match.round_index == competition.rounds - 1:
+            return True
         return (
             (match.competition_id, match.home_team, match.date) in self._fixed
             or (match.competition_id, match.date) in self._full_rounds

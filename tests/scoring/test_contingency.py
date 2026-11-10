@@ -406,3 +406,18 @@ def test_the_plan_serialises_for_the_json_output():
     assert payload["fallbacks"][0]["kind"] == "same_slot"
     assert payload["moves"][0]["trigger"] == commitment.node_id
     assert payload["moves"][0]["probability"] == 0.5
+
+
+def test_a_final_round_match_gets_no_fallback_so_coverage_fails():
+    commitment = _contingent("a", _TUESDAY)
+    world, league = _world()
+    season = f.season(competitions=["lg"])
+    planner = ContingencyPlanner(world, season, [league], f.commitment_set(commitment))
+    last = league.rounds - 1
+    matches = [_match("a", "b", _SUNDAY, round_index=last)]
+
+    plan = planner.plan(matches)
+    score = evaluate(matches, [ContingencyCoverage(planner=planner)], _ctx(world, season))
+
+    assert plan.fallbacks == {} and plan.uncovered == [matches[0].key]
+    assert score.hard_violations == 1
