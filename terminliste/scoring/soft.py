@@ -494,12 +494,7 @@ class GrassAwayRoundOne:
 
 @dataclass
 class GrassSeasonEdge:
-    """Penalise a grass-venue home match outside the window natural turf is
-    reliably playable, growing with each day past the cutoff.
-
-    Cutoffs move with latitude: further north the pitch thaws later in spring
-    and freezes earlier in autumn (#16).
-    """
+    """Penalise grass-venue home matches outside the playable window, with cutoffs shifted by latitude (#16)."""
 
     competitions: list[Competition]
     id: str = "grass_season_edge"

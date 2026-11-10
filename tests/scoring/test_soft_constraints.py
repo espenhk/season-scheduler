@@ -338,6 +338,15 @@ def test_grass_season_edge_cutoffs_shift_with_latitude():
     assert _edge_score(date(2026, 11, 1), lat=69.0).total < 0.0
 
 
+def test_grass_season_edge_cutoff_days_themselves_are_inside_the_window():
+    assert _edge_score(date(2026, 4, 15)).total == 0.0
+    assert _edge_score(date(2026, 11, 15)).total == 0.0
+
+
+def test_grass_season_edge_southern_venue_gets_a_later_autumn_cutoff():
+    assert _edge_score(date(2026, 11, 20), lat=58.0).total == 0.0
+
+
 def test_grass_season_edge_weight_is_per_competition():
     assert _edge_score(date(2026, 4, 1), weight=4.0).total == -8.0
 
