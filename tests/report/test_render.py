@@ -948,6 +948,6 @@ def test_render_report_lists_the_round_slots_and_search_space():
 
     assert "Round slots" in rendered
     assert f"{comp_m.rounds} rounds in {len(plans['elite'].candidates)} candidate slots" in rendered
-    assert "ways to pick the slots" in rendered
+    assert "ways to pick compatible slots" in rendered
     first = plans["elite"].chosen[0]
     assert f"default {first.default_day.strftime('%a %d %b')}" in rendered

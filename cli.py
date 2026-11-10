@@ -159,7 +159,10 @@ def _slot_kind_counts(plan: SlotPlan) -> str:
     counts: dict[str, int] = {}
     for slot in plan.candidates:
         counts[slot.kind] = counts.get(slot.kind, 0) + 1
-    return ", ".join(f"{n} {kind}" for kind, n in counts.items())
+    summary = ", ".join(f"{n} {kind}" for kind, n in counts.items())
+    if plan.overlapping:
+        summary += f"; {plan.overlapping} overlap a weekend"
+    return summary
 
 
 def _print_slot_plans(world, season, competitions, plans: dict[str, SlotPlan]) -> None:
@@ -175,7 +178,7 @@ def _print_slot_plans(world, season, competitions, plans: dict[str, SlotPlan]) -
         for line in slot_table_lines(plan, world.team_label):
             print(f"  {line}")
         print(
-            f"  Search space: {plan.combinations:,} ways to pick the slots; per-match dates "
+            f"  Search space: {plan.combinations:,} ways to pick compatible slots; per-match dates "
             f"~10^{search_space_log10(plan, competition, calendar):.0f} within "
             f"±{competition.match_window_days} days of each slot, "
             f"~10^{search_space_log10(plan, competition, calendar, within_slot=True):.0f} "

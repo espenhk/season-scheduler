@@ -42,6 +42,7 @@ class SlotPlan:
     candidates: list[RoundSlot]
     chosen: list[RoundSlot]
     warnings: list[str] = field(default_factory=list)
+    min_gap_days: int = 1
 
     @property
     def anchors(self) -> dict[int, date]:
@@ -55,9 +56,30 @@ class SlotPlan:
         return {i: s.clashing_teams for i, s in enumerate(self.chosen) if s.clashing_teams}
 
     @property
+    def overlapping(self) -> int:
+        """Holiday and midweek candidates sitting inside a weekend candidate."""
+        weekends = [s for s in self.candidates if s.kind == "weekend"]
+        return sum(
+            1
+            for s in self.candidates
+            if s.kind != "weekend" and any(w.start <= s.start <= w.end for w in weekends)
+        )
+
+    @property
     def combinations(self) -> int:
-        """Ways to choose `rounds` of the candidate slots, ignoring spacing."""
-        return math.comb(len(self.candidates), self.rounds)
+        """Ways to choose `rounds` mutually compatible slots, in date order."""
+        slots = self.candidates
+        ways = [1] * len(slots)
+        for _ in range(self.rounds - 1):
+            ways = [
+                sum(
+                    ways[i]
+                    for i in range(j)
+                    if slots_compatible(slots[i], slots[j], self.min_gap_days)
+                )
+                for j in range(len(slots))
+            ]
+        return sum(ways)
 
 
 def plan_slots(
@@ -131,7 +153,9 @@ def plan_league_slots(
             f"slots while covering the full-round requirement dates"
         )
 
-    plan = SlotPlan(competition.id, rounds, candidates, chosen)
+    plan = SlotPlan(
+        competition.id, rounds, candidates, chosen, min_gap_days=competition.min_gap_days
+    )
     for round_index, slot in plan.clashing_rounds.items():
         teams = ", ".join(world.team_label(t) for t in slot)
         plan.warnings.append(
