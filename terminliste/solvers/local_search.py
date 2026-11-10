@@ -562,6 +562,7 @@ class _MoveSet:
         self._calendars = calendars
         self._competitions = {c.id: c for c in request.competitions}
         self._commitments = request.commitments
+        self._replanning = request.replan is not None
         self._club_of = {team_id: team.club_id for team_id, team in request.world.teams.items()}
 
         # Pinned matches are tracked by list position, not by key: a key
@@ -602,8 +603,10 @@ class _MoveSet:
         roll = rng.random()
         if roll < 0.55:
             return self._shift_day(rng)
+        # A re-plan never reshuffles whole rounds: what cannot be fixed inside
+        # its slot stays a reported violation (#13).
         if roll < 0.75:
-            return self._swap_rounds(rng)
+            return None if self._replanning else self._swap_rounds(rng)
         if roll < 0.90:
             return self._flip_orientation(rng)
         return self._swap_teams(rng)
