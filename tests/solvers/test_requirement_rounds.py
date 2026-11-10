@@ -1,6 +1,6 @@
 """Round selection for fixed requirements, and the solvers' fallbacks around
 it: greedy and CP-SAT agree on which round a requirement belongs to, required
-teams are kept from meeting, and CP-SAT keeps a fully blocked slot's days."""
+teams are kept from meeting, and CP-SAT plays no round in a fully blocked slot."""
 
 from __future__ import annotations
 
@@ -112,27 +112,20 @@ def test_greedy_and_cpsat_pin_a_requirement_to_the_same_round(monkeypatch):
     assert pinned.round_index == greedy_pick.round_index
 
 
-def test_cpsat_keeps_a_fully_blocked_slot_so_the_scorer_can_report_it():
-    from ortools.sat.python import cp_model
-
+def test_cpsat_closes_a_fully_blocked_slot_and_plays_the_round_elsewhere():
     world, season, competition = _setup()
     plan = _planned(world, season, competition)[0]
-    blocked_days = plan.slots[3].days
+    blocked_days = set(plan.slots[3].days)
     blocked_season = f.season(
         competitions=["men"], start=season.start, end=season.end,
-        global_blackouts=[DatedNote(date=d, reason="blocked") for d in blocked_days],
-    )
-    request = _request(world, blocked_season, competition)
-
-    built = cpsat._build_model(
-        cp_model, request, [plan], build_calendar(world, blocked_season), [], {}
+        global_blackouts=[DatedNote(date=d, reason="blocked") for d in sorted(blocked_days)],
     )
 
-    assert built is not None
-    _model, placement, fixtures, _assumptions = built
-    for index, (fixture, _, _) in enumerate(fixtures):
-        if fixture.round_index == 3:
-            assert set(placement[index]) == set(blocked_days)
+    result = cpsat.CpSatScheduler().solve(_request(world, blocked_season, competition, time_budget_s=20.0))
+
+    assert result.candidates
+    candidate = result.candidates[0]
+    assert not any(m.date in blocked_days for m in candidate.matches)
 
 
 def _two_required_teams_meeting(plan):

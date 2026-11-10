@@ -219,6 +219,25 @@ def test_local_search_never_breaks_the_day_quota():
         assert "round_day_quota" in {r.constraint_id for r in candidate.score.hard_results()}
 
 
+def test_cpsat_never_breaks_the_day_quota():
+    pytest.importorskip("ortools")
+    from terminliste.solvers.cpsat import CpSatScheduler
+
+    quota = {"friday": 0, "saturday": 1, "sunday": 2, "monday": 1}
+    world, league = _league(n_teams=8, rounds_per_pairing=1, day_quota=quota)
+    season = _season(end=date(2026, 9, 30))
+
+    result = CpSatScheduler().solve(_request(world, season, league))
+
+    assert result.candidates
+    for candidate in result.candidates:
+        for round_index, counts in _week_counts(candidate.matches).items():
+            if round_index in league.day_quota_exempt_rounds:
+                continue
+            for weekday, limit in quota.items():
+                assert counts[weekday] <= limit, (round_index, weekday, counts)
+
+
 # -- schema and loader checks ---------------------------------------------------
 
 
