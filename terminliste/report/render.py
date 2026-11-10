@@ -211,10 +211,6 @@ def _slot_views(world: World, season: Season, result: SolverResult) -> list[dict
                 "overlapping": plan.overlapping,
                 "combinations": plan.combinations,
                 "dates_log10": search_space_log10(plan, competition, league_calendar),
-                "dates_in_slot_log10": search_space_log10(
-                    plan, competition, league_calendar, within_slot=True
-                ),
-                "window_days": competition.match_window_days,
                 "rows": [
                     {
                         "round": round_index,

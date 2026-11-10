@@ -248,8 +248,9 @@ match to another day of its slot, swap two rounds' slots within a leg, flip a
 mirrored home/away pair, and swap two teams' labels. Proposals that would put a
 team on a blackout, cup or UEFA date, or break rest, are dropped before the
 scorer runs. CP-SAT's candidate dates per fixture are the slot's allowed days.
-`match_window_days` is no longer read by the solvers. A hard fixed requirement
-dated outside every slot is the one exception, and is reported as a warning.
+Solvers place matches only on their slot's days; `match_window_days` does not
+widen the search. A hard fixed requirement dated outside every slot is the one
+exception, and is reported as a warning.
 
 ### European qualifying cascade
 

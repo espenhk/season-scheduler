@@ -34,6 +34,7 @@ from .base import (
     SolveRequest,
     SolverResult,
     resolve_slot_plans,
+    round_for_date,
     select_diverse,
 )
 from .greedy import (
@@ -303,15 +304,15 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
                 # assumption literal — `AddExactlyOne` has nothing else to pick.
                 window = [pin_date]
             else:
+                slot_days = list(plan.slots[fixture.round_index].days)
                 window = _commitment_clear(
-                    [
-                        day
-                        for day in plan.slots[fixture.round_index].days
-                        if competition_calendar.is_allowed(day, venue)
-                    ],
+                    [day for day in slot_days if competition_calendar.is_allowed(day, venue)],
                     fixture,
                     commitments,
                 )
+                # A fully blocked slot keeps its days so the scorer reports the
+                # violation, as the greedy and local backends do.
+                window = window or slot_days
                 extra = required_dates.get(_fixture_id(fixture))
                 if extra is not None:
                     window = sorted(set(window) | {extra})
@@ -350,7 +351,11 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
             if requirement.date not in placement[index]:
                 continue
             plan = next(p for p in planned if p.competition.id == competition.id)
-            gap = abs((plan.anchors[fixture.round_index] - requirement.date).days)
+            gap = (
+                fixture.round_index
+                != round_for_date(plan.slots, plan.anchors, requirement.date),
+                abs((plan.anchors[fixture.round_index] - requirement.date).days),
+            )
             if best_gap is None or gap < best_gap:
                 best_index, best_gap = index, gap
         if best_index is not None:
@@ -381,10 +386,8 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
     # relaxing `min_rest_days` can never reach it. A team playing twice in
     # one day is the same category as a double-booked venue or an
     # out-of-order return leg: an impossibility, not the survivable
-    # inconvenience short rest is (review of issue #95's PR: relaxing the
-    # shared window this used to live in as the `offset == 0` slice let
-    # CP-SAT schedule a team home in one city and away in another hours
-    # later on the same date).
+    # inconvenience short rest is, so relaxing rest must never let a team
+    # play in two cities on one date (#95).
     day_literal = assume("one_match_per_team_per_day")
     for vars_ in team_on_date.values():
         if len(vars_) > 1:

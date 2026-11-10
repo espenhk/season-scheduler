@@ -181,7 +181,7 @@ def _print_slot_plans(world, season, competitions, plans: dict[str, SlotPlan]) -
             print(f"  {line}")
         print(
             f"  Search space: {plan.combinations:,} ways to pick compatible slots; per-match dates "
-            f"~10^{search_space_log10(plan, competition, calendar, within_slot=True):.0f} "
+            f"~10^{search_space_log10(plan, competition, calendar):.0f} "
             f"within the slots' own days"
         )
         for warning in plan.warnings:
