@@ -396,22 +396,13 @@ def search_space_log10(
     plan: SlotPlan,
     competition: Competition,
     calendar: SeasonCalendar,
-    within_slot: bool = False,
 ) -> float:
-    """log10 of the per-match date combinations once rounds sit in slots.
-
-    By default each match is free within `match_window_days` of its round's
-    default day, as the solvers search today; `within_slot` counts only the
-    days of the slot itself.
-    """
+    """log10 of the per-match date combinations: each match picks one day of
+    its round's slot."""
     total = 0.0
     matches_per_round = len(competition.teams) // 2
     for slot in plan.chosen:
-        if within_slot:
-            choices = len(slot.days)
-        else:
-            choices = len(calendar.window(slot.default_day, competition.match_window_days))
-        total += matches_per_round * math.log10(max(1, choices))
+        total += matches_per_round * math.log10(max(1, len(slot.days)))
     return total
 
 

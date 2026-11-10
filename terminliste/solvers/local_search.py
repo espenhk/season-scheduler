@@ -545,7 +545,7 @@ class _MoveSet:
 
     Every operator proposes only dates inside the match's round slot and
     drops a proposal that would put a team on a blackout, cup or European
-    date, so the full scorer is spent on moves that can be viable (#7).
+    date, so the full scorer only sees moves that can be viable (#7).
     """
 
     def __init__(
@@ -654,6 +654,8 @@ class _MoveSet:
         for i, other in enumerate(self._matches):
             if i == index:
                 continue
+            # Matches far enough apart for both rests cannot conflict; a nearer
+            # one conflicts if it shares a team, or a venue/club on the same day.
             delta = abs((other.date - day).days)
             if delta >= own_gap and delta >= self._gap_of(other):
                 continue
