@@ -36,11 +36,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: venv-fs-${{ runner.os }}-py3.11-${{ hashFiles('poetry.lock') }}
+          key: venv-fs-cpsat-${{ runner.os }}-py3.11-${{ hashFiles('poetry.lock') }}
 
-      # The optional football-scheduler-cpsat group is left out; cpsat tests skip without ortools.
+      # OR-Tools is installed so the CP-SAT tests run instead of skipping.
       - name: Install dependencies
-        run: poetry install --only football-scheduler,football-scheduler-test
+        run: poetry install --only football-scheduler,football-scheduler-test,football-scheduler-cpsat
 
       - name: Run tests
         env:
