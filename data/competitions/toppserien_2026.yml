@@ -16,6 +16,28 @@ movable: true
 # home and once away.
 rounds_per_pairing: 2
 
+# Format confirmed 2026-11-10 against the league's and clubs' own pages: 12
+# teams, a plain double round-robin of 22 rounds with no split, and a
+# qualifier for 10th place against the second-division play-off winner. The
+# 15 and 22 November dates are from Wikipedia's qualifier page; the Stabaek
+# page only confirms that the qualifier ends 22 November.
+format_source: "https://toppserien.no/nyheter/slik-spilles-toppserien-2026 ; https://www.stabak.no/nyheter/2510-termin-2026 ; https://no.wikipedia.org/wiki/Kvalifisering_til_Toppserien_i_fotball_for_kvinner_2027"
+phases:
+  - {kind: regular, rounds: 22, label: "Serierunder"}
+playoff_rounds:
+  - id: coop_ligaen_playoff
+    kind: promotion_playoff
+    label: "COOP-ligaen play-off (3rd v 4th, two legs)"
+    # Unconfirmed: no NFF or league page found for these two dates.
+    dates: [2026-10-31, 2026-11-07]
+    reserves_league: false
+    source: "https://no.wikipedia.org/wiki/Kvalifisering_til_Toppserien_i_fotball_for_kvinner_2027"
+  - id: toppserien_qualifier
+    kind: relegation_playoff
+    label: "Toppserien qualifier (10th v play-off winner, two legs)"
+    dates: [2026-11-15, 2026-11-22]
+    source: "https://www.stabak.no/nyheter/2510-termin-2026 ; https://no.wikipedia.org/wiki/Kvalifisering_til_Toppserien_i_fotball_for_kvinner_2027"
+
 # 12 teams -> 11 rounds per leg -> 22 rounds, 132 matches.
 team_count: 12
 teams:
@@ -32,9 +54,10 @@ teams:
   - stabak_w
   - valerenga_w
 
-# The real 2026 Toppserien window (verified 2026-08-16 via web search —
-# multiple sources agree on 20 March kickoff and 7 November final round,
-# excluding playoffs). Ends almost a month before Eliteserien/the season's
+# The real 2026 Toppserien window: round 1 is Saturday 21 March, but its
+# Bodø/Glimt v Hønefoss match was brought forward to Friday 20 March
+# (toppserien.no "Slik spilles Toppserien 2026"); final round 7 November,
+# excluding playoffs. Ends almost a month before Eliteserien/the season's
 # outer envelope; 22 rounds fit that window comfortably. See
 # `terminliste/model/loader.py::_validate_calendar_capacity` for the check
 # that enforces this.

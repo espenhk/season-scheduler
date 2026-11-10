@@ -177,7 +177,7 @@ def resolve_slot_plans(request: SolveRequest, calendar: SeasonCalendar) -> dict[
     if request.slot_plans is not None:
         return request.slot_plans
     frame = request.frame or SeasonFrame.from_resolved(
-        request.world, request.cup_schedules, request.european_commitments
+        request.world, request.cup_schedules, request.european_commitments, request.competitions
     )
     return plan_slots(request.world, request.season, request.competitions, calendar, frame)
 
