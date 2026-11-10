@@ -17,6 +17,7 @@ from pathlib import Path
 
 import yaml
 
+from .calendar import build_calendar, calendars_by_competition
 from .schema import (
     NORWAY_LAT_RANGE,
     NORWAY_LON_RANGE,
@@ -30,6 +31,7 @@ from .schema import (
     TravelOverride,
     Venue,
 )
+from .slots import candidate_slots, max_compatible_slots
 
 
 class DataError(Exception):
@@ -776,10 +778,6 @@ def _validate_rivalry_fixtures(world: World, season: Season) -> list[str]:
 def _validate_calendar_capacity(world: World, season: Season) -> list[str]:
     """Catch a league with fewer usable round slots than rounds. Cup weekends
     need the resolved cups, so `cli.py validate` checks those via the planner."""
-    # Local imports: the calendar and slot modules import this one.
-    from .calendar import build_calendar, calendars_by_competition
-    from .slots import candidate_slots, max_compatible_slots
-
     errors: list[str] = []
     calendar = build_calendar(world, season)
     for competition_id in season.competitions:

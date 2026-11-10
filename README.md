@@ -436,9 +436,9 @@ remain called out in the score breakdown, rather than one of them refusing
 to answer at all. Widening a league's `match_window_days` only for teams with
 active European commitments was considered as a more surgical alternative
 but not pursued — the setting is per league, so it would need per-team
-scheduling flexibility the model doesn't have anywhere else, for a conflict that's a real, once-in-a-while
-calendar squeeze rather than a recurring modelling gap worth that extra
-machinery.
+scheduling flexibility the model doesn't have anywhere else, for a conflict
+that's a real, once-in-a-while calendar squeeze rather than a recurring
+modelling gap worth that extra machinery.
 
 `resolve_main_tournament_commitments` (`rounds/european_schedule.py`)
 resolves each main tournament's own dates once — no branching to walk, since

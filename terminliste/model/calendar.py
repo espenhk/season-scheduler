@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from .loader import World
 from .schema import WEEKDAYS, Competition, Season
 
 
@@ -120,7 +119,8 @@ def _outward_offsets(days: int) -> list[int]:
     return offsets
 
 
-def build_calendar(world: World, season: Season) -> SeasonCalendar:
+def build_calendar(world: object, season: Season) -> SeasonCalendar:
+    # `world` is unused; typed `object` because importing World would cycle with the loader.
     all_dates = _date_range(season.start, season.end)
     blackouts = set(season.blacked_out_dates)
     # Belt and braces: the loader already rejects a hard requirement whose
