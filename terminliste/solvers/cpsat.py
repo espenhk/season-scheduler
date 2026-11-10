@@ -283,15 +283,22 @@ class CpSatScheduler:
         previous_dates: list[dict[str, date]] = []
         season_deadline = started + request.time_budget_s
 
+        learned: list[tuple[_LevelOneSolution, list | None]] = []
         for pass_index in range(request.top_n):
             # Time an earlier pass left over goes to the later ones.
             now = time.perf_counter()
             deadline = now + (season_deadline - now) / (request.top_n - pass_index)
+            known_conflicts = len(learned)
             outcome = _run_pass(
-                cp_model, problem, previous, previous_dates, pass_index, deadline, stats, notes
+                cp_model, problem, previous, previous_dates, pass_index, deadline, stats, notes,
+                learned,
             )
             if outcome is None:
-                break
+                # With nothing found yet, a later pass resumes from the conflicts this
+                # one learned instead of giving up on the rest of the budget.
+                if candidates or len(learned) == known_conflicts:
+                    break
+                continue
             level_one, matches, plans = outcome
             matches.sort(key=lambda m: (m.date, m.competition_id, m.home_team))
             matches = assign_kickoff_times(
@@ -342,16 +349,20 @@ class CpSatScheduler:
 # -- one pass ----------------------------------------------------------------
 
 
-def _run_pass(cp_model, problem, previous, previous_dates, pass_index, deadline, stats, notes):
+def _run_pass(
+    cp_model, problem, previous, previous_dates, pass_index, deadline, stats, notes, learned
+):
     """Level 1, then Level 2, re-solving Level 1 when Level 2 is proven infeasible.
 
     Returns `(level_one_solution, matches, slot_plans)`, or `None` when the
     pass found nothing (the reason is appended to `notes`). Retry diagnostics
-    reach `stats` only when the pass ends without a schedule.
+    reach `stats` only when the pass ends without a schedule. Level 1 choices
+    Level 2 rejected go into `learned`, shared by every pass, since a conflict
+    stays a conflict whatever the diversity cuts.
     """
     request = problem.request
     cuts: list[_LevelOneSolution] = list(previous)
-    tried: list[_LevelOneSolution] = []
+    tried = learned
     failed_culprits: list[list[str]] = []
 
     def give_up_on_level_two() -> None:
@@ -402,7 +413,7 @@ def _run_pass(cp_model, problem, previous, previous_dates, pass_index, deadline,
         remaining = deadline - time.perf_counter()
         placed, domain_error = _place(problem, solution)
         if domain_error:
-            tried.append(solution)
+            tried.append((solution, None))
             failed_culprits.append(["no_day_for_fixture"])
             continue
 
@@ -452,7 +463,9 @@ def _run_pass(cp_model, problem, previous, previous_dates, pass_index, deadline,
         failed_culprits.append(
             _culprits(two, status2, built.assumptions, cp_model) or [two.StatusName(status2)]
         )
-        tried.append(solution)
+        tried.append(
+            (solution, _conflicting_rounds(cp_model, problem, placed, previous_dates, deadline))
+        )
 
     if failed_culprits:
         give_up_on_level_two()
@@ -706,8 +719,25 @@ def _build_level_one(cp_model, problem: _Problem, cuts, tried) -> _LevelOne:
             x[(c, r, s)] for (c, r), s in earlier.slot_of.items() if (c, r, s) in x
         ]
         model.Add(sum(same) <= int(total_rounds * _SLOT_REUSE_SHARE))
-    for failed in tried:
-        same = [x[(c, r, s)] for (c, r), s in failed.slot_of.items() if (c, r, s) in x]
+    for failed, rounds in tried:
+        if rounds is None:
+            same = [x[(c, r, s)] for (c, r), s in failed.slot_of.items() if (c, r, s) in x]
+        else:
+            # Only the rounds Level 2 could not fit together, with their home/away
+            # choices, so the next Level 1 solution can't repeat the same conflict.
+            same = [
+                x[(c, r, failed.slot_of[(c, r)])]
+                for c, r in rounds
+                if (c, r, failed.slot_of[(c, r)]) in x
+            ]
+            pairs = {
+                (lg.id, frozenset((fx.home_team, fx.away_team)))
+                for lg in problem.leagues
+                for c, r in rounds
+                if c == lg.id
+                for fx in lg.round_fixtures[r]
+            }
+            same += [orient[key].Not() if failed.flipped[key] else orient[key] for key in pairs]
         model.Add(sum(same) <= len(same) - 1)
 
     model.Maximize(sum(coefficient * var for coefficient, var in terms))
@@ -744,6 +774,26 @@ def _league_of(problem: _Problem, team_id: str) -> _League | None:
 def _can_be_adjacent(first: RoundSlot, second: RoundSlot) -> bool:
     """Whether some day of each lands on consecutive calendar days."""
     return any(abs((a - b).days) == 1 for a in first.days for b in second.days)
+
+
+def _conflicting_rounds(cp_model, problem: _Problem, placed, previous_dates, deadline):
+    """A minimal set of `(league, round)` whose placed fixtures Level 2 still
+    cannot fit, found by dropping rounds one at a time; None if time runs out."""
+    keep = sorted({(p.fixture.competition_id, p.fixture.round_index) for p in placed})
+    for key in list(keep):
+        if deadline - time.perf_counter() <= 1.0:
+            return None
+        trial = [k for k in keep if k != key]
+        subset = [p for p in placed if (p.fixture.competition_id, p.fixture.round_index) in trial]
+        if not subset:
+            continue
+        built = _build_level_two(cp_model, problem, subset, previous_dates, relax=False)
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = 0.5
+        solver.parameters.num_search_workers = 8
+        if solver.Solve(built.model) == cp_model.INFEASIBLE:
+            keep = trial
+    return keep
 
 
 def _read_level_one(solver, level_one: _LevelOne, problem: _Problem) -> _LevelOneSolution:
