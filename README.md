@@ -188,7 +188,10 @@ one and warns rather than failing. Each resolved date becomes a `CupDay` in
 the season frame (`terminliste/frame.py`): `cup_week` when midweek,
 `cup_weekend` when it falls Fri-Mon, queryable per gender, competition and
 team. `validate` warns when a forced date sits in a UEFA week. League anchors
-don't yet skip `cup_weekend` dates; that comes with slot planning. See
+don't yet skip `cup_weekend` dates; that comes with slot planning. A cup
+sets `solver_commitments: false` to stay in the frame and report without
+binding the scorer or solvers (the spring 2026 cups, whose rounds assume every
+club survives); `match_window_days` is league-only and rejected on a cup. See
 `data/competitions/cup_men_2027.yml` and `cup_women_2027.yml` for the
 2026-27 Norwegian Cup, and `cup_men_2026.yml` / `cup_women_2026.yml` for the
 spring 2026 rounds of the previous edition.
@@ -398,10 +401,10 @@ hard requirements no retry relaxes. This mirrors local search, which was
 never all-or-nothing about hard rules to begin with: both backends now
 publish their best-effort schedule with whatever hard-rule violations
 remain called out in the score breakdown, rather than one of them refusing
-to answer at all. Loosening `match_window_days` specifically for teams with
+to answer at all. Widening a league's `match_window_days` only for teams with
 active European commitments was considered as a more surgical alternative
-but not pursued — it would need per-team scheduling flexibility the model
-doesn't have anywhere else, for a conflict that's a real, once-in-a-while
+but not pursued — the setting is per league, so it would need per-team
+scheduling flexibility the model doesn't have anywhere else, for a conflict that's a real, once-in-a-while
 calendar squeeze rather than a recurring modelling gap worth that extra
 machinery.
 
