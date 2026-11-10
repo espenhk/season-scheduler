@@ -99,6 +99,10 @@ def competition(
     final_round_kickoff_time: str = "18:00",
     kickoff_slots: list[str] | None = None,
     tv_time_spread: TvTimeSpread | None = None,
+    phases: list | None = None,
+    playoff_rounds: list | None = None,
+    fixed_round_dates: list | None = None,
+    day_quota: dict | None = None,
     color: str | None = _AUTO_COLOR,  # type: ignore[assignment]
     short_name: str | None = _AUTO_SHORT_NAME,  # type: ignore[assignment]
 ) -> Competition:
@@ -131,6 +135,10 @@ def competition(
         final_round_kickoff_time=final_round_kickoff_time,
         kickoff_slots=kickoff_slots or ["14:00", "18:00", "20:00"],
         tv_time_spread=tv_time_spread,
+        phases=phases or [],
+        playoff_rounds=playoff_rounds or [],
+        fixed_round_dates=fixed_round_dates or [],
+        day_quota=day_quota or {},
         # Derived from `id` so several colourless competitions in one test
         # world still get distinct colours and pass
         # `_validate_competition_colors` (#77).
