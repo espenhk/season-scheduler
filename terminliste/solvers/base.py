@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Protocol
 
 from ..contingency import ContingencyPlan, ContingencyPlanner
@@ -35,6 +36,16 @@ DIVERSITY_THRESHOLD = 0.15
 # arrangement was the common case.
 _DIFFICULTY_HARD = 0.05
 _DIFFICULTY_EASY = 0.50
+
+
+def round_for_date(
+    slots: dict[int, RoundSlot], anchors: dict[int, date], day: date
+) -> int:
+    """The round whose slot holds `day`, else the one whose anchor is nearest."""
+    for round_index, slot in slots.items():
+        if slot.contains(day):
+            return round_index
+    return min(anchors, key=lambda r: abs((anchors[r] - day).days))
 
 
 @dataclass
@@ -156,6 +167,10 @@ class SolveRequest:
     # solver rebuilds the frame from the cups and commitments above.
     frame: SeasonFrame | None = None
     slot_plans: dict[str, SlotPlan] | None = None
+    # CP-SAT only: when Level 2 (match days) is infeasible, retry with
+    # `min_rest_days` as a penalty and say so in the result's notes. Level 1's
+    # minimum gap between consecutive rounds' slots is never relaxed.
+    relax_min_rest: bool = False
     # Called periodically with a running `SearchStats` snapshot so the CLI can
     # print live progress. `None` means don't bother.
     progress: Callable[[ProgressUpdate], None] | None = None
