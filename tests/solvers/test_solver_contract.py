@@ -28,7 +28,7 @@ except ImportError:
     HAS_ORTOOLS = False
 
 
-def _small_world():
+def _small_world(min_rest_days: int = 3):
     venues = [f.venue(f"v{i}", lat=59.0 + i * 0.3, lon=10.0 + i * 0.3) for i in range(7)]
     men_teams = [f.team(f"m{i}", f"club{i}", f"v{i % 7}", gender="men") for i in range(8)]
     women_teams = [f.team(f"w{i}", f"club{i}", f"v{i % 7}", gender="women") for i in range(6)]
@@ -40,7 +40,8 @@ def _small_world():
         clubs.append(f.club(f"club{i}", [men_teams[i]]))
 
     comp_m = f.competition(
-        "men", [t.id for t in men_teams], gender="men", preferred_weekday="sunday", min_rest_days=3
+        "men", [t.id for t in men_teams], gender="men", preferred_weekday="sunday",
+        min_rest_days=min_rest_days,
     )
     comp_w = f.competition(
         "women", [t.id for t in women_teams], gender="women", preferred_weekday="saturday", min_rest_days=3
@@ -393,21 +394,58 @@ def _all_dates(start, end):
 
 
 @pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
-def test_cpsat_relaxes_min_rest_days_rather_than_reporting_zero_candidates():
-    """Issue #95: CP-SAT's real-2026-data failure was `min_rest_days` alone
-    making the whole assumption-literal model infeasible, so the backend gave
-    up with zero candidates instead of a best-effort schedule — unlike local
-    search, which always returns *something* even when it can't clear every
-    hard rule. Two fixed requirements pin the same team's home fixtures 2
-    days apart (`min_rest_days=3` needs 4), a conflict nothing but relaxing
-    `min_rest_days` can resolve — see the FixedRequirement docstring for why
-    a hard requirement forces its fixture's date outright."""
+def test_cpsat_never_relaxes_min_rest_days_unless_asked():
+    """Two hard requirements put one team at home on Mon 16 and Fri 20 March,
+    a day short of the four rest days its league needs. The strict model says
+    so rather than quietly trading the rule away; `relax_min_rest` is the
+    explicit, loudly reported way to get a schedule anyway."""
+    from terminliste.model.schema import FixedRequirement
+
+    world, season, competitions = _small_world(min_rest_days=4)
+    reqs = [
+        FixedRequirement(id="r1", date=date(2026, 3, 16), home_team="m0", competition="men"),
+        FixedRequirement(id="r2", date=date(2026, 3, 20), home_team="m0", competition="men"),
+    ]
+    season = f.season(
+        competitions=season.competitions, start=season.start, end=season.end,
+        fixed_requirements=reqs,
+    )
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+
+    def solve(relax):
+        request = SolveRequest(
+            world=world, season=season, competitions=competitions, constraints=constraints,
+            ctx=ctx, seed=1, top_n=1, time_budget_s=15.0, relax_min_rest=relax,
+        )
+        return _get_scheduler("cpsat").solve(request)
+
+    strict = solve(False)
+    assert strict.best is None
+    assert strict.notes
+    assert not any("RELAXED" in note for note in strict.notes)
+
+    relaxed = solve(True)
+    assert relaxed.best is not None, relaxed.notes
+    assert any("min_rest_days RELAXED" in note for note in relaxed.notes)
+    assert not relaxed.best.score.feasible
+    violated = [r.constraint_id for r in relaxed.best.score.hard_results() if r.count]
+    assert violated == ["min_rest_days"]
+    stats = relaxed.search_stats
+    assert stats.feasible + stats.hard_violation_scenarios == stats.investigated
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_does_not_hide_an_unrelated_impossibility_behind_the_rest_relaxation():
+    """Two teams sharing a venue forced onto the same home date is a venue
+    double-booking no rest-day relaxation can fix, even when asked to."""
     from terminliste.model.schema import FixedRequirement
 
     world, season, competitions = _small_world()
+    # m0 and m7 share venue v0 (`v{i % 7}`).
     reqs = [
-        FixedRequirement(id="r1", date=date(2026, 3, 18), home_team="m0", competition="men"),
-        FixedRequirement(id="r2", date=date(2026, 3, 20), home_team="m0", competition="men"),
+        FixedRequirement(id="r1", date=date(2026, 3, 14), home_team="m0", competition="men"),
+        FixedRequirement(id="r2", date=date(2026, 3, 14), home_team="m7", competition="men"),
     ]
     season = f.season(
         competitions=season.competitions, start=season.start, end=season.end,
@@ -417,39 +455,23 @@ def test_cpsat_relaxes_min_rest_days_rather_than_reporting_zero_candidates():
     ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
     request = SolveRequest(
         world=world, season=season, competitions=competitions, constraints=constraints,
-        ctx=ctx, seed=1, top_n=1, time_budget_s=15.0,
+        ctx=ctx, seed=1, top_n=1, time_budget_s=15.0, relax_min_rest=True,
     )
     result = _get_scheduler("cpsat").solve(request)
 
-    assert result.best is not None, result.notes
-    assert any("min_rest_days relaxed" in note for note in result.notes)
-    assert not result.best.score.feasible
-    violated = [r.constraint_id for r in result.best.score.hard_results() if r.count]
-    assert violated == ["min_rest_days"]
-    stats = result.search_stats
-    assert stats.feasible + stats.hard_violation_scenarios == stats.investigated
-    # A rescued pass reports only what the scorer found genuinely broken —
-    # not the discarded first attempt's culprits, which name whatever
-    # `SufficientAssumptionsForInfeasibility` echoed back rather than the
-    # real conflict (the fixed requirements above are a red herring here).
-    assert not any(k.startswith("fixed_requirement:") for k in stats.hard_violation_counts)
+    assert result.best is None
+    assert result.notes
+    assert not any("RELAXED" in note for note in result.notes)
 
 
 @pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
-def test_cpsat_still_reports_zero_candidates_when_relaxing_min_rest_days_is_not_enough():
-    """The counterpart to the test above: a conflict `min_rest_days` isn't
-    party to at all (two teams sharing a venue forced onto the same home
-    date) must still fail the way it always has, not silently mask an
-    unrelated impossibility behind the new relaxation retry."""
+def test_cpsat_names_the_requirement_when_its_date_lies_in_no_slot():
+    """Wed 18 March is in no weekend slot of the small world, so the Level 1
+    culprit report names the requirement rather than relaxing anything."""
     from terminliste.model.schema import FixedRequirement
 
     world, season, competitions = _small_world()
-    # m0 and m7 share venue v0 (`v{i % 7}`) — forcing both home on one date
-    # is a venue double-booking no rest-day relaxation can fix.
-    reqs = [
-        FixedRequirement(id="r1", date=date(2026, 3, 18), home_team="m0", competition="men"),
-        FixedRequirement(id="r2", date=date(2026, 3, 18), home_team="m7", competition="men"),
-    ]
+    reqs = [FixedRequirement(id="midweek", date=date(2026, 3, 18), home_team="m0", competition="men")]
     season = f.season(
         competitions=season.competitions, start=season.start, end=season.end,
         fixed_requirements=reqs,
@@ -463,8 +485,190 @@ def test_cpsat_still_reports_zero_candidates_when_relaxing_min_rest_days_is_not_
     result = _get_scheduler("cpsat").solve(request)
 
     assert result.best is None
-    assert result.notes
-    assert not any("min_rest_days relaxed" in note for note in result.notes)
+    assert any("fixed_requirement:midweek" in note for note in result.notes)
+    assert result.search_stats.hard_violation_counts["fixed_requirement:midweek"] >= 1
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_names_the_frame_entry_that_closes_every_slot():
+    """A binding European date whose rest window outlasts the season closes
+    every slot to its team; the report names the team and the commitment."""
+    from terminliste.rounds.european_schedule import EuropeanCommitmentDate
+
+    world, season, competitions = _small_world()
+    commitments = {
+        "m0": [
+            EuropeanCommitmentDate(
+                team_id="m0", date=date(2026, 6, 1), min_rest_days=400,
+                label="Test qualifier", competition_id="uefa",
+            )
+        ]
+    }
+    constraints = build_constraints(world, season, competitions, [], commitments)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=1, top_n=1, time_budget_s=15.0, european_commitments=commitments,
+    )
+    result = _get_scheduler("cpsat").solve(request)
+
+    assert result.best is None
+    text = " ".join(result.notes)
+    assert "closed" in text
+    assert "Test qualifier" in text
+    assert "european_commitment_conflict" in text
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_reports_model_sizes_and_orients_pairings_itself():
+    world, season, competitions = _small_world()
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=1, top_n=1, time_budget_s=10.0,
+    )
+    result = _get_scheduler("cpsat").solve(request)
+
+    assert any("level 1" in n and "variables" in n for n in result.notes)
+    assert any("level 2" in n and "variables" in n for n in result.notes)
+    assert result.best is not None and result.best.score.feasible
+    assert set(result.slot_plans) == {"men", "women"}
+
+
+def _cpsat_request(top_n=1, budget=20.0, season=None):
+    world, base_season, competitions = _small_world()
+    season = season or base_season
+    constraints = build_constraints(world, season, competitions)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    return SolveRequest(
+        world=world, season=season, competitions=competitions, constraints=constraints,
+        ctx=ctx, seed=1, top_n=top_n, time_budget_s=budget,
+    )
+
+
+class _Stub:
+    """Stands in for a CpSolver that ended with `status` and no solution."""
+
+    def __init__(self, status, name):
+        self.parameters = type("P", (), {})()
+        self._status, self._name = status, name
+
+    def Solve(self, model):
+        return self._status
+
+    def StatusName(self, status):
+        return self._name
+
+    def SufficientAssumptionsForInfeasibility(self):
+        return []
+
+
+def _fail_level_two(monkeypatch, statuses):
+    """Make the first level 2 solves end as `statuses` (cp_model status, name) in turn."""
+    from ortools.sat.python import cp_model
+
+    real = cp_model.CpSolver
+    calls = {"n": 0}
+    queue = list(statuses)
+
+    def factory():
+        calls["n"] += 1
+        # Level 1 and level 2 solvers alternate; only level 2 (even calls) is stubbed.
+        if calls["n"] % 2 == 0 and queue:
+            status, name = queue.pop(0)
+            return _Stub(status, name)
+        return real()
+
+    monkeypatch.setattr(cp_model, "CpSolver", factory)
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_re_solves_level_one_when_level_two_is_proven_infeasible(monkeypatch):
+    from ortools.sat.python import cp_model
+
+    _fail_level_two(monkeypatch, [(cp_model.INFEASIBLE, "INFEASIBLE")])
+    result = _get_scheduler("cpsat").solve(_cpsat_request())
+
+    assert result.best is not None and result.best.score.feasible
+    assert any("rejected by level 2" in n for n in result.notes), result.notes
+    stats = result.search_stats
+    assert stats.investigated == 1
+    assert stats.hard_violation_scenarios == 0
+    assert not stats.hard_violation_counts
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_reports_a_level_two_timeout_as_a_timeout(monkeypatch):
+    from ortools.sat.python import cp_model
+
+    _fail_level_two(monkeypatch, [(cp_model.UNKNOWN, "UNKNOWN")])
+    result = _get_scheduler("cpsat").solve(_cpsat_request())
+
+    assert result.best is None
+    assert any("level 2 timed out" in n for n in result.notes), result.notes
+    assert not any("no slot choice admitted" in n for n in result.notes)
+    stats = result.search_stats
+    assert stats.hard_violation_scenarios == 0
+    assert not stats.hard_violation_counts
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_later_options_use_different_slots_from_earlier_ones():
+    result = _get_scheduler("cpsat").solve(_cpsat_request(top_n=2, budget=40.0))
+
+    assert len(result.candidates) == 2, result.notes
+    first, second = (c.round_slots for c in result.candidates)
+    assert first != second
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_place_forces_a_fixed_requirements_date_once_the_home_team_is_placed():
+    from terminliste.model.calendar import build_calendar
+    from terminliste.model.schema import FixedRequirement
+    from terminliste.solvers.base import resolve_slot_plans
+    from terminliste.solvers.cpsat import _LevelOneSolution, _place, _Problem
+
+    request = _cpsat_request()
+    calendar = build_calendar(request.world, request.season)
+    problem = _Problem(request, calendar, resolve_slot_plans(request, calendar))
+    men = problem.by_id["men"]
+    round_index = 3
+    fixture = men.team_fixture[("m0", round_index)]
+    slot_index = round_index
+    slot = men.slots[slot_index]
+    opponent = fixture.away_team if fixture.home_team == "m0" else fixture.home_team
+    days = problem.fixture_days(men, "m0", opponent, slot)
+    assert len(days) > 1
+    target = days[-1]
+
+    problem.season = problem.season.model_copy(update={"fixed_requirements": [
+        FixedRequirement(id="pin", date=target, home_team="m0", competition="men")
+    ]})
+    solution = _LevelOneSolution(
+        slot_of={(lg.id, r): r for lg in problem.leagues for r in range(lg.rounds)},
+        flipped={
+            (lg.id, frozenset(pair)): (
+                lg.id == "men"
+                and frozenset(pair) == frozenset((fixture.home_team, fixture.away_team))
+                and fixture.home_team != "m0"
+            )
+            for lg in problem.leagues for pair in lg.pairs
+        },
+    )
+    placed, error = _place(problem, solution)
+
+    assert error is None
+    pinned = next(
+        p for p in placed
+        if p.league.id == "men" and p.fixture.round_index == round_index and p.fixture.home_team == "m0"
+    )
+    assert pinned.days == [target]
+    others = [
+        p for p in placed
+        if p.league.id == "men" and p.fixture.round_index == round_index and p is not pinned
+    ]
+    assert any(len(p.days) > 1 for p in others)
 
 
 @pytest.mark.parametrize("solver_name", SOLVERS)
