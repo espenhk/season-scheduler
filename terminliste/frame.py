@@ -4,7 +4,8 @@ around, resolved before any league match is placed (#110).
 UEFA match weeks come first (#112): each leg of each European round, with
 the teams that might play it. Cup days follow (#5): each cup round's resolved
 date, midweek (`cup_week`) or on a league weekend (`cup_weekend`). League round
-slots are planned from this frame in `slot_planner.py` (#6).
+slots are planned from this frame in `slot_planner.py` (#6). Play-off dates
+are declared by the leagues and reserved here too (#15).
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from datetime import date
 from typing import Literal
 
 from .model.loader import World
-from .model.schema import WEEKDAYS, Gender, Season, Weekday
+from .model.schema import WEEKDAYS, Competition, Gender, Season, Weekday
 from .rounds.cup_schedule import CupSchedule, schedule_cups
 from .rounds.european_schedule import EuropeanCommitmentDate, resolve_european_commitments
 
@@ -75,12 +76,39 @@ class CupDay:
         return "cup_weekend" if self.weekday in _LEAGUE_WEEKEND else "cup_week"
 
 
+@dataclass(frozen=True)
+class PlayoffWeek:
+    """One play-off date reserved in the frame.
+
+    `reserves_league` is False for another division's matches, shown for
+    context only.
+    """
+
+    competition_id: str
+    play_off_id: str
+    label: str
+    kind: str
+    date: date
+    reserves_league: bool = True
+    source: str = ""
+
+    @property
+    def weekday(self) -> Weekday:
+        return WEEKDAYS[self.date.weekday()]
+
+    @property
+    def iso_week(self) -> tuple[int, int]:
+        year, week, _ = self.date.isocalendar()
+        return year, week
+
+
 @dataclass
 class SeasonFrame:
     uefa_weeks: list[UefaWeek] = field(default_factory=list)
     european_commitments: dict[str, list[EuropeanCommitmentDate]] = field(default_factory=dict)
     cup_schedules: list[CupSchedule] = field(default_factory=list)
     cup_days: list[CupDay] = field(default_factory=list)
+    playoff_weeks: list[PlayoffWeek] = field(default_factory=list)
 
     @classmethod
     def from_resolved(
@@ -88,6 +116,7 @@ class SeasonFrame:
         world: World,
         cup_schedules: list[CupSchedule],
         european_commitments: dict[str, list[EuropeanCommitmentDate]],
+        competitions: list[Competition] | None = None,
     ) -> SeasonFrame:
         """A frame rebuilt from already-resolved cups and commitments, for
         callers that hold those rather than the frame."""
@@ -97,6 +126,7 @@ class SeasonFrame:
             european_commitments=european_commitments,
             cup_schedules=cup_schedules,
             cup_days=build_cup_days(cup_schedules, genders),
+            playoff_weeks=build_playoff_weeks(competitions or []),
         )
 
     def cup_days_of(
@@ -116,6 +146,12 @@ class SeasonFrame:
             and (kind is None or day.kind == kind)
             and (team_id is None or team_id in day.teams)
         ]
+
+    def playoff_dates(self, competition_id: str) -> frozenset[date]:
+        """Dates a regular-season round of `competition_id` must not use."""
+        return frozenset(
+            w.date for w in self.playoff_weeks if w.competition_id == competition_id and w.reserves_league
+        )
 
     def cup_weekend_dates(self, *, gender: Gender | None = None) -> frozenset[date]:
         """Dates a league round must not use: the Fri-Mon cup days."""
@@ -137,6 +173,26 @@ def _cup_gender(world: World, schedule: CupSchedule) -> Gender:
             if team_id in world.teams:
                 return world.teams[team_id].gender
     return "men"
+
+
+def build_playoff_weeks(competitions: list[Competition]) -> list[PlayoffWeek]:
+    """Every declared play-off date of the given leagues, in date order."""
+    weeks = [
+        PlayoffWeek(
+            competition_id=competition.id,
+            play_off_id=playoff.id,
+            label=playoff.label,
+            kind=playoff.kind,
+            date=day,
+            reserves_league=playoff.reserves_league,
+            source=playoff.source,
+        )
+        for competition in competitions
+        if competition.format == "league"
+        for playoff in competition.playoff_rounds
+        for day in playoff.dates
+    ]
+    return sorted(weeks, key=lambda w: (w.date, w.competition_id, w.play_off_id))
 
 
 def build_uefa_weeks(
@@ -195,14 +251,14 @@ def build_season_frame(world: World, season: Season) -> tuple[SeasonFrame, list[
     Raises `EuropeanCascadeError` on a data problem in the European cascade
     and `CupSchedulingError` on one in the cup rounds.
     """
-    frame = SeasonFrame()
+    leagues = [world.competition(c) for c in season.competitions]
+    frame = SeasonFrame(playoff_weeks=build_playoff_weeks(leagues))
     warnings: list[str] = []
     if season.european_competitions:
         competitions = [world.competition(c) for c in season.european_competitions]
         commitments, warnings = resolve_european_commitments(competitions, season)
-        frame = SeasonFrame(
-            uefa_weeks=build_uefa_weeks(commitments), european_commitments=commitments
-        )
+        frame.uefa_weeks = build_uefa_weeks(commitments)
+        frame.european_commitments = commitments
     if season.cup_competitions:
         cups = [world.competition(c) for c in season.cup_competitions]
         frame.cup_schedules, cup_warnings = schedule_cups(
@@ -215,9 +271,11 @@ def build_season_frame(world: World, season: Season) -> tuple[SeasonFrame, list[
 
 __all__ = [
     "CupDay",
+    "PlayoffWeek",
     "SeasonFrame",
     "UefaWeek",
     "build_cup_days",
+    "build_playoff_weeks",
     "build_season_frame",
     "build_uefa_weeks",
 ]

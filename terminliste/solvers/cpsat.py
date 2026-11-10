@@ -24,6 +24,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from ..model.calendar import build_calendar, calendars_by_competition
+from ..model.schema import WEEKDAYS as _WEEKDAYS
 from ..model.schema import Match
 from ..rounds.cup_schedule import cup_conflict, resolved_cup_windows
 from ..rounds.european_schedule import european_conflict
@@ -364,6 +365,20 @@ def _build_model(cp_model, request, planned, calendar, forbidden, round_pins, re
             literal = assume(f"fixed_requirement:{requirement.id}")
             model.Add(placement[best_index][requirement.date] == 1).OnlyEnforceIf(literal)
             pinned.add(best_index)
+
+    # -- day quota: at most N matches of one round on a weekday (#15) --------
+    quota_vars: dict[tuple[str, int, str], list[object]] = defaultdict(list)
+    for index, (fixture, competition, _) in enumerate(fixtures):
+        for day, var in placement[index].items():
+            weekday = _WEEKDAYS[day.weekday()]
+            if (
+                weekday in competition.day_quota
+                and fixture.round_index not in competition.day_quota_exempt_rounds
+            ):
+                quota_vars[(competition.id, fixture.round_index, weekday)].append(var)
+    for (competition_id, _, weekday), vars_ in quota_vars.items():
+        quota = next(c for c in request.competitions if c.id == competition_id).day_quota
+        model.Add(sum(vars_) <= quota[weekday])
 
     # -- per-team, per-date occupancy, the basis of the rest ----------------
     team_on_date: dict[tuple[str, date], list[object]] = defaultdict(list)

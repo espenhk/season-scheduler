@@ -46,6 +46,9 @@ _OFF_PREFERRED_WEEKDAY = 12.0
 _DISCOURAGED_DATE = 20.0
 _CONSECUTIVE_HOME_BONUS = 40.0
 _DRIFT_FROM_ANCHOR = 3.0
+# A quota is a hard rule, so breaking it costs more than any preference; it
+# stays below the rest and venue clashes, which a repair cannot undo.
+_QUOTA_EXCEEDED = 5e5
 
 _ONE_DAY = timedelta(days=1)
 
@@ -57,11 +60,15 @@ class PlacementState:
     team_dates: dict[str, set[date]] = field(default_factory=dict)
     venue_dates: set[tuple[str, date]] = field(default_factory=set)
     club_home_dates: dict[str, dict[date, list[str]]] = field(default_factory=dict)
+    # Matches placed per (competition, round, weekday), for `day_quota`.
+    weekday_counts: dict[tuple[str, int, int], int] = field(default_factory=dict)
 
     def place(self, world: World, match: Match) -> None:
         self.team_dates.setdefault(match.home_team, set()).add(match.date)
         self.team_dates.setdefault(match.away_team, set()).add(match.date)
         self.venue_dates.add((match.venue, match.date))
+        quota_key = (match.competition_id, match.round_index, match.date.weekday())
+        self.weekday_counts[quota_key] = self.weekday_counts.get(quota_key, 0) + 1
         club_id = world.team(match.home_team).club_id
         self.club_home_dates.setdefault(club_id, {}).setdefault(match.date, []).append(
             match.home_team
@@ -240,9 +247,10 @@ def resolve_round_pins(
 ) -> tuple[dict[tuple[str, int], date], list[str]]:
     """Rounds that must land on one single date, keyed by (competition_id, round_index).
 
-    Two sources: every league's final round (`FinalRoundSameSlot`), and any
-    hard `FullRoundRequirement`, which claims the round whose anchor already
-    sits closest to it (`FullRoundOnDate`).
+    Three sources: every league's final round (`FinalRoundSameSlot`), a
+    league's `fixed_round_dates` (`FixedRoundDates`), and any hard
+    `FullRoundRequirement`, which claims the round whose anchor already sits
+    closest to it (`FullRoundOnDate`).
 
     A pinned round puts *every* team on the same date, so a resolved cup or
     European commitment for even one of them conflicts — unlike a single
@@ -280,6 +288,18 @@ def resolve_round_pins(
         pins[(plan.competition.id, final_round)] = chosen
         if warning:
             warnings.append(warning)
+
+    for plan in planned:
+        for fixed in plan.competition.fixed_round_dates:
+            round_index = fixed.round - 1
+            if round_index not in plan.anchors:
+                continue
+            _, warning = _clear_pin_date(
+                fixed.date, plan, None, cup_windows, european_commitments, movable=False
+            )
+            pins[(plan.competition.id, round_index)] = fixed.date
+            if warning:
+                warnings.append(warning)
 
     for requirement in season.full_round_requirements:
         if not requirement.hard:
@@ -503,7 +523,9 @@ def build_initial_schedule(
     calendar = calendar or build_calendar(world, season)
     by_competition = calendars_by_competition(calendar, competitions)
     if slot_plans is None:
-        frame = SeasonFrame.from_resolved(world, cup_schedules or [], european_commitments or {})
+        frame = SeasonFrame.from_resolved(
+            world, cup_schedules or [], european_commitments or {}, competitions
+        )
         slot_plans = plan_slots(world, season, competitions, calendar, frame)
     planned = plan_competitions(world, season, competitions, calendar, rng, slot_plans)
     if align:
@@ -664,6 +686,12 @@ def _place_fixture(
         # Noise so different seeds explore different starting points, small
         # enough never to outweigh a real preference.
         cost += rng.random() * 0.5
+        limit = competition.day_quota.get(WEEKDAYS[day.weekday()])
+        if limit is not None and (
+            state.weekday_counts.get((competition.id, fixture.round_index, day.weekday()), 0)
+            >= limit
+        ):
+            cost += _QUOTA_EXCEEDED
         if cost < best_cost:
             best_cost, best_day = cost, day
 
