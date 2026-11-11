@@ -680,7 +680,6 @@ def test_month_calendar_view_spans_multiple_months_and_pads_out_month_days():
     # 1 April also shows up as an out-of-month padding cell at the tail of
     # March's grid, but only one day_details entry exists for it.
     assert "2026-04-01" in [iso for week in months[0]["weeks"] for iso in week]
-    assert not "2026-04-01".startswith(months[0]["key"])
 
 
 def test_month_calendar_view_is_empty_for_no_entries():

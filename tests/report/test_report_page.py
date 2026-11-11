@@ -104,6 +104,13 @@ def _browser_executable() -> str | None:
     return None
 
 
+def _no_browser(reason: str):
+    # CI installs Chromium, so a missing browser there is a broken setup, not a reason to skip.
+    if os.environ.get("CI"):
+        pytest.fail(reason)
+    pytest.skip(reason)
+
+
 @pytest.fixture(scope="module")
 def browser():
     with sync_api.sync_playwright() as playwright:
@@ -112,11 +119,11 @@ def browser():
         except sync_api.Error:
             executable = _browser_executable()
             if not executable:
-                pytest.skip("no Chromium available for Playwright")
+                _no_browser("no Chromium available for Playwright")
             try:
                 instance = playwright.chromium.launch(executable_path=executable)
             except sync_api.Error as exc:
-                pytest.skip(f"Chromium could not be launched: {exc}")
+                _no_browser(f"Chromium could not be launched: {exc}")
         yield instance
         instance.close()
 
