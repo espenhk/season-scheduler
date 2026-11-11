@@ -36,6 +36,7 @@ from ..model.slots import RoundSlot, max_compatible_slots, slots_compatible
 from ..rounds.commitments import CommitmentSet
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import evaluate
+from ..scoring.soft import ContingentCommitmentConflict
 from ..slot_planner import SlotPlan
 from .base import (
     Candidate,
@@ -766,7 +767,7 @@ def _slot_plans(problem: _Problem, solution: _LevelOneSolution) -> dict[str, Slo
             teams = ", ".join(problem.world.team_label(t) for t in slot)
             plan.warnings.append(
                 f"{lg.id}: round {round_index + 1} on {chosen[round_index].default_day} "
-                f"clashes with a binding cup or UEFA date for {teams}"
+                f"clashes with a hard cup or UEFA commitment for {teams}"
             )
         plans[lg.id] = plan
     return plans
@@ -954,6 +955,18 @@ def _build_level_two(cp_model, problem: _Problem, placed: list[_Placed], previou
                 terms.append((_scaled(weekday_weight), var))
             if d in discouraged:
                 terms.append((-_scaled(venue_weight), var))
+
+    # Same price as the scorer's `ContingentCommitmentConflict`, so a day near a
+    # commitment the team only maybe reaches is steered away from (#8).
+    contingent_weight = ContingentCommitmentConflict.weight
+    for item in placed:
+        for team_id in (item.fixture.home_team, item.fixture.away_team):
+            for commitment in problem.commitments.contingent_for(team_id):
+                for d, var in days[item.index].items():
+                    shortfall = commitment.min_rest_days - (abs((d - commitment.date).days) - 1)
+                    if shortfall > 0:
+                        penalty = contingent_weight * shortfall * commitment.reached_probability
+                        terms.append((-_scaled(penalty), var))
 
     for club in world.dual_clubs():
         seniors = [t.id for t in club.teams if t.level == "senior"]

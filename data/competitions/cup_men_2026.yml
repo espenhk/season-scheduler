@@ -21,8 +21,8 @@ color: "#e67e22"
 
 movable: false
 
-# Same 16 clubs as eliteserien_2026; the model assumes every one of them
-# survives to the final.
+# Same 16 clubs as eliteserien_2026. Round 4 is the entry round and hard; each
+# later round is contingent, reached with the cumulative advance_probability.
 team_count: 16
 teams:
   - aalesund_m

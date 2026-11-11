@@ -285,6 +285,7 @@ def build_season_frame(world: World, season: Season) -> tuple[SeasonFrame, list[
         competitions = [world.competition(c) for c in season.european_competitions]
         trees, warnings = resolve_european_trees(competitions, season)
         commitments = commitments_from_trees(trees.values(), threshold)
+        warnings = [*warnings, *(w for tree in trees.values() for w in tree.warnings)]
         frame = SeasonFrame(
             uefa_weeks=build_uefa_weeks(commitments), commitments=commitments, uefa_trees=trees,
             playoff_weeks=frame.playoff_weeks,
@@ -300,7 +301,9 @@ def build_season_frame(world: World, season: Season) -> tuple[SeasonFrame, list[
         frame.cup_days = build_cup_days(
             frame.cup_schedules, {c.id: c.gender for c in cups}, frame.commitments
         )
-        warnings = [*warnings, *cup_warnings]
+        warnings = [
+            *warnings, *cup_warnings, *(w for tree in frame.cup_trees.values() for w in tree.warnings)
+        ]
     return frame, warnings
 
 

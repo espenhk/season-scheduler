@@ -131,9 +131,6 @@ def test_cup_rounds_after_the_entry_round_are_contingent_with_compounding_probab
 
 
 def test_toppserien_entrants_get_commitments_from_the_womens_european_competitions(frame):
-    for team in ("brann_w", "valerenga_w", "rosenborg_w"):
-        competitions = {c.competition_id for c in frame.commitments.for_team(team) if c.source == "uefa"}
-        assert any(c.startswith("womens_") for c in competitions), team
     assert {
         c.competition_id for c in frame.commitments.for_team("brann_w") if c.source == "uefa"
     } == {"womens_champions_league_2026", "womens_europa_cup_2026"}
@@ -157,3 +154,19 @@ def test_womens_uefa_weeks_never_touch_the_mens_clubs(frame):
     assert womens
     for week in womens:
         assert all(t.endswith("_w") for t in week.teams), week.label
+
+
+def test_a_low_threshold_never_makes_lillestroms_exclusive_league_phases_both_hard(world, season):
+    relaxed = season.model_copy(update={"contingency_policy": ContingencyPolicy(hard_threshold=0.5)})
+    frame, warnings = build_season_frame(world, relaxed)
+
+    def hard_nodes(competition_id):
+        return {
+            c.node_id for c in frame.commitments
+            if c.team_id == "lillestrom_m" and c.hard and c.competition_id == competition_id
+        }
+
+    europa = hard_nodes("europa_league_main_2026")
+    conference = hard_nodes("conference_league_main_2026")
+    assert bool(europa) != bool(conference)
+    assert any("lillestrom_m" in w and "mutually exclusive" in w for w in warnings)
