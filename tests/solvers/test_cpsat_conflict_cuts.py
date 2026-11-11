@@ -177,15 +177,28 @@ def test_learned_cuts_are_one_list_shared_by_every_pass(monkeypatch):
 
 
 def test_a_failed_pass_hands_its_conflict_to_the_next_one(monkeypatch):
-    from ortools.sat.python import cp_model
-
+    """Pass 0 learns a conflict and finds nothing; pass 1 resumes instead of the
+    solve ending. Pass 0's failure is simulated so the test doesn't depend on
+    which Level 1 choices the real solver happens to try in the time it has."""
     from terminliste.solvers import cpsat
 
-    monkeypatch.setattr(cpsat, "_MAX_LEVEL_TWO_RETRIES", 1)
-    _fail_level_two(monkeypatch, [(cp_model.INFEASIBLE, "INFEASIBLE")])
-    result = _get_scheduler("cpsat").solve(_cpsat_request(top_n=2, budget=60.0))
+    real_run_pass = cpsat._run_pass
+    seen_by_pass_one = []
 
-    assert any("pass 0: no slot choice admitted" in n for n in result.notes), result.notes
+    def run_pass(*args):
+        learned, pass_index = args[-1], args[4]
+        if pass_index == 0:
+            outcome = real_run_pass(*args)
+            assert outcome is not None
+            learned.append((outcome[0], None))  # pass 0's choice, now a learned cut
+            return None
+        seen_by_pass_one.append(len(learned))
+        return real_run_pass(*args)
+
+    monkeypatch.setattr(cpsat, "_run_pass", run_pass)
+    result = _get_scheduler("cpsat").solve(_cpsat_request(top_n=2, budget=20.0))
+
+    assert seen_by_pass_one == [1]
     assert len(result.candidates) == 1
     assert result.candidates[0].seed == 2  # found by pass 1, resuming after pass 0 failed
 
