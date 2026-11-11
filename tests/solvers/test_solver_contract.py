@@ -313,6 +313,7 @@ def test_polish_phase_never_regresses_a_shortlisted_candidate():
 
 
 def test_local_search_is_deterministic_for_a_fixed_seed():
+    # A fixed iteration count: a time budget adapts to the machine's pace (#11).
     world, season, competitions = _small_world()
     constraints = build_constraints(world, season, competitions)
     ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
@@ -321,7 +322,7 @@ def test_local_search_is_deterministic_for_a_fixed_seed():
     def run():
         request = SolveRequest(
             world=world, season=season, competitions=competitions, constraints=constraints,
-            ctx=ctx, seed=7, top_n=1, time_budget_s=4.0,
+            ctx=ctx, seed=7, top_n=1, time_budget_s=4.0, iterations=1500,
         )
         return scheduler.solve(request).best.assignment()
 
