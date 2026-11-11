@@ -597,6 +597,7 @@ def _day_after(day: date) -> date:
 class FixedRoundDates:
     """Every match of a round fixed from outside (TV) is played on its date."""
 
+    delta_scope: ClassVar[str | None] = "round"
     competitions: list[Competition]
     id: str = "fixed_round_dates"
     kind: str = "hard"
@@ -639,6 +640,7 @@ class RoundDayQuota:
     """No weekday hosts more matches of one round than the league's
     `day_quota` allows. Rounds played on one date are exempt."""
 
+    delta_scope: ClassVar[str | None] = "round"
     competitions: list[Competition]
     id: str = "round_day_quota"
     kind: str = "hard"

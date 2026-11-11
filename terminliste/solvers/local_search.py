@@ -149,6 +149,10 @@ class LocalSearchScheduler:
         explore_budget_s = request.time_budget_s * (1 - self.polish_fraction)
         polish_budget_s = request.time_budget_s * self.polish_fraction
         budget_per_restart = explore_budget_s / max(1, self.restarts)
+        fixed = request.iterations
+        iterations_per_restart = (
+            None if fixed is None else max(1, round(fixed * (1 - self.polish_fraction) / max(1, self.restarts)))
+        )
 
         candidates: list[Candidate] = []
         # Parallel to `candidates`: each restart's final annealed state and
@@ -201,6 +205,7 @@ class LocalSearchScheduler:
                 by_competition,
                 seed=seed,
                 budget_s=budget_per_restart,
+                fixed_iterations=iterations_per_restart,
                 start_temperature=self.start_temperature,
                 end_temperature=self.end_temperature,
                 restart_index=restart,
@@ -229,7 +234,7 @@ class LocalSearchScheduler:
 
         chosen = select_diverse(candidates, request.top_n)
 
-        if polish_budget_s > 0 and chosen:
+        if (fixed is not None or polish_budget_s > 0) and chosen and self.polish_fraction > 0:
             polish_iterations, polish_stats = _polish_candidates(
                 chosen,
                 candidates,
@@ -237,6 +242,9 @@ class LocalSearchScheduler:
                 request,
                 by_competition,
                 budget_s=polish_budget_s,
+                fixed_iterations=(
+                    None if fixed is None else max(1, round(fixed * self.polish_fraction))
+                ),
                 restarts=self.restarts,
                 start_temperature=self.end_temperature,
                 end_temperature=self.polish_end_temperature,
@@ -303,6 +311,7 @@ def _polish_candidates(
     request: SolveRequest,
     calendars: dict[str, SeasonCalendar],
     budget_s: float,
+    fixed_iterations: int | None,
     restarts: int,
     start_temperature: float,
     end_temperature: float,
@@ -316,6 +325,9 @@ def _polish_candidates(
     found it.
     """
     per_candidate_budget = budget_s / len(chosen)
+    per_candidate_iterations = (
+        None if fixed_iterations is None else max(1, fixed_iterations // len(chosen))
+    )
     total_iterations = 0
     stats = SearchStats()
     improved = 0
@@ -332,6 +344,7 @@ def _polish_candidates(
             calendars,
             seed=candidate.seed + 1_000_003 + position,
             budget_s=per_candidate_budget,
+            fixed_iterations=per_candidate_iterations,
             start_temperature=start_temperature,
             end_temperature=end_temperature,
             restart_index=restarts + position,
@@ -400,6 +413,7 @@ def _anneal(
     budget_s: float,
     start_temperature: float,
     end_temperature: float,
+    fixed_iterations: int | None = None,
     restart_index: int = 0,
     total_restarts: int = 1,
 ) -> tuple[list[WorkingMatch], int, SearchStats]:
@@ -411,11 +425,15 @@ def _anneal(
         )
         _assign_missing_slots(matches, plans)
 
-    # Cooling follows iteration progress rather than the clock, so the draws
-    # taken from the seeded RNG depend only on the seed and the calibrated
-    # rate, not on scheduling jitter. The target count is still budget-derived,
-    # so a slower machine runs fewer iterations rather than taking longer.
-    total_iterations = max(1, round(budget_s * _iterations_per_second(matches, request, calendars)))
+    # Cooling follows iteration progress rather than the clock, so a run's
+    # draws depend only on the seed and the iteration count. Without a fixed
+    # count, the count is budget times a calibrated rate, so it varies with
+    # machine speed (#11).
+    if fixed_iterations is not None:
+        total_iterations = fixed_iterations
+    else:
+        rate = _iterations_per_second(matches, pinned, request, calendars, start_temperature, end_temperature)
+        total_iterations = max(1, round(budget_s * rate))
 
     rng = random.Random(seed)
     scorer = DeltaScorer(matches, constraints, ctx)
@@ -472,6 +490,8 @@ def _anneal(
         # a rule whose declared scope turns out not to decompose.
         if iterations % _RESYNC_EVERY == 0:
             scorer.resync()
+            # Keep best_cost on the same footing as the corrected running cost.
+            best_cost += scorer.cost - current_cost
             current_cost = scorer.cost
 
         if request.progress is not None and iterations % report_every == 0:
@@ -490,50 +510,46 @@ def _anneal(
 
 
 # Iterations/second per problem size, measured once per (match count,
-# constraint count). Measuring per call would make the search irreproducible:
-# two runs with the same seed could time differently and so take a different
-# number of iterations.
+# constraint count) so repeated calls within a process agree.
 _RATE_CACHE: dict[tuple[int, int], float] = {}
 
-_CALIBRATION_PROBES = 1000
+_CALIBRATION_ITERATIONS = 1500
 _RESYNC_EVERY = 4096
 _MAX_IDLE_DRAWS = 200_000
 
 
 def _iterations_per_second(
     matches: list[WorkingMatch],
+    pinned: set[str],
     request: SolveRequest,
     calendars: dict[str, SeasonCalendar],
+    start_temperature: float,
+    end_temperature: float,
 ) -> float:
+    """Rate of the real annealing loop, measured by running it on a copy of
+    the schedule, so accept bookkeeping and best-snapshot copies are priced in
+    and the budget is used up rather than undershot."""
     key = (len(matches), len(request.constraints))
     cached = _RATE_CACHE.get(key)
     if cached is not None:
         return cached
 
-    scorer = DeltaScorer(matches, request.constraints, request.ctx)
-    probe_moves = _MoveSet(matches, set(), request, calendars, live=scorer.live)
-    probe_rng = random.Random()
-    snapshot = _capture_all(matches)
-
+    probe_request = replace(request, progress=None)
     started = time.perf_counter()
-    completed = 0
-    idle_draws = 0
-    while completed < _CALIBRATION_PROBES:
-        undo = probe_moves.apply(probe_rng)
-        if undo is None:
-            idle_draws += 1
-            if idle_draws > _MAX_IDLE_DRAWS:
-                break
-            continue
-        scorer.propose([entry[0] for entry in undo], prune=True)
-        _restore(matches, undo)
-        scorer.reject()
-        completed += 1
+    _, completed, _ = _anneal(
+        [replace(m) for m in matches],
+        pinned,
+        probe_request,
+        calendars,
+        seed=request.seed,
+        budget_s=0.0,
+        start_temperature=start_temperature,
+        end_temperature=end_temperature,
+        fixed_iterations=_CALIBRATION_ITERATIONS,
+    )
     elapsed = time.perf_counter() - started
 
-    _restore(matches, snapshot)
-
-    rate = completed / elapsed if completed and elapsed > 0 else float(max(1, completed))
+    rate = completed / elapsed if completed and elapsed > 0 else 1.0
     _RATE_CACHE[key] = rate
     return rate
 

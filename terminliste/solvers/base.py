@@ -154,6 +154,10 @@ class SolveRequest:
     seed: int = 42
     top_n: int = 3
     time_budget_s: float = 30.0
+    # Local search only: total annealing iterations across all restarts and the
+    # polish phase, replacing the time budget. The run then depends only on the
+    # seed, so the same value reproduces the same output (#11).
+    iterations: int | None = None
     # Cups sharing teams with `competitions`, already resolved to a date per
     # team — not scheduled themselves, only used to steer league placement.
     cup_schedules: list[CupSchedule] = field(default_factory=list)

@@ -226,11 +226,13 @@ def cmd_generate(args: argparse.Namespace) -> int:
         seed=args.seed,
         top_n=args.top_n,
         time_budget_s=args.time_budget,
+        iterations=args.iterations,
         relax_min_rest=args.relax_min_rest,
         progress=_print_progress if live else None,
     )
 
-    print(f"\nSolving with {scheduler.name} (budget {args.time_budget:.0f}s, seed {args.seed})...")
+    budget = f"{args.iterations} iterations" if args.iterations else f"budget {args.time_budget:.0f}s"
+    print(f"\nSolving with {scheduler.name} ({budget}, seed {args.seed})...")
     for warning in frame_warnings:
         print(f"  ⚠ {warning}")
     try:
@@ -538,6 +540,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_generate.add_argument("--solver", choices=["local", "cpsat"], default="local")
     p_generate.add_argument("--seed", type=int, default=42)
     p_generate.add_argument("--top-n", type=int, default=3)
+    p_generate.add_argument(
+        "--iterations",
+        type=int,
+        default=None,
+        help=(
+            "local solver only: total annealing iterations, replacing "
+            "--time-budget. The same seed and count give identical output; a "
+            "time-budgeted run sizes itself from this machine's speed and is "
+            "not reproducible"
+        ),
+    )
     p_generate.add_argument(
         "--time-budget",
         type=float,
