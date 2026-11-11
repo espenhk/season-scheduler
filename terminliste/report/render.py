@@ -651,6 +651,7 @@ def _match_flags(world: World, candidate: Candidate) -> dict[str, list[dict]]:
                     ),
                     "shared_by": 1,
                     "quiet": False,
+                    "group": competition.name,
                 }
             )
     return flags
@@ -658,8 +659,8 @@ def _match_flags(world: World, candidate: Candidate) -> dict[str, list[dict]]:
 
 def _event_groups(world: World, result: ConstraintResult):
     """`group(event, match)` -> the team (or dual club) the event is about, as
-    the page's lists of a rule's fixtures head them; "" when it has none. Picks
-    the same bucket as `_entity_counts`, so the two never disagree."""
+    the page's lists of a rule's fixtures head them; "" when it has none. Uses
+    `_entity_counts`'s choice of team or club, applied to the pinned events."""
     club_events, team_events = _classify_events(world, result.events)
     by_club = len(club_events) >= len(team_events)
     in_bucket = {id(e) for e in (club_events if by_club else team_events)}

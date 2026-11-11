@@ -877,8 +877,9 @@ def test_preferred_weekday_badges_the_off_day_minority_and_keeps_the_reward_quie
     assert "f" not in on_day
     (rule, delta) = on_day["q"][0]
     assert data["rules"][rule]["id"] == "preferred_weekday" and delta > 0
-    ((rule, delta, note),) = off_day["f"]
+    ((rule, delta, note, shared, group),) = off_day["f"]
     assert data["rules"][rule]["label"] == "off-day" and delta == 0
+    assert shared == 1 and data["options"][0]["groups"][group] == "elite"  # listed by competition
     assert "Tuesday" in data["options"][0]["notes"][note]
     assert "(misses +" in data["options"][0]["notes"][note]
     assert data["tint"] == {"good": 5.0, "cost": -3.0}

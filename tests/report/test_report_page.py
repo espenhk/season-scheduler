@@ -268,7 +268,7 @@ def test_hovering_a_badge_shows_the_events_detail_and_points(page):
 
     badge.hover()
 
-    tooltip = badge.locator(".tooltip")
+    tooltip = page.locator("#flag-tooltip")
     tooltip.wait_for(state="visible")
     text = " ".join(tooltip.inner_text().split())
     assert "home pair" in text and "+12.5 pts" in text
@@ -277,8 +277,8 @@ def test_hovering_a_badge_shows_the_events_detail_and_points(page):
 
     off_day = _club_a_men(body, ".fx").locator('.flag[data-rule="preferred_weekday"]')
     off_day.hover()
-    off_day.locator(".tooltip").wait_for(state="visible")
-    text_off = " ".join(off_day.locator(".tooltip").inner_text().split())
+    tooltip.wait_for(state="visible")
+    text_off = " ".join(tooltip.inner_text().split())
     assert "Saturday; elite prefers Sunday (misses +1)" in text_off
     assert "reward forgone" in text_off
     assert off_day.get_attribute("aria-label") == "off-day"
@@ -330,10 +330,9 @@ def test_lens_selector_lists_only_rules_with_fixtures_and_their_totals(page):
     options = page.locator("#panel-1 .lens-select option")
     assert [o.get_attribute("value") for o in options.all()] == ["", PAIR, OFF_DAY]
     texts = _texts(options)
-    assert texts[1].startswith("consecutive home days (+25")
-    assert "2 fixtures" in texts[1]
+    assert texts[1].startswith("consecutive home days (+25") and texts[1].endswith(", 2)")
     # The off-day rule is shown inversely: its fixtures are the ones that missed the reward.
-    assert "2 off-day fixtures" in texts[2] and "from 1 on-day" in texts[2]
+    assert texts[2] == "preferred weekday (2 off-day)"
 
 
 def test_lens_dims_other_fixtures_and_emphasises_matching_ones_in_every_view(page):
@@ -440,7 +439,7 @@ def test_show_in_calendar_from_the_scorecard_sets_the_lens_and_scrolls_to_the_co
     page.wait_for_function("() => document.querySelector('#panel-1 .controls').getBoundingClientRect().top < 300")
 
 
-def test_opening_a_scorecard_entry_lists_its_fixtures_grouped_by_team(page):
+def test_opening_a_scorecard_entry_lists_its_fixtures_grouped_by_team(page, world):
     item = page.locator(f'#panel-1 details.item[data-rule="{PAIR}"]')
     assert item.locator(".occ-row").count() == 0  # built lazily
     item.locator("summary").click()
@@ -455,7 +454,9 @@ def test_opening_a_scorecard_entry_lists_its_fixtures_grouped_by_team(page):
     off_day = page.locator(f'#panel-1 details.item[data-rule="{OFF_DAY}"]')
     off_day.locator("summary").click()
     assert "2 fixtures off the preferred day" in off_day.locator(".occ-summary").inner_text()
-    assert any("reward forgone" in t for t in _texts(off_day.locator(".occ-row")))
+    # Grouped by competition; the summary already says the reward is forgone.
+    assert _texts(off_day.locator(".occ-group > summary")) == [f"{world.competition('elite').name} ×2"]
+    assert not any("reward forgone" in t for t in _texts(off_day.locator(".occ-row")))
 
 
 def test_an_occurrence_row_jumps_to_and_flashes_its_fixture(page):
@@ -487,8 +488,8 @@ def test_clicking_a_badge_selects_its_rule_while_hover_still_shows_its_tooltip(p
     badge = _club_a_men(body, ".fx").locator(f'.flag[data-rule="{OFF_DAY}"]')
 
     badge.hover()
-    badge.locator(".tooltip").wait_for(state="visible")
-    assert "highlight this rule" in badge.locator(".tooltip").inner_text()
+    page.locator("#flag-tooltip").wait_for(state="visible")
+    assert "highlight this rule" in page.locator("#flag-tooltip").inner_text()
     badge.click()
 
     assert page.input_value("#panel-1 .lens-select") == OFF_DAY
@@ -514,3 +515,63 @@ def test_the_lens_controls_do_not_overflow_a_phone_screen(touch_page):
     for view in ("by-competition", "combined-list", "month-calendar", "combined-calendar"):
         _view(page, view)
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def _effective_opacity(locator):
+    return locator.evaluate(
+        """el => { let o = 1; for (let n = el; n; n = n.parentElement) o *= +getComputedStyle(n).opacity; return o; }"""
+    )
+
+
+def test_a_tooltip_on_a_dimmed_fixture_is_fully_opaque(page):
+    _lens(page, PAIR)
+    body = _view(page, "combined-calendar")
+    dimmed = body.locator(f'.fx.lens-dim[data-rules~="{OFF_DAY}"]').first
+    assert _effective_opacity(dimmed) < 1
+
+    dimmed.locator(".flag").first.hover()
+
+    tooltip = page.locator("#flag-tooltip")
+    tooltip.wait_for(state="visible")
+    assert _effective_opacity(tooltip) == 1
+    page.mouse.move(0, 0)
+    tooltip.wait_for(state="hidden")
+    assert page.locator("#flag-tooltip").count() == 1  # one shared tip, nothing orphaned by re-renders
+
+
+def test_a_row_from_another_rules_list_selects_that_rule_before_flashing(page):
+    _lens(page, PAIR)
+    item = page.locator(f'#panel-1 details.item[data-rule="{OFF_DAY}"]')
+    item.locator("summary").click()
+    row = item.locator(".occ-row").first
+    uid = row.get_attribute("data-fx")
+
+    row.click()
+
+    assert page.input_value("#panel-1 .lens-select") == OFF_DAY
+    flashed = page.locator("#panel-1 .view-pane:not([hidden]) .flash")
+    flashed.wait_for()
+    assert flashed.get_attribute("data-uid") == uid
+    assert "lens-hit" in flashed.get_attribute("class") and "lens-dim" not in flashed.get_attribute("class")
+
+
+def test_a_click_without_pointer_type_still_shows_the_tooltip_first_on_a_no_hover_device(browser, report_url):
+    context = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
+    page = context.new_page()
+    page.goto(report_url)
+    assert page.evaluate("matchMedia('(hover: none)').matches")
+    body = _view(page, "combined-calendar")
+    badge = _club_a_men(body, ".fx").locator(f'.flag[data-rule="{PAIR}"]')
+    press = "b => b.dispatchEvent(new MouseEvent('click', {bubbles: true, detail: 1}))"
+
+    badge.evaluate(press)
+    assert "open" in badge.get_attribute("class") and page.input_value(".lens-select") == ""
+    badge.evaluate(press)
+    assert page.input_value(".lens-select") == PAIR
+
+    # Enter (detail 0) selects at once.
+    page.click(".lens-clear")
+    badge = _club_a_men(_view(page, "combined-calendar"), ".fx").locator(f'.flag[data-rule="{PAIR}"]')
+    badge.evaluate("b => b.dispatchEvent(new MouseEvent('click', {bubbles: true, detail: 0}))")
+    assert page.input_value(".lens-select") == PAIR
+    context.close()

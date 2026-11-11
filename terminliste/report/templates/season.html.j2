@@ -137,7 +137,8 @@
   }
   .info-wrap:hover .tooltip,
   .info-wrap:focus-within .tooltip,
-  .info-wrap.open .tooltip {
+  .info-wrap.open .tooltip,
+  .tooltip.show {
     opacity: 1; visibility: visible; transform: translateY(0); pointer-events: auto;
   }
 
@@ -261,6 +262,7 @@
   .occ-delta.good { color: var(--good); }
   .occ-delta.cost, .occ-delta.broken { color: var(--bad); }
   .occ-delta.none { color: var(--muted); font-weight: 400; }
+  .tooltip.show { pointer-events: none; }
   .tooltip .tt-hint { display: block; margin-top: 5px; color: #c9c9c4; font-size: 11.5px; }
 
   /* -- calendar -- */
@@ -414,8 +416,8 @@
     .fx-row.edge-cost { border-left-color: var(--warn); }
     .fx-row.edge-broken { border-left-color: var(--bad); }
     .fairness-bar { grid-template-columns: 110px 1fr 24px; }
-    .lens-filter { flex: 1 1 100%; min-width: 0; }
-    .lens-filter select { max-width: none; flex: 1; min-width: 0; }
+    .club-filter { flex: 1 1 100%; min-width: 0; display: grid; grid-template-columns: 96px minmax(0, 1fr); }
+    .club-filter select, .lens-filter select { max-width: none; min-width: 0; width: 100%; }
     .occ-row { grid-template-columns: auto 1fr auto; }
     .occ-detail { grid-column: 1 / -1; }
     .month-grid { min-width: 0; }

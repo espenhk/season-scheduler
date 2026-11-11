@@ -188,7 +188,8 @@
 
   var flagOf = new WeakMap();
   var HOVER_NONE = window.matchMedia('(hover: none)').matches;
-  var tooltipCount = 0;
+  var flagTip = null;
+  var flagTipOwner = null;
 
   function signed(delta) {
     var text = (Math.round(delta * 10) / 10).toFixed(1);
@@ -206,21 +207,37 @@
     return badge;
   }
 
-  function flagTooltip(badge) {
+  // One tooltip shared by every badge, hosted on <body>: a badge inside a
+  // dimmed fixture would otherwise fade its own tooltip along with the card.
+  function showFlagTip(badge) {
     var flag = flagOf.get(badge);
-    var tip = el('span', 'tooltip');
-    tip.id = 'flag-tt-' + (++tooltipCount);
-    tip.setAttribute('role', 'tooltip');
-    badge.setAttribute('aria-describedby', tip.id);
+    if (!flagTip) {
+      flagTip = el('span', 'tooltip');
+      flagTip.id = 'flag-tooltip';
+      flagTip.setAttribute('role', 'tooltip');
+      document.body.appendChild(flagTip);
+    }
+    hideFlagTip();
+    flagTip.textContent = '';
     var points = flag.rule.hard ? 'broken rule' : flag.delta === 0 ? 'reward forgone' : signed(flag.delta) + ' pts';
-    append(tip, el('b', 'tt-head', flag.rule.label + ' · ' + points));
+    append(flagTip, el('b', 'tt-head', flag.rule.label + ' · ' + points));
     flag.items.forEach(function (item) {
       var text = item.detail;
       if (item.n > 1) text += ' (this fixture’s share of ' + signed(item.delta * item.n) + ', split over ' + item.n + ' fixtures)';
-      if (text) tip.appendChild(el('span', 'tt-detail', text));
+      if (text) flagTip.appendChild(el('span', 'tt-detail', text));
     });
-    append(tip, el('span', 'tt-hint', (HOVER_NONE ? 'Tap again' : 'Click') + ' to highlight this rule in the calendar'));
-    badge.appendChild(tip);
+    append(flagTip, el('span', 'tt-hint', (HOVER_NONE ? 'Tap again' : 'Click') + ' to highlight this rule in the calendar'));
+    badge.setAttribute('aria-describedby', flagTip.id);
+    flagTipOwner = badge;
+    flagTip.classList.add('show');
+    placeTooltip(badge, flagTip);
+  }
+
+  function hideFlagTip() {
+    if (!flagTip) return;
+    flagTip.classList.remove('show');
+    if (flagTipOwner) flagTipOwner.removeAttribute('aria-describedby');
+    flagTipOwner = null;
   }
 
   function flagBox(fx) {
@@ -426,7 +443,6 @@
       } else {
         details.appendChild(el('div', 'day-detail-empty', state.date ? 'No games on this day.' : 'Tap a day above to see its games here.'));
       }
-      ctx.opt.markLens(details);
       return details.firstChild;
     }
 
@@ -443,7 +459,9 @@
       // The calendar can span well over a year (cup rounds run into next
       // spring), so the detail block sits far below a day tapped in an early
       // month; bring it into view.
-      showDay().scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      var shown = showDay();
+      ctx.opt.markLens(details);
+      shown.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
     showDay();
     return root;
@@ -585,8 +603,8 @@
     var select = this.lensSelect;
     list.forEach(function (s) {
       var text = ruleName(s.rule) + ' (';
-      if (s.rule.inv) text += plural(s.fixtures, 'off-day fixture', 'off-day fixtures') + ' · ' + points(s.total) + ' from ' + s.onDay + ' on-day';
-      else text += (s.rule.hard ? 'broken' : points(s.total)) + ' · ' + plural(s.fixtures, 'fixture', 'fixtures');
+      if (s.rule.inv) text += s.fixtures + ' off-day';
+      else text += (s.rule.hard ? 'broken' : points(s.total)) + ', ' + s.fixtures;
       var option = el('option', '', text + ')');
       option.value = s.rule.id;
       select.appendChild(option);
@@ -713,6 +731,7 @@
     }
     var state = this.state;
     var ctx = this.context();
+    hideFlagTip();
     this.panel.querySelectorAll('.view-btn').forEach(function (button) {
       var active = button.dataset.view === state.view;
       button.classList.toggle('active', active);
@@ -772,16 +791,18 @@
 
   // ---------------------------------------------------------- rule tooltips
   //
-  // Hover/focus works via CSS alone; this adds tap-to-toggle for touch devices
-  // (no hover state), positions the (position:fixed) tooltip against its icon
-  // so an ancestor's overflow can't clip it, and keeps it inside the viewport
-  // and attached to its icon while the page scrolls.
+  // An icon's tooltip shows on hover/focus via CSS alone; a fixture badge's
+  // shared tooltip (above) is shown by the handlers below. This adds
+  // tap-to-toggle for touch devices (no hover state), positions the
+  // (position:fixed) tooltip against its anchor so an ancestor's overflow can't
+  // clip it, and keeps it inside the viewport and attached while the page
+  // scrolls.
   function positionTooltip(wrap) {
-    // A fixture badge is its own anchor and builds its tooltip on first use.
-    if (flagOf.has(wrap) && !wrap.querySelector('.tooltip')) flagTooltip(wrap);
-    var icon = wrap.matches('.flag') ? wrap : wrap.querySelector('.info-icon');
+    var icon = wrap.querySelector('.info-icon');
     var tooltip = wrap.querySelector('.tooltip');
-    if (!icon || !tooltip) return;
+    if (icon && tooltip) placeTooltip(icon, tooltip);
+  }
+  function placeTooltip(icon, tooltip) {
     var iconRect = icon.getBoundingClientRect();
     tooltip.style.left = iconRect.left + 'px';
     tooltip.style.top = (iconRect.bottom + 6) + 'px';
@@ -796,9 +817,11 @@
   }
   function closeTooltips() {
     document.querySelectorAll('.info-wrap.open').forEach(function (w) { w.classList.remove('open'); });
+    hideFlagTip();
   }
   function repositionVisibleTooltips() {
-    document.querySelectorAll('.info-wrap:hover, .info-wrap:focus-within, .info-wrap.open').forEach(positionTooltip);
+    document.querySelectorAll('.info-wrap:not(.flag):hover, .info-wrap:not(.flag):focus-within, .info-wrap:not(.flag).open').forEach(positionTooltip);
+    if (flagTipOwner) placeTooltip(flagTipOwner, flagTip);
   }
   // Delegated, since panels other than the first are added to the page later.
   function tooltipOwner(event) {
@@ -807,7 +830,15 @@
   ['mouseover', 'focusin'].forEach(function (type) {
     document.addEventListener(type, function (e) {
       var wrap = tooltipOwner(e);
-      if (wrap) positionTooltip(wrap);
+      if (!wrap) return;
+      if (flagOf.has(wrap)) showFlagTip(wrap);
+      else positionTooltip(wrap);
+    });
+  });
+  ['mouseout', 'focusout'].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      var wrap = tooltipOwner(e);
+      if (wrap && flagOf.has(wrap) && !wrap.classList.contains('open') && !wrap.contains(e.relatedTarget)) hideFlagTip();
     });
   });
   document.addEventListener('click', function (e) {
@@ -823,17 +854,23 @@
     if (!wrap) return;
     // A fixture's badge picks its rule for the lens. Its tooltip is already up
     // on hover or focus; a touch has neither, so the first tap shows the
-    // tooltip and the second picks the rule.
-    if (flagOf.has(wrap) && (!(e.pointerType === 'touch' || e.pointerType === 'pen') || wrap.classList.contains('open'))) {
+    // tooltip and the second picks the rule. Where click is a plain MouseEvent
+    // (no pointerType), a click with a press (detail > 0) on a no-hover device
+    // is a touch; Enter has detail 0.
+    var isBadge = flagOf.has(wrap);
+    var touch = e.pointerType ? e.pointerType !== 'mouse' : e.detail > 0 && HOVER_NONE;
+    if (isBadge && (!touch || wrap.classList.contains('open'))) {
       closeTooltips();
       optionOf(wrap).setLens(wrap.getAttribute('data-rule'));
+      if (!touch && wrap.isConnected) showFlagTip(wrap);
       return;
     }
     var wasOpen = wrap.classList.contains('open');
     closeTooltips();
     if (!wasOpen) {
       wrap.classList.add('open');
-      positionTooltip(wrap);
+      if (isBadge) showFlagTip(wrap);
+      else positionTooltip(wrap);
     }
   });
   document.addEventListener('keydown', function (e) {
@@ -859,13 +896,14 @@
     var button = el('button', 'occ-row');
     button.type = 'button';
     button.setAttribute('data-fx', fx.uid);
+    button.setAttribute('data-rule', flag.rule.id);
     var gain = flag.rule.hard ? 'broken' : item.delta > 0 ? 'good' : item.delta < 0 ? 'cost' : 'none';
     var detail = item.detail + (item.n > 1 ? ' (1 of ' + item.n + ' fixtures sharing this)' : '');
     append(
       button,
       el('span', 'occ-date', shortDate(fx.date)),
       el('span', 'occ-fx', fx.home.name + (fx.away ? ' v ' + fx.away.name : ' ' + versusText(fx))),
-      el('span', 'occ-delta ' + gain, flag.rule.hard ? 'broken' : item.delta === 0 ? 'reward forgone' : signed(item.delta)),
+      el('span', 'occ-delta ' + gain, flag.rule.hard ? 'broken' : item.delta === 0 ? '' : signed(item.delta)),
       el('span', 'occ-detail', detail)
     );
     return append(el('li'), button);
@@ -924,6 +962,8 @@
     if (!link) return;
     var opt = optionOf(link);
     if (link.classList.contains('occ-row')) {
+      // The list's own rule becomes the lens, so the target is not left dimmed.
+      opt.setLens(link.getAttribute('data-rule'));
       opt.reveal(+link.getAttribute('data-fx'));
     } else {
       opt.setLens(link.getAttribute('data-rule'));
