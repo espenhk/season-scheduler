@@ -944,3 +944,28 @@ def test_render_report_lists_the_round_slots_and_search_space():
     assert "ways to pick compatible slots" in rendered
     first = plans["elite"].chosen[0]
     assert f"default {first.default_day.strftime('%a %d %b')}" in rendered
+
+
+def test_render_report_shows_the_playoff_weeks():
+    import tempfile
+    from pathlib import Path
+
+    from terminliste.model.schema import PlayoffRound
+
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    comp_m.playoff_rounds = [
+        PlayoffRound(id="po", label="Relegation play-off", dates=[date(2026, 12, 17), date(2026, 12, 21)])
+    ]
+    candidate = _candidate(
+        world, season, [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")], []
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rendered = render_report(
+            world, season, SolverResult(candidates=[candidate], solver="test"), Path(tmp) / "out.html"
+        ).read_text(encoding="utf-8")
+
+    assert "Play-off weeks" in rendered
+    assert "Relegation play-off" in rendered
+    assert "Thu 17 Dec 2026 (week 51)" in rendered
+    assert "Mon 21 Dec 2026 (week 52)" in rendered
