@@ -188,3 +188,28 @@ def test_a_failed_pass_hands_its_conflict_to_the_next_one(monkeypatch):
     assert any("pass 0: no slot choice admitted" in n for n in result.notes), result.notes
     assert len(result.candidates) == 1
     assert result.candidates[0].seed == 2  # found by pass 1, resuming after pass 0 failed
+
+
+def test_diversity_cut_moves_the_next_level_one_solve_off_the_previous_slots():
+    """Same model, one worker, fixed seed: without the cut the solve repeats itself."""
+    from ortools.sat.python import cp_model
+
+    from terminliste.solvers.cpsat import _SLOT_REUSE_SHARE, _build_level_one, _read_level_one
+
+    problem = _problem()
+
+    def solve(cuts):
+        built = _build_level_one(cp_model, problem, cuts, [])
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = 120
+        solver.parameters.max_deterministic_time = 5  # a wall-clock limit would vary the result
+        solver.parameters.num_search_workers = 1
+        solver.parameters.random_seed = 7
+        assert solver.Solve(built.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+        return _read_level_one(solver, built, problem)
+
+    first = solve([])
+    assert solve([]).slot_of == first.slot_of  # deterministic baseline
+    second = solve([first])
+    shared = sum(1 for key, slot in first.slot_of.items() if second.slot_of[key] == slot)
+    assert shared <= int(len(first.slot_of) * _SLOT_REUSE_SHARE), (shared, len(first.slot_of))
