@@ -45,6 +45,7 @@ tests having run first.
 | `baselines/**` | `integration` |
 | `tests/conftest.py`, `tests/factories.py`, `conftest.py` (repo root) | **all** |
 | `pyproject.toml`, `poetry.lock` | **all** |
+| `.github/workflows/football-scheduler-tests-reusable.yml` | **all** |
 
 `model/schema.py`, `model/loader.py`, `data/**`, and `tests/conftest.py`/
 `tests/factories.py` are genuinely global — nearly every module and every
@@ -69,7 +70,9 @@ cheap:
 Each row of the table above has a caller workflow, `.github/workflows/fs-tests-<area>.yml`
 (`all`, `rounds`, `scoring`, `solvers`, `report`, `refdata`, `integration`), that runs the
 listed folders through `football-scheduler-tests-reusable.yml` when a PR touches the
-matching paths. Keep the `paths:` in those files in sync with the table. They are
+matching paths. Keep the `paths:` in those files in sync with the table. Callers whose
+suites include `solvers` or `integration` pass `with-cpsat: true`, which installs OR-Tools
+so the CP-SAT tests run; the others skip that install. They are
 deliberately not required status checks: a path-filtered workflow that doesn't match
 reports nothing, which would block unrelated PRs.
 
