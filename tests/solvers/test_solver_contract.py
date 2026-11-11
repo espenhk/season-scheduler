@@ -623,9 +623,12 @@ def test_cpsat_reports_a_level_two_timeout_as_a_timeout(monkeypatch):
 def test_cpsat_later_options_use_different_slots_from_earlier_ones():
     result = _get_scheduler("cpsat").solve(_cpsat_request(top_n=2, budget=40.0))
 
+    from terminliste.solvers.cpsat import _SLOT_REUSE_SHARE
+
     assert len(result.candidates) == 2, result.notes
     first, second = (c.round_slots for c in result.candidates)
-    assert first != second
+    shared = sum(1 for key, slot in first.items() if second[key] == slot)
+    assert shared <= int(len(first) * _SLOT_REUSE_SHARE), (shared, len(first))
 
 
 @pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
