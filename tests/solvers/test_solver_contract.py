@@ -918,10 +918,13 @@ def test_cpsat_level_two_prefers_a_day_clear_of_a_contingent_commitment():
     clear = [d for d in days if d.weekday() == WEEKDAYS.index("sunday")]
     assert clear, "the competition's preferred weekday must be in the slot"
     target = clear[0]
-    # The preferred weekday is the cheapest day, so only the contingent penalty
-    # (3.0 x 2 x 1.0 > the 4.0 weekday bonus) can move the match off it.
+    # The preferred weekday is the cheapest day, so only both sides' contingent
+    # penalties (2 x 3.0 x 0.75 > the 4.0 weekday bonus) move the match off it.
     problem.commitments = f.commitment_set(
-        f.commitment(team, target, hard=False, probability=1.0, min_rest_days=1, source="cup")
+        *(
+            f.commitment(t, target, hard=False, probability=1.0, min_rest_days=1, source="cup")
+            for t in (fixture.home_team, fixture.away_team)
+        )
     )
     fixture = men.team_fixture[(team, 3)]
 
