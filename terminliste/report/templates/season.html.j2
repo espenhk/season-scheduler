@@ -189,7 +189,6 @@
     font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line);
     background: var(--panel); color: var(--ink);
   }
-  .club-hidden { display: none !important; }
 
   /* -- calendar -- */
   .cal-wrap { overflow-x: auto; }
@@ -219,7 +218,7 @@
        text-transform here — unlike a full competition name, which would
        read fine either way. */
     font-size: 10px; padding: 1px 6px; border-radius: 10px;
-    background: #eeeee9; color: var(--muted); letter-spacing: 0.03em;
+    background: var(--comp-bg, #eeeee9); color: var(--comp-fg, var(--muted)); letter-spacing: 0.03em;
   }
   /* Home = square, away = diamond, both filled with the club's own colour
      (data/clubs.yml). Fixed pixel sizes rather than a text glyph — a
@@ -228,8 +227,12 @@
      some fixtures look like they had "bigger text" than others. */
   .swatch, .swatch-diamond, .swatch-neutral {
     display: inline-block; width: 8px; height: 8px;
-    vertical-align: middle; flex: none;
+    vertical-align: middle; flex: none; background: var(--club, var(--ink));
   }
+  /* A European leg whose home/away is not yet confirmed. */
+  .swatch-dim { opacity: 0.4; }
+  .fx-row .swatch, .fx-row .swatch-diamond, .fx-row .swatch-neutral { margin-right: 5px; }
+  .fx-row .muted { color: var(--muted); }
   .swatch { border-radius: 2px; }
   .swatch-diamond { border-radius: 1px; transform: rotate(45deg); }
   /* Cup final only: neutral ground, so neither the square (home) nor the
@@ -267,7 +270,7 @@
   .cal-day.out-month { color: var(--muted); background: #fbfbfa; }
   .cal-daynum { font-size: 12.5px; font-variant-numeric: tabular-nums; }
   .cal-dots { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; min-height: 8px; }
-  .cal-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
+  .cal-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--comp-fg, var(--muted)); }
   .day-details { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 14px; }
   .day-detail-empty { color: var(--muted); font-size: 13.5px; }
   .day-detail .rlabel { margin-bottom: 8px; }
@@ -285,6 +288,9 @@
     .month-grid { min-width: 0; }
     .cal-day { min-height: 40px; padding: 4px 1px; }
   }
+</style>
+<style id="palette">
+{{ palette_css }}
 </style>
 </head>
 <body>
@@ -404,91 +410,10 @@
   {% endfor %}
 </div>
 
-{% macro fx_card(match, show_competition=False) %}
-<span class="fx {% if match.paired %}paired{% endif %}"
-      data-clubs="{{ match.home_club }} {{ match.away_club }}"
-      data-competition="{{ match.competition_id }}"
-      title="{{ match.venue }}">
-  <span class="d">{{ match.weekday }} {{ match.date.strftime('%d/%m') }}{% if match.kickoff_time %} {{ match.kickoff_time }}{% endif %}</span>
-  {% if show_competition %}
-  <span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span>
-  {% endif %}
-  <span class="swatch" style="background:{{ match.color }}" aria-hidden="true"></span>
-  <span class="h" title="{{ match.home }}">{{ match.home_short }}</span>
-  <span class="vs">v</span>
-  <span class="swatch-diamond" style="background:{{ match.away_color }}" aria-hidden="true"></span>
-  <span title="{{ match.away }}">{{ match.away_short }}</span>
-  {% if match.paired %}
-  <span class="pair-badge" role="img" aria-label="back-to-back home day with the club's other team"></span>
-  {% endif %}
-</span>
-{% endmacro %}
-
-{% macro cup_fx_card(fixture, show_competition=False) %}
-<span class="fx" data-clubs="{{ fixture.club_id }}" title="{{ fixture.venue_label }}">
-  <span class="d">{{ fixture.weekday }} {{ fixture.date.strftime('%d/%m') }}</span>
-  {% if show_competition %}
-  <span class="comp-tag" style="background:{{ fixture.comp_bg }};color:{{ fixture.comp_fg }}" title="{{ fixture.competition_name }}">{{ fixture.competition_short }}</span>
-  {% endif %}
-  {% if fixture.venue_type == 'home' %}
-  <span class="swatch" style="background:{{ fixture.color }}" aria-hidden="true"></span>
-  {% elif fixture.venue_type == 'away' %}
-  <span class="swatch-diamond" style="background:{{ fixture.color }}" aria-hidden="true"></span>
-  {% else %}
-  <span class="swatch-neutral" style="background:{{ fixture.color }}" aria-hidden="true"></span>
-  {% endif %}
-  <span class="h" title="{{ fixture.team_full }}">{{ fixture.team }}</span>
-  <span class="vs">v TBD</span>
-</span>
-{% endmacro %}
-
-{% macro european_fx_card(fixture, show_competition=False) %}
-<span class="fx" data-clubs="{{ fixture.club_id }}" title="{{ fixture.venue_label }}">
-  <span class="d">{{ fixture.weekday }} {{ fixture.date.strftime('%d/%m') }}</span>
-  {% if show_competition %}
-  <span class="comp-tag" style="background:{{ fixture.comp_bg }};color:{{ fixture.comp_fg }}" title="{{ fixture.competition_name }}">{{ fixture.competition_short }}</span>
-  {% endif %}
-  {% if fixture.venue_type == 'home' %}
-  <span class="swatch" style="background:{{ fixture.color }}" aria-hidden="true"></span>
-  {% elif fixture.venue_type == 'away' %}
-  <span class="swatch-diamond" style="background:{{ fixture.color }}" aria-hidden="true"></span>
-  {% else %}
-  <span class="swatch" style="background:{{ fixture.color }};opacity:0.4" aria-hidden="true"></span>
-  {% endif %}
-  <span class="h" title="{{ fixture.team_full }}">{{ fixture.team }}</span>
-  <span class="vs">v {{ fixture.opponent }}</span>
-</span>
-{% endmacro %}
-
-{% macro day_row(match) %}
-{# Compact one-line row for the month calendar's day-detail blocks (issue
-   #77) — a drill-down list, not the primary view, so it skips the full
-   fx_card/cup_fx_card/european_fx_card markup (date text, venue tooltip) to
-   keep the per-day blocks the report duplicates three times over (once per
-   candidate option) from bloating the page. #}
-<div class="day-row"
-     data-clubs="{{ (match.home_club ~ ' ' ~ match.away_club) if match.home_club is defined else match.club_id }}">
-  <span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span>
-  {% if match.is_cup %}
-  <span class="swatch{{ '-diamond' if match.venue_type == 'away' else ('-neutral' if match.venue_type == 'neutral' else '') }}"
-        style="background:{{ match.color }}" aria-hidden="true"></span>
-  <span>{{ match.team }}</span><span class="vs">v TBD</span>
-  {% elif match.is_european %}
-  <span class="swatch{{ '-diamond' if match.venue_type == 'away' else '' }}"
-        style="background:{{ match.color }}{{ ';opacity:0.4' if match.venue_type == 'unknown' else '' }}" aria-hidden="true"></span>
-  <span>{{ match.team }}</span><span class="vs">v {{ match.opponent }}</span>
-  {% else %}
-  <span class="swatch" style="background:{{ match.color }}" aria-hidden="true"></span>
-  <span>{{ match.home_short }}</span><span class="vs">v</span>
-  <span class="swatch-diamond" style="background:{{ match.away_color }}" aria-hidden="true"></span>
-  <span>{{ match.away_short }}</span>
-  {% endif %}
-  {% if match.kickoff_time %}<span class="d">{{ match.kickoff_time }}</span>{% endif %}
-</div>
-{% endmacro %}
-
 {% for option in options %}
 <section class="panel" id="panel-{{ loop.index }}" role="tabpanel" {% if not loop.first %}hidden{% endif %}>
+{# Panels other than the first stay inert in a <template> until their tab is opened (#42). #}
+{% if not loop.first %}<template>{% endif %}
 
   <div class="scoreline">
     <div class="total">{{ '%.0f'|format(option.points) }}<small>/ 100 · raw soft score {{ '%.1f'|format(option.soft_total) }}</small></div>
@@ -500,7 +425,7 @@
   </div>
 
   <div class="headline-scope"></div>
-  <div class="headlines" data-global="{{ option.headlines_json }}" data-club="{{ option.club_headlines_json }}">
+  <div class="headlines">
     {% for headline in option.headlines %}
     <div class="headline">
       <div class="v">{{ headline.value }}</div>
@@ -664,6 +589,8 @@
   </details>
   {% endif %}
 
+  <noscript><div class="warnings">This report draws its fixtures with JavaScript; enable it to see them.</div></noscript>
+
   <div class="controls">
     <div class="view-toggle">
       <button type="button" class="view-btn" data-view="by-competition">By competition</button>
@@ -685,72 +612,14 @@
   <div class="legend">
     <span><span class="fx-demo" aria-hidden="true"></span>green = back-to-back home day for a dual club</span>
     <span><span class="pair-badge" style="margin-right:5px" aria-hidden="true"></span>dot = this fixture is one of that back-to-back pair</span>
-    <span><span class="swatch" style="background:var(--ink);margin-right:5px" aria-hidden="true"></span>square = home club colour</span>
-    <span><span class="swatch-diamond" style="background:var(--ink);margin-right:5px" aria-hidden="true"></span>diamond = away club colour</span>
-    <span><span class="swatch-neutral" style="background:var(--ink);margin-right:5px" aria-hidden="true"></span>circle = cup final, neutral ground</span>
+    <span><span class="swatch" style="margin-right:5px" aria-hidden="true"></span>square = home club colour</span>
+    <span><span class="swatch-diamond" style="margin-right:5px" aria-hidden="true"></span>diamond = away club colour</span>
+    <span><span class="swatch-neutral" style="margin-right:5px" aria-hidden="true"></span>circle = cup final, neutral ground</span>
   </div>
 
-  <div class="cal-wrap view-pane" data-view="by-competition">
-  {% for competition in option.by_competition %}
-    <div class="comp">
-      <h3>{{ competition.name }}</h3>
-      {% if competition.is_cup %}
-      <div class="meta">
-        {{ competition.match_count }} teams entered · opponent drawn closer to each round, so dates
-        are per-team, not fixtures · home/away assumed per NM rules (away for the first three
-        rounds, then alternating; final always neutral)
-      </div>
-      {% for round in competition.rounds %}
-      <div class="round">
-        <div class="rlabel" {% if round.note %}title="{{ round.note }}"{% endif %}>
-          <b>{{ round.name }}</b>
-          {{ round.dates }} · {{ round.venue_summary }}
-        </div>
-        <div class="fixtures">
-          {% for fixture in round.fixtures %}{{ cup_fx_card(fixture) }}{% endfor %}
-        </div>
-      </div>
-      {% endfor %}
-      {% elif competition.is_european %}
-      <div class="meta">
-        {% if competition.is_main_tournament %}
-        {{ competition.match_count }} matchday(s)/round(s) tracked · every reachable team shown
-        with opponent "TBD" — pairings aren't drawn this far ahead
-        {% else %}
-        {{ competition.match_count }} qualifying round(s) tracked · opponent and home/away shown
-        where UEFA has confirmed them, "TBD" where the tie is still conditional on another result
-        {% endif %}
-      </div>
-      {% for round in competition.rounds %}
-      <div class="round">
-        <div class="rlabel" {% if round.note %}title="{{ round.note }}"{% endif %}>
-          <b>{{ round.name }}</b>
-          {{ round.dates }}
-        </div>
-        <div class="fixtures">
-          {% for fixture in round.fixtures %}{{ european_fx_card(fixture) }}{% endfor %}
-        </div>
-      </div>
-      {% endfor %}
-      {% else %}
-      <div class="meta">
-        {{ competition.match_count }} matches over {{ competition.rounds|length }} rounds ·
-        prefers {{ competition.preferred_weekday }}
-      </div>
-      {% for round in competition.rounds %}
-      <div class="round">
-        <div class="rlabel">
-          <b>Round {{ round.index }}</b>
-          {{ round.dates }} · leg {{ round.leg }}
-        </div>
-        <div class="fixtures">
-          {% for match in round.matches %}{{ fx_card(match) }}{% endfor %}
-        </div>
-      </div>
-      {% endfor %}
-      {% endif %}
-    </div>
-  {% endfor %}
+  {# Fixtures are drawn into each `.pane-body` by report.js from #report-data. #}
+  <div class="cal-wrap view-pane" data-view="by-competition" hidden>
+    <div class="pane-body"></div>
   </div>
 
   <div class="cal-wrap view-pane" data-view="month-calendar" hidden>
@@ -758,55 +627,14 @@
       One dot per competition with something on that day (a match, cup round, or European leg) —
       tap a day to see its games below.
     </div>
-    {% if option.month_calendar %}
-    {% if option.calendar_legend %}
+    {% if calendar_legend %}
     <div class="legend">
-      {% for comp in option.calendar_legend %}
-      <span><span class="cal-dot" style="background:{{ comp.color }}" aria-hidden="true"></span><b>{{ comp.short }}</b> {{ comp.name }}</span>
+      {% for comp in calendar_legend %}
+      <span><span class="cal-dot {{ comp.cls }}" aria-hidden="true"></span><b>{{ comp.short }}</b> {{ comp.name }}</span>
       {% endfor %}
     </div>
     {% endif %}
-    {% for month in option.month_calendar %}
-    <div class="month">
-      <h4>{{ month.label }}</h4>
-      <div class="month-grid">
-        <div class="month-grid-row month-grid-head">
-          <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
-        </div>
-        {% for week in month.weeks %}
-        <div class="month-grid-row">
-          {% for day in week %}
-          <button type="button" class="cal-day {{ '' if day.in_month else 'out-month' }}"
-                  data-date="{{ day.date_iso }}" aria-pressed="false"
-                  aria-label="{{ day.date_iso }}{% if day.dots %}: {{ day.dots | map(attribute='name') | join(', ') }}{% endif %}">
-            <span class="cal-daynum">{{ day.day_num }}</span>
-            <span class="cal-dots">
-              {% for dot in day.dots %}
-              <span class="cal-dot" data-clubs="{{ dot.club_ids | join(' ') }}"
-                    style="background:{{ dot.color }}" title="{{ dot.name }}" aria-hidden="true"></span>
-              {% endfor %}
-            </span>
-          </button>
-          {% endfor %}
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-    {% endfor %}
-    <div class="day-details">
-      <div class="day-detail-empty">Tap a day above to see its games here.</div>
-      {% for day in option.month_calendar_details %}
-      <div class="day-detail" data-date="{{ day.date_iso }}" hidden>
-        <div class="rlabel"><b>{{ day.label }}</b></div>
-        <div class="fixtures">
-          {% for match in day.matches %}{{ day_row(match) }}{% endfor %}
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <div class="desc">Nothing scheduled yet.</div>
-    {% endif %}
+    <div class="pane-body"></div>
   </div>
 
   <div class="cal-wrap view-pane" data-view="combined-calendar" hidden>
@@ -816,87 +644,14 @@
       drawn closer to each round), so those cards show "v TBD" — see
       "By competition" for the venue rule behind each round.
     </div>
-    {% for week in option.combined_calendar %}
-    <div class="round">
-      <div class="rlabel">
-        <b>{{ week.label }}</b>
-        {{ week.dates }}
-      </div>
-      <div class="fixtures">
-        {% for match in week.matches %}
-          {% if match.is_cup %}{{ cup_fx_card(match, show_competition=True) }}
-          {% elif match.is_european %}{{ european_fx_card(match, show_competition=True) }}
-          {% else %}{{ fx_card(match, show_competition=True) }}{% endif %}
-        {% endfor %}
-      </div>
-    </div>
-    {% endfor %}
+    <div class="pane-body"></div>
   </div>
 
   <div class="cal-wrap view-pane" data-view="combined-list" hidden>
-    <table>
-      <thead>
-        <tr><th>Date</th><th>Competition</th><th>Home</th><th></th><th>Away</th><th>Venue</th></tr>
-      </thead>
-      <tbody>
-      {% for match in option.combined_list %}
-      {% if match.is_cup %}
-      <tr class="fx-row" data-clubs="{{ match.club_id }}" data-competition="{{ match.competition_id }}">
-        <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}</td>
-        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span></td>
-        <td>
-          {% if match.venue_type == 'home' %}
-          <span class="swatch" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
-          {% elif match.venue_type == 'away' %}
-          <span class="swatch-diamond" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
-          {% else %}
-          <span class="swatch-neutral" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
-          {% endif %}
-          <span title="{{ match.team_full }}">{{ match.team }}</span>
-        </td>
-        <td style="color:var(--muted)">v</td>
-        <td style="color:var(--muted)">TBD ({{ match.round_name }})</td>
-        <td>{{ match.venue_label }}</td>
-      </tr>
-      {% elif match.is_european %}
-      <tr class="fx-row" data-clubs="{{ match.club_id }}" data-competition="{{ match.competition_id }}">
-        <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}</td>
-        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span></td>
-        <td>
-          {% if match.venue_type == 'home' %}
-          <span class="swatch" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
-          {% elif match.venue_type == 'away' %}
-          <span class="swatch-diamond" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
-          {% else %}
-          <span class="swatch" style="background:{{ match.color }};opacity:0.4;margin-right:5px" aria-hidden="true"></span>
-          {% endif %}
-          <span title="{{ match.team_full }}">{{ match.team }}</span>
-        </td>
-        <td style="color:var(--muted)">v</td>
-        <td style="color:var(--muted)">{{ match.opponent }} ({{ match.round_name }})</td>
-        <td>{{ match.venue_label }}</td>
-      </tr>
-      {% else %}
-      <tr class="fx-row" data-clubs="{{ match.home_club }} {{ match.away_club }}" data-competition="{{ match.competition_id }}">
-        <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}{% if match.kickoff_time %} {{ match.kickoff_time }}{% endif %}</td>
-        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span></td>
-        <td>
-          <span class="swatch" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
-          <span title="{{ match.home }}">{{ match.home_short }}</span>
-        </td>
-        <td style="color:var(--muted)">v</td>
-        <td>
-          <span class="swatch-diamond" style="background:{{ match.away_color }};margin-right:5px" aria-hidden="true"></span>
-          <span title="{{ match.away }}">{{ match.away_short }}</span>
-        </td>
-        <td>{{ match.venue }}</td>
-      </tr>
-      {% endif %}
-      {% endfor %}
-      </tbody>
-    </table>
+    <div class="pane-body"></div>
   </div>
 
+{% if not loop.first %}</template>{% endif %}
 </section>
 {% endfor %}
 
@@ -907,242 +662,9 @@
 
 </div>
 
+<script type="application/json" id="report-data">{{ report_data_json }}</script>
 <script>
-  document.querySelectorAll('.tab').forEach(function (tab) {
-    tab.addEventListener('click', function () {
-      document.querySelectorAll('.tab').forEach(function (other) {
-        other.setAttribute('aria-selected', String(other === tab));
-      });
-      document.querySelectorAll('.panel').forEach(function (panel) {
-        panel.hidden = panel.id !== tab.dataset.panel;
-      });
-    });
-  });
-
-  // Per-panel view toggle (by competition / combined calendar / combined
-  // list) and club filter. Scoped to `panel` throughout — with more than one
-  // schedule option on the page, each panel needs its own independent view
-  // and filter state, or switching the outer option tabs would leak one
-  // panel's selection into another.
-  document.querySelectorAll('.panel').forEach(function (panel) {
-    var viewButtons = panel.querySelectorAll('.view-btn');
-    var clubSelect = panel.querySelector('.club-select');
-    if (!viewButtons.length) return;
-
-    // Headline numbers (matches on preferred weekday, back-to-back home
-    // days, ...) restated for the selected club, in place of the season-wide
-    // totals — the JSON payloads are rendered server-side once per option
-    // (see `club_headlines_json` in report/render.py) and swapped in here so
-    // filtering never needs a page reload.
-    var headlinesEl = panel.querySelector('.headlines');
-    var headlineScope = panel.querySelector('.headline-scope');
-    var globalHeadlines = headlinesEl ? JSON.parse(headlinesEl.dataset.global || '[]') : [];
-    var clubHeadlines = headlinesEl ? JSON.parse(headlinesEl.dataset.club || '{}') : {};
-
-    function renderHeadlines(rows) {
-      if (!headlinesEl) return;
-      headlinesEl.innerHTML = '';
-      rows.forEach(function (row) {
-        var tile = document.createElement('div');
-        tile.className = 'headline';
-        var v = document.createElement('div');
-        v.className = 'v';
-        v.textContent = row.value;
-        var l = document.createElement('div');
-        l.className = 'l';
-        l.textContent = row.label;
-        tile.appendChild(v);
-        tile.appendChild(l);
-        headlinesEl.appendChild(tile);
-      });
-    }
-
-    function applyClubFilter() {
-      var value = clubSelect ? clubSelect.value : '';
-      panel.querySelectorAll('[data-clubs]').forEach(function (el) {
-        var clubs = el.dataset.clubs ? el.dataset.clubs.split(' ') : [];
-        var visible = !value || clubs.indexOf(value) !== -1;
-        el.classList.toggle('club-hidden', !visible);
-      });
-      // Hide now-empty round/week groups and competitions rather than
-      // leaving blank labels behind. Cup fixtures carry `data-clubs` too
-      // (one entry per entered team, not per pairing), so the same filter
-      // reaches them.
-      panel.querySelectorAll('.round').forEach(function (round) {
-        var fixtures = round.querySelectorAll('.fx[data-clubs]');
-        if (!fixtures.length) return;
-        var anyVisible = round.querySelector('.fx[data-clubs]:not(.club-hidden)');
-        round.classList.toggle('club-hidden', !anyVisible);
-      });
-      panel.querySelectorAll('.comp').forEach(function (comp) {
-        var rounds = comp.querySelectorAll('.round');
-        if (!rounds.length) return;
-        var anyVisible = comp.querySelector('.round:not(.club-hidden)');
-        comp.classList.toggle('club-hidden', !anyVisible);
-      });
-      // Same rollup for the month calendar's day-detail blocks — a club's
-      // dots and rows carry `data-clubs` too (via the generic sweep above),
-      // so a day with nothing for the selected club collapses rather than
-      // showing an empty heading (issue #77 review).
-      updateDayDetailEmptyState();
-      if (value && clubHeadlines[value]) {
-        renderHeadlines(clubHeadlines[value]);
-        if (headlineScope) {
-          var label = clubSelect.options[clubSelect.selectedIndex].text;
-          headlineScope.textContent = label + '’s matches only:';
-        }
-      } else {
-        renderHeadlines(globalHeadlines);
-        if (headlineScope) headlineScope.textContent = '';
-      }
-    }
-
-    function setView(name) {
-      viewButtons.forEach(function (btn) {
-        var active = btn.dataset.view === name;
-        btn.classList.toggle('active', active);
-        btn.setAttribute('aria-pressed', String(active));
-      });
-      panel.querySelectorAll('.view-pane').forEach(function (pane) {
-        pane.hidden = pane.dataset.view !== name;
-      });
-    }
-
-    viewButtons.forEach(function (btn) {
-      btn.addEventListener('click', function () { setView(btn.dataset.view); });
-    });
-    if (clubSelect) {
-      clubSelect.addEventListener('change', applyClubFilter);
-    }
-
-    // Month calendar: tapping a day cell shows that day's games in the
-    // per-day detail blocks rendered below the grid (issue #77) — every
-    // block starts hidden, and a tap shows the one matching the clicked
-    // date while re-hiding whichever was shown before.
-    var calDays = panel.querySelectorAll('.cal-day[data-date]');
-    var dayDetails = panel.querySelectorAll('.day-detail[data-date]');
-    var dayDetailEmpty = panel.querySelector('.day-detail-empty');
-
-    // Re-derives whether the currently *selected* day still has anything to
-    // show once the club filter (which hides individual `.day-row`s, same
-    // as it hides `.fx` cards elsewhere) has run — a day with nothing left
-    // for the chosen club collapses to the empty-state message instead of
-    // showing a bare date heading. Shared between the day-tap handler and
-    // `applyClubFilter` since either one can change what's visible.
-    function updateDayDetailEmptyState() {
-      var visibleDetail = null;
-      dayDetails.forEach(function (detail) {
-        var rows = detail.querySelectorAll('.day-row[data-clubs]');
-        if (rows.length) {
-          var anyRowVisible = detail.querySelector('.day-row[data-clubs]:not(.club-hidden)');
-          detail.classList.toggle('club-hidden', !anyRowVisible);
-        }
-        if (!detail.hidden && !detail.classList.contains('club-hidden')) {
-          visibleDetail = detail;
-        }
-      });
-      if (!dayDetailEmpty) return visibleDetail;
-      var daySelected = panel.querySelector('.cal-day.selected');
-      if (!daySelected) {
-        dayDetailEmpty.hidden = false;
-        dayDetailEmpty.textContent = 'Tap a day above to see its games here.';
-      } else if (visibleDetail) {
-        dayDetailEmpty.hidden = true;
-      } else {
-        dayDetailEmpty.hidden = false;
-        dayDetailEmpty.textContent = 'No games on this day.';
-      }
-      return visibleDetail;
-    }
-
-    calDays.forEach(function (dayBtn) {
-      dayBtn.addEventListener('click', function () {
-        var chosenDate = dayBtn.dataset.date;
-        calDays.forEach(function (other) {
-          var isSelected = other.dataset.date === chosenDate;
-          other.classList.toggle('selected', isSelected);
-          other.setAttribute('aria-pressed', String(isSelected));
-        });
-        dayDetails.forEach(function (detail) {
-          detail.hidden = detail.dataset.date !== chosenDate;
-        });
-        var shownDetail = updateDayDetailEmptyState();
-        // The calendar can span well over a year (cup rounds run into next
-        // spring), so the shared detail block sits far below a day tapped in
-        // an early month — scroll it into view rather than leaving the
-        // reader to hunt for it themselves.
-        (shownDetail || dayDetailEmpty).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      });
-    });
-
-    setView(viewButtons[0].dataset.view);
-    applyClubFilter();
-  });
-
-  // Rule-description tooltips: hover/focus works via CSS alone; this adds
-  // tap-to-toggle for touch devices (no hover state), positions the
-  // (position:fixed) tooltip against its icon so it can't be clipped by
-  // an ancestor's overflow, and keeps it from overflowing the viewport
-  // or drifting from its icon while the page scrolls.
-  function positionTooltip(wrap) {
-    var icon = wrap.querySelector('.info-icon');
-    var tooltip = wrap.querySelector('.tooltip');
-    if (!icon || !tooltip) return;
-    var iconRect = icon.getBoundingClientRect();
-    tooltip.style.left = iconRect.left + 'px';
-    tooltip.style.top = (iconRect.bottom + 6) + 'px';
-    var rect = tooltip.getBoundingClientRect();
-    var rightOverflow = rect.right - (window.innerWidth - 8);
-    var leftOverflow = 8 - rect.left;
-    if (rightOverflow > 0) {
-      tooltip.style.left = (iconRect.left - rightOverflow) + 'px';
-    } else if (leftOverflow > 0) {
-      tooltip.style.left = leftOverflow + 'px';
-    }
-  }
-  function repositionVisibleTooltips() {
-    document.querySelectorAll('.info-wrap:hover, .info-wrap:focus-within, .info-wrap.open').forEach(positionTooltip);
-  }
-  document.querySelectorAll('.info-wrap').forEach(function (wrap) {
-    wrap.addEventListener('mouseenter', function () { positionTooltip(wrap); });
-    wrap.addEventListener('focusin', function () { positionTooltip(wrap); });
-  });
-  document.querySelectorAll('.info-icon').forEach(function (icon) {
-    icon.addEventListener('click', function (e) {
-      e.stopPropagation();
-      // Some icons now sit inside a <summary> (the collapsible "Biggest
-      // upsides"/"Biggest problems" entries) — without this, a click here
-      // would also trigger the browser's default toggle of the enclosing
-      // <details>, expanding/collapsing it every time someone reads a rule's
-      // description.
-      e.preventDefault();
-      var wrap = icon.closest('.info-wrap');
-      var wasOpen = wrap.classList.contains('open');
-      document.querySelectorAll('.info-wrap.open').forEach(function (w) {
-        w.classList.remove('open');
-      });
-      if (!wasOpen) {
-        wrap.classList.add('open');
-        positionTooltip(wrap);
-      }
-    });
-  });
-  document.addEventListener('click', function () {
-    document.querySelectorAll('.info-wrap.open').forEach(function (w) {
-      w.classList.remove('open');
-    });
-  });
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') {
-      document.querySelectorAll('.info-wrap.open').forEach(function (w) {
-        w.classList.remove('open');
-      });
-    }
-  });
-  // Capture phase so this also fires for scrolling inside .cal-wrap, whose
-  // 'scroll' event doesn't bubble.
-  window.addEventListener('scroll', repositionVisibleTooltips, true);
-  window.addEventListener('resize', repositionVisibleTooltips);
+{{ client_js }}
 </script>
 </body>
 </html>

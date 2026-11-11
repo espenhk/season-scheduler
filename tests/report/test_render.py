@@ -3,22 +3,24 @@ HTML page's new controls (issues #21-25, #39)."""
 
 from __future__ import annotations
 
-import html
 import json
+import re
+import tempfile
 from collections import Counter
 from datetime import date
+from pathlib import Path
 
 import factories as f
 import pytest
 
+from terminliste.report.payload import json_for_script
 from terminliste.report.render import (
     _club_headlines,
     _cup_entries,
-    _day_dots,
+    _day_competitions,
     _entity_counts,
     _european_entries,
     _fairness_rows,
-    _json_attr,
     _match_entries,
     _month_calendar_view,
     _search_stats_view,
@@ -60,6 +62,26 @@ def _candidate(world, season, matches, constraints, label="Option 1"):
     ctx = EvalContext(world=world, season=season, travel=_FixedTravel(), detail=True)
     score = evaluate(matches, constraints, ctx)
     return Candidate(matches=matches, score=score, label=label)
+
+
+def _render(world, season, candidates, **kwargs) -> str:
+    result = SolverResult(candidates=candidates, solver="test")
+    with tempfile.TemporaryDirectory() as tmp:
+        return render_report(world, season, result, Path(tmp) / "out.html", **kwargs).read_text(
+            encoding="utf-8"
+        )
+
+
+def _report_data(rendered: str) -> dict:
+    """The fixture payload the page's script draws from, parsed back out."""
+    match = re.search(r'<script type="application/json" id="report-data">(.*?)</script>', rendered, re.S)
+    assert match, "report-data script missing"
+    return json.loads(match.group(1))
+
+
+def _fixtures(data: dict, option: int = 0) -> list[dict]:
+    """The option's fixtures indexed by `uid`: shared cup/European entries, then league matches."""
+    return data["shared"] + data["options"][option]["matches"]
 
 
 # -- fairness ----------------------------------------------------------------
@@ -271,42 +293,57 @@ def test_club_headlines_omit_pairing_rows_for_a_non_dual_club():
     ]
 
 
-# -- HTML-attribute-safe JSON ----------------------------------------------
+# -- script-safe JSON -------------------------------------------------------
 
 
-def test_json_attr_escapes_quotes_so_the_json_survives_an_html_attribute():
-    """`season.html.j2` embeds this as `data-club="{{ option.club_headlines_json }}"`
-    — a literal `"` from plain `json.dumps` would terminate the attribute
-    early and corrupt the markup. `_json_attr` must escape it, and a browser
-    unescaping the attribute back (`html.unescape`, standing in for the
-    DOM's `.dataset` decoding) must recover the original JSON exactly."""
-    payload = {"club <b>&</b> co": [{"value": "1", "label": 'on "Sunday"'}]}
+def test_json_for_script_cannot_close_or_open_markup_inside_a_script_element():
+    """The payload sits inside `<script type="application/json">`, so no data
+    string may contain `</script>`, `<!--` or a raw `&`; the escapes are plain
+    JSON, so `json.loads` must still recover the original text exactly."""
+    payload = {"name": "</script><script>alert(1)</script><!-- & \u2028 \u2029", "n": [1, "é"]}
 
-    attr_value = _json_attr(payload)
+    text = json_for_script(payload)
 
-    assert '"' not in attr_value
-    assert "<" not in attr_value
-    assert json.loads(html.unescape(attr_value)) == payload
+    for forbidden in ("<", ">", "&", "\u2028", "\u2029"):
+        assert forbidden not in text
+    assert json.loads(text) == payload
+
+
+def test_render_report_embeds_hostile_names_without_breaking_out_of_the_data_script():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    candidate = _candidate(world, season, [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")], [])
+    hostile = '</script><script>alert(1)</script><!-- "quoted" & more'
+    schedule = f.cup_schedule(
+        "cup1",
+        [f.cup_placement("r1", {"a_m": date(2026, 6, 6)}, round_name=hostile, venue_type="away")],
+        competition_name=hostile,
+    )
+
+    rendered = _render(world, season, [candidate], cup_schedules=[schedule])
+
+    # Exactly the two script elements the template defines: the data and the renderer.
+    assert rendered.count("<script") == 2
+    data = _report_data(rendered)
+    assert data["shared"][0]["n"] == hostile
+    assert data["competitions"]["cup1"]["name"] == hostile
 
 
 # -- combined view -------------------------------------------------------
 
 
-def test_match_entries_carry_short_names_and_club_ids_for_filtering():
+def test_match_entries_carry_team_ids_venue_and_competition_for_the_payload():
     world, season, comp_m, comp_w = _two_dual_clubs_world()
     matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
     candidate = _candidate(world, season, matches, [])
-    club_colors = {c.id: c.color for c in world.clubs.values()}
 
-    entries = _match_entries(world, candidate, club_colors, {"club_a", "club_b"})
+    entries = _match_entries(world, candidate, {"club_a", "club_b"})
     assert len(entries) == 1
     entry = entries[0]
-    assert entry["home_short"] == world.team_short_label("a_m")
-    assert entry["away_short"] == world.team_short_label("opp_m")
-    assert entry["home_club"] == "club_a"
-    assert entry["away_club"] == "opp1"
-    assert entry["color"] == "#112233"
-    assert entry["away_color"] == "#778899"
+    assert entry["home_team"] == "a_m"
+    assert entry["away_team"] == "opp_m"
+    assert entry["venue_id"] == "va"
+    assert entry["home"] == world.team_label("a_m")
+    assert entry["paired"] is False
     assert entry["competition_short"] == comp_m.short_name
 
 
@@ -318,26 +355,23 @@ def test_combined_calendar_interleaves_both_competitions_in_the_same_week():
     ]
     candidate = _candidate(world, season, same_week, [])
 
-    result = SolverResult(candidates=[candidate], solver="test")
-    import tempfile
-    from pathlib import Path
+    rendered = _render(world, season, [candidate])
+    data = _report_data(rendered)
 
-    with tempfile.TemporaryDirectory() as tmp:
-        out = render_report(world, season, result, Path(tmp) / "out.html")
-        html = out.read_text(encoding="utf-8")
-
-    assert "Combined · calendar" in html
-    assert "Combined · list" in html
-    assert 'data-view="combined-list"' in html
-    assert 'class="club-select"' in html
-    # Both competitions' short names show up, and both matches share one
-    # combined week group (there is exactly one "Week" heading between them).
-    assert html.count("Week ") >= 1
+    assert "Combined · calendar" in rendered
+    assert "Combined · list" in rendered
+    assert 'data-view="combined-list"' in rendered
+    assert 'class="club-select"' in rendered
+    # Both matches share one combined week group, and the list holds both.
+    option = data["options"][0]
+    assert len(option["weeks"]) == 1
+    fixtures = _fixtures(data)
+    assert {fixtures[uid]["c"] for uid in option["weeks"][0]["ids"]} == {"elite", "topp"}
+    assert sorted(option["list"]) == sorted(option["weeks"][0]["ids"])
 
 
 def test_cup_entries_flatten_one_row_per_entered_team_per_round():
     world, season, comp_m, comp_w = _two_dual_clubs_world()
-    club_colors = {c.id: c.color for c in world.clubs.values()}
     competition_colors = {"cup1": {"fg": "#111111", "bg": "#eeeeee"}}
     schedule = f.cup_schedule(
         "cup1",
@@ -353,25 +387,24 @@ def test_cup_entries_flatten_one_row_per_entered_team_per_round():
         competition_short_name="NM",
     )
 
-    entries = _cup_entries(world, [schedule], club_colors, competition_colors)
+    entries = _cup_entries(world, [schedule], competition_colors)
 
     assert len(entries) == 2
-    entry = next(e for e in entries if e["team_full"] == world.team_label("a_m"))
-    assert entry["is_cup"] is True
+    entry = next(e for e in entries if e["team_id"] == "a_m")
+    assert entry["team"] == world.team_short_label("a_m")
     assert entry["competition_id"] == "cup1"
     assert entry["competition_name"] == "NM Cup"
     assert entry["competition_short"] == "NM"
     assert entry["round_name"] == "Round 1"
-    assert entry["club_id"] == "club_a"
     assert entry["venue_type"] == "away"
     assert entry["date"] == date(2026, 3, 1)
     assert entry["comp_fg"] == "#111111"
 
 
 def test_combined_views_include_cup_rounds_alongside_league_matches():
-    """A cup round used to only appear under "By competition" — issue: it must
-    also show up in the combined calendar and combined list views, the same
-    place a reader checks for "what's happening this week" across everything."""
+    """A cup round must show up in the combined calendar and combined list as
+    well as under "By competition" — the place a reader checks for "what's
+    happening this week" across everything."""
     world, season, comp_m, comp_w = _two_dual_clubs_world()
     matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
     candidate = _candidate(world, season, matches, [])
@@ -380,29 +413,25 @@ def test_combined_views_include_cup_rounds_alongside_league_matches():
         [f.cup_placement("r1", {"a_m": date(2026, 6, 6)}, round_name="Round 1", venue_type="away")],
         competition_name="NM Cup",
     )
-    result = SolverResult(candidates=[candidate], solver="test")
 
-    import tempfile
-    from pathlib import Path
+    data = _report_data(_render(world, season, [candidate], cup_schedules=[schedule]))
 
-    with tempfile.TemporaryDirectory() as tmp:
-        out = render_report(world, season, result, Path(tmp) / "out.html", cup_schedules=[schedule])
-        html = out.read_text(encoding="utf-8")
-
-    calendar_section = html.split('class="cal-wrap view-pane" data-view="combined-calendar"')[1].split(
-        'class="cal-wrap view-pane" data-view="combined-list"'
-    )[0]
-    list_section = html.split('class="cal-wrap view-pane" data-view="combined-list"')[1]
-
-    assert "NM Cup" in calendar_section
-    assert "v TBD" in calendar_section
-    assert "NM Cup" in list_section
-    assert "TBD (Round 1)" in list_section
+    option = data["options"][0]
+    fixtures = _fixtures(data)
+    (cup_uid,) = [uid for uid, fx in enumerate(fixtures) if fx.get("k") == "cup"]
+    cup = fixtures[cup_uid]
+    assert cup["t"] == "a_m" and cup["n"] == "Round 1" and cup["vt"] == "away"
+    assert data["competitions"]["cup1"]["name"] == "NM Cup"
+    assert cup_uid in option["list"]
+    assert any(cup_uid in week["ids"] for week in option["weeks"])
+    assert any(cup_uid in day["ids"] for day in option["days"])
+    (cup_view,) = data["sharedByCompetition"]
+    assert cup_view["name"] == "NM Cup"
+    assert [r["ids"] for r in cup_view["rounds"]] == [[cup_uid]]
 
 
 def test_european_entries_flatten_one_row_per_entered_team_per_leg():
     world, season, comp_m, comp_w = _two_dual_clubs_world()
-    club_colors = {c.id: c.color for c in world.clubs.values()}
     competition_colors = {"cl": {"fg": "#111111", "bg": "#eeeeee"}}
     round_ = f.european_round(
         "q3",
@@ -413,14 +442,13 @@ def test_european_entries_flatten_one_row_per_entered_team_per_leg():
     comp = f.competition("cl", ["a_m"], format="european", european_rounds=[round_])
     resolved_legs = {("cl", "q3"): (date(2026, 8, 4), date(2026, 8, 11))}
 
-    entries = _european_entries(world, [comp], resolved_legs, club_colors, competition_colors)
+    entries = _european_entries(world, [comp], resolved_legs, competition_colors)
 
     assert len(entries) == 2
     first_leg_entry = next(e for e in entries if e["date"] == date(2026, 8, 4))
-    assert first_leg_entry["is_european"] is True
+    assert first_leg_entry["team_id"] == "a_m"
     assert first_leg_entry["competition_id"] == "cl"
     assert first_leg_entry["opponent"] == "Union Saint-Gilloise"
-    assert first_leg_entry["club_id"] == "club_a"
     # home_leg="second" -> the first leg is away for this team.
     assert first_leg_entry["venue_type"] == "away"
     assert first_leg_entry["comp_fg"] == "#111111"
@@ -432,7 +460,6 @@ def test_european_entries_flatten_one_row_per_entered_team_per_leg():
 
 def test_european_entries_use_unknown_venue_type_when_home_leg_is_not_set():
     world, season, comp_m, comp_w = _two_dual_clubs_world()
-    club_colors = {c.id: c.color for c in world.clubs.values()}
     round_ = f.european_round(
         "playoff",
         forced_date=date(2026, 8, 18),
@@ -441,7 +468,7 @@ def test_european_entries_use_unknown_venue_type_when_home_leg_is_not_set():
     comp = f.competition("cl", ["a_m"], format="european", european_rounds=[round_])
     resolved_legs = {("cl", "playoff"): (date(2026, 8, 18), date(2026, 8, 18))}
 
-    entries = _european_entries(world, [comp], resolved_legs, club_colors, {})
+    entries = _european_entries(world, [comp], resolved_legs, {})
     assert all(e["venue_type"] == "unknown" for e in entries)
     assert all(e["opponent"] == "TBD" for e in entries)
 
@@ -471,7 +498,6 @@ def test_main_tournament_renders_via_the_display_adapter():
     )
 
     world, season, comp_m, comp_w = _two_dual_clubs_world()
-    club_colors = {c.id: c.color for c in world.clubs.values()}
     qualifying = f.competition(
         "cl",
         ["a_m"],
@@ -498,7 +524,7 @@ def test_main_tournament_renders_via_the_display_adapter():
     rounds, resolved_legs = build_main_tournament_rounds_for_display(main, [qualifying, main], set())
     display_main = main.model_copy(update={"european_rounds": rounds})
 
-    entries = _european_entries(world, [display_main], resolved_legs, club_colors, {})
+    entries = _european_entries(world, [display_main], resolved_legs, {})
     # One reachable team (a_m): 1 matchday + 2 r16 legs + 1 final = 4 rows —
     # not 6, which is what emitting two rows for the matchday and the final
     # (the bug the review caught) would produce.
@@ -516,23 +542,22 @@ def test_main_tournament_renders_via_the_display_adapter():
     final_entry = next(e for e in entries if e["date"] == date(2027, 6, 5))
     assert final_entry["round_name"] == "final"
 
-    views = _european_views(world, [display_main], resolved_legs, club_colors)
+    views = _european_views([display_main], resolved_legs, entries)
     assert len(views) == 1
-    assert views[0]["is_main_tournament"] is True
-    assert views[0]["match_count"] == 3
-    matchday_round = next(r for r in views[0]["rounds"] if r["name"] == "md1")
+    assert "3 matchday(s)/round(s) tracked" in views[0]["meta"]
+    matchday_round = next(r for r in views[0]["rounds"] if r["title"] == "md1")
     assert len(matchday_round["fixtures"]) == 1
-    r16_round = next(r for r in views[0]["rounds"] if r["name"] == "r16")
+    r16_round = next(r for r in views[0]["rounds"] if r["title"] == "r16")
     assert len(r16_round["fixtures"]) == 2
-    final_round = next(r for r in views[0]["rounds"] if r["name"] == "final")
+    final_round = next(r for r in views[0]["rounds"] if r["title"] == "final")
     assert len(final_round["fixtures"]) == 1
     assert "Wembley Stadium" in final_round["note"]
 
 
 def test_combined_views_include_european_rounds_alongside_league_matches():
-    """A European round used to be invisible in the report — it must show up
-    both under "By competition" and in the combined calendar/list views,
-    with the real opponent shown where the data has one."""
+    """A European round must show up under "By competition" and in the
+    combined calendar/list views, with the real opponent shown where the data
+    has one."""
     world, season, comp_m, comp_w = _two_dual_clubs_world()
     matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
     candidate = _candidate(world, season, matches, [])
@@ -543,29 +568,21 @@ def test_combined_views_include_european_rounds_alongside_league_matches():
     )
     comp = f.competition("cl", ["a_m"], format="european", european_rounds=[round_])
     resolved_legs = {("cl", "q3"): (date(2026, 6, 6), date(2026, 6, 6))}
-    result = SolverResult(candidates=[candidate], solver="test")
 
-    import tempfile
-    from pathlib import Path
-
-    with tempfile.TemporaryDirectory() as tmp:
-        out = render_report(
-            world,
-            season,
-            result,
-            Path(tmp) / "out.html",
-            european_competitions=[comp],
-            resolved_legs=resolved_legs,
+    data = _report_data(
+        _render(
+            world, season, [candidate], european_competitions=[comp], resolved_legs=resolved_legs
         )
-        html = out.read_text(encoding="utf-8")
+    )
 
-    calendar_section = html.split('class="cal-wrap view-pane" data-view="combined-calendar"')[1].split(
-        'class="cal-wrap view-pane" data-view="combined-list"'
-    )[0]
-    list_section = html.split('class="cal-wrap view-pane" data-view="combined-list"')[1]
-
-    assert "Union Saint-Gilloise" in calendar_section
-    assert "Union Saint-Gilloise" in list_section
+    option = data["options"][0]
+    fixtures = _fixtures(data)
+    (eu_uid,) = [uid for uid, fx in enumerate(fixtures) if fx.get("k") == "eu"]
+    assert fixtures[eu_uid]["o"] == "Union Saint-Gilloise"
+    assert eu_uid in option["list"]
+    assert any(eu_uid in week["ids"] for week in option["weeks"])
+    (eu_view,) = data["sharedByCompetition"]
+    assert [r["ids"] for r in eu_view["rounds"]] == [[eu_uid]]
 
 
 # -- month calendar (issue #77) -------------------------------------------
@@ -576,35 +593,49 @@ def test_tint_lightens_a_hex_color_toward_white():
     assert _tint("#000000", factor=1.0) == "#ffffff"
 
 
-def test_day_dots_deduplicates_multiple_entries_from_the_same_competition():
+def test_day_competitions_lists_each_competition_once_ordered_by_name():
     """Two Eliteserien matches on the same day still show one dot — issue
-    #77 asks for "only one dot per league per day" — but the dot still
-    collects every club that played, for the club filter (issue #77
-    review)."""
+    #77 asks for "only one dot per league per day"."""
     entries = [
-        {"competition_id": "elite", "competition_name": "Eliteserien", "comp_fg": "#ca6f1e",
-         "home_club": "club_a", "away_club": "club_b"},
-        {"competition_id": "elite", "competition_name": "Eliteserien", "comp_fg": "#ca6f1e",
-         "home_club": "club_c", "away_club": "club_d"},
-        {"competition_id": "topp", "competition_name": "Toppserien", "comp_fg": "#8e44ad",
-         "home_club": "club_a", "away_club": "club_e"},
+        {"competition_id": "topp", "competition_name": "Toppserien"},
+        {"competition_id": "elite", "competition_name": "Eliteserien"},
+        {"competition_id": "elite", "competition_name": "Eliteserien"},
     ]
-    assert _day_dots(entries) == [
-        {"name": "Eliteserien", "color": "#ca6f1e", "club_ids": ["club_a", "club_b", "club_c", "club_d"]},
-        {"name": "Toppserien", "color": "#8e44ad", "club_ids": ["club_a", "club_e"]},
-    ]
+    assert _day_competitions(entries) == ["elite", "topp"]
 
 
-def test_day_dots_reads_club_id_off_cup_and_european_entries():
-    """The other two combined-view entry shapes (cup, European) carry
-    `club_id` rather than `home_club`/`away_club` — `_day_dots` must read
-    whichever one an entry actually has."""
-    entries = [
-        {"competition_id": "cup", "competition_name": "NM Cup", "comp_fg": "#c0392b", "club_id": "club_a"},
-        {"competition_id": "cl", "competition_name": "Champions League", "comp_fg": "#0b2c40", "club_id": "club_b"},
-    ]
-    dots = {d["name"]: d["club_ids"] for d in _day_dots(entries)}
-    assert dots == {"NM Cup": ["club_a"], "Champions League": ["club_b"]}
+def test_every_payload_fixture_resolves_to_a_club_for_the_club_filter():
+    """The page's club filter reads a fixture's clubs off its team ids: both
+    sides of a league match, the one entered team of a cup or European entry."""
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    candidate = _candidate(world, season, [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")], [])
+    schedule = f.cup_schedule(
+        "cup1", [f.cup_placement("r1", {"b_m": date(2026, 6, 6)}, venue_type="home")]
+    )
+    round_ = f.european_round(
+        "q3", forced_date=date(2026, 6, 6), ties=[f.european_tie("b_w", opponent="X")]
+    )
+    comp = f.competition("cl", ["b_w"], format="european", european_rounds=[round_])
+    resolved_legs = {("cl", "q3"): (date(2026, 6, 6), date(2026, 6, 6))}
+
+    data = _report_data(
+        _render(
+            world,
+            season,
+            [candidate],
+            cup_schedules=[schedule],
+            european_competitions=[comp],
+            resolved_legs=resolved_legs,
+        )
+    )
+
+    teams = data["teams"]
+    clubs_of = []
+    for fx in _fixtures(data):
+        teams_in = [fx["h"], fx["a"]] if "h" in fx else [fx["t"]]
+        clubs_of.append({teams[t]["club"] for t in teams_in})
+    assert sorted(map(sorted, clubs_of)) == [["club_a", "opp1"], ["club_b"], ["club_b"]]
+    assert all(club in data["clubs"] for club in {"club_a", "club_b", "opp1"})
 
 
 def test_month_calendar_view_builds_a_full_month_grid_and_day_details():
@@ -626,13 +657,12 @@ def test_month_calendar_view_builds_a_full_month_grid_and_day_details():
     month = months[0]
     assert month["label"] == "March 2026"
     assert all(len(week) == 7 for week in month["weeks"])  # Monday-first, full rows
-    matched = [day for week in month["weeks"] for day in week if day["date_iso"] == "2026-03-01"]
-    assert len(matched) == 1
-    assert matched[0]["in_month"] is True
-    assert matched[0]["dots"] == [{"name": "Eliteserien", "color": "#ca6f1e", "club_ids": ["club_a", "club_b"]}]
+    assert [iso for week in month["weeks"] for iso in week].count("2026-03-01") == 1
+    assert month["key"] == "2026-03"
 
     assert len(day_details) == 1
     assert day_details[0]["date_iso"] == "2026-03-01"
+    assert day_details[0]["competition_ids"] == ["elite"]
     assert day_details[0]["matches"] == entries
 
 
@@ -648,14 +678,8 @@ def test_month_calendar_view_spans_multiple_months_and_pads_out_month_days():
     assert [m["label"] for m in months] == ["March 2026", "April 2026"]
     assert len(day_details) == 2
     # 1 April also shows up as an out-of-month padding cell at the tail of
-    # March's grid, carrying the same dot — but only one day_details entry.
-    march_padding = [
-        day for week in months[0]["weeks"] for day in week if day["date_iso"] == "2026-04-01"
-    ]
-    assert march_padding and march_padding[0]["in_month"] is False
-    assert march_padding[0]["dots"] == [
-        {"name": "Toppserien", "color": "#8e44ad", "club_ids": ["club_c", "club_d"]}
-    ]
+    # March's grid, but only one day_details entry exists for it.
+    assert "2026-04-01" in [iso for week in months[0]["weeks"] for iso in week]
 
 
 def test_month_calendar_view_is_empty_for_no_entries():
@@ -688,70 +712,139 @@ def test_month_calendar_view_sorts_a_day_detail_by_kickoff_time():
     assert day_details[0]["matches"][2]["competition_id"] == "cup"
 
 
-def test_render_report_includes_month_calendar_with_a_dot_and_tappable_day():
+def test_render_report_month_calendar_has_a_pane_and_carries_days_comps_and_months_as_data():
     world, season, comp_m, comp_w = _two_dual_clubs_world()
     matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
     candidate = _candidate(world, season, matches, [])
-    result = SolverResult(candidates=[candidate], solver="test")
 
-    import tempfile
-    from pathlib import Path
-
-    with tempfile.TemporaryDirectory() as tmp:
-        out = render_report(world, season, result, Path(tmp) / "out.html")
-        rendered = out.read_text(encoding="utf-8")
+    rendered = _render(world, season, [candidate])
+    data = _report_data(rendered)
 
     assert "Month calendar" in rendered
     assert 'data-view="month-calendar"' in rendered
-    assert 'data-date="2026-06-06"' in rendered
-    assert 'class="cal-dot"' in rendered
+    option = data["options"][0]
+    (month,) = option["months"]
+    assert month["label"] == "June 2026" and month["key"] == "2026-06"
+    assert all(len(week) == 7 for week in month["weeks"])
+    assert "2026-06-06" in [iso for week in month["weeks"] for iso in week]
+    (day,) = option["days"]
+    assert day["date"] == "2026-06-06"
+    assert day["label"] == "Saturday 06 June 2026"
+    assert day["comps"] == ["elite"]
+    assert [_fixtures(data)[uid]["h"] for uid in day["ids"]] == ["a_m"]
 
 
-def test_render_report_month_calendar_carries_club_ids_and_a_color_legend():
-    """Issue #77 review: the club filter (`applyClubFilter` in
-    season.html.j2) sweeps every `[data-clubs]` element in the panel, so the
-    calendar's dots and day-detail rows need that attribute too, or
-    filtering by club would leave the calendar showing everyone's games."""
+def test_render_report_month_calendar_legend_and_colours_come_from_css_classes():
+    """Colours are custom properties on per-club and per-competition classes,
+    not inline styles repeated per element; the legend names each competition
+    next to a dot of its class (factories.competition() sets `name=id`)."""
     world, season, comp_m, comp_w = _two_dual_clubs_world()
     matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
     candidate = _candidate(world, season, matches, [])
-    result = SolverResult(candidates=[candidate], solver="test")
 
-    import tempfile
-    from pathlib import Path
+    rendered = _render(world, season, [candidate])
 
-    with tempfile.TemporaryDirectory() as tmp:
-        out = render_report(world, season, result, Path(tmp) / "out.html")
-        rendered = out.read_text(encoding="utf-8")
-
-    assert 'class="cal-dot" data-clubs="club_a opp1"' in rendered
-    assert 'class="day-row"' in rendered
-    assert 'data-clubs="club_a opp1"' in rendered
-    # The colour legend names the competition next to a swatch of its colour
-    # (factories.competition() sets `name=id`, so "elite" is the real name here).
-    calendar_pane = rendered.split('class="cal-wrap view-pane" data-view="month-calendar"')[1].split("<h4>")[0]
+    calendar_pane = rendered.split('class="cal-wrap view-pane" data-view="month-calendar"')[1].split(
+        '<div class="pane-body">'
+    )[0]
     assert "elite" in calendar_pane
-    assert '<span class="cal-dot" style="background:' in calendar_pane
+    assert '<span class="cal-dot c-elite"' in calendar_pane
+    assert ".k-club_a{--club:#112233}" in rendered
+    assert ".c-elite{--comp-fg:" in rendered
+    assert 'style="background' not in rendered
+    data = _report_data(rendered)
+    assert data["clubs"]["club_a"] == "k-club_a"
+    assert data["competitions"]["elite"]["cls"] == "c-elite"
+    assert data["competitions"]["elite"]["short"] == comp_m.short_name
+    assert data["competitions"]["elite"]["name"] == comp_m.name
 
 
-def test_render_report_month_calendar_day_detail_uses_the_competition_short_name():
-    """The month calendar's day-detail rows are the cramped spot this exists
-    for: the comp-tag shows the short name, with the full name still
-    reachable via a title tooltip."""
+# -- embedded fixture payload (#42) ------------------------------------------
+
+
+def test_each_option_embeds_its_league_matches_once_and_shares_cup_entries():
     world, season, comp_m, comp_w = _two_dual_clubs_world()
-    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    first = _candidate(
+        world, season, [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")], [], label="Option 1"
+    )
+    second = _candidate(
+        world,
+        season,
+        [
+            f.match("elite", "a_m", "opp_m", date(2026, 6, 13), "va"),
+            f.match("topp", "a_w", "opp_w", date(2026, 6, 14), "va"),
+        ],
+        [],
+        label="Option 2",
+    )
+    schedule = f.cup_schedule(
+        "cup1", [f.cup_placement("r1", {"a_m": date(2026, 6, 6)}, venue_type="home")]
+    )
+
+    rendered = _render(world, season, [first, second], cup_schedules=[schedule])
+    data = _report_data(rendered)
+
+    assert len(data["shared"]) == 1  # the cup entry, not one per option
+    assert [len(o["matches"]) for o in data["options"]] == [1, 2]
+    # Fixtures are drawn by the page's script, not emitted as markup.
+    assert 'class="fx ' not in rendered and 'class="fx"' not in rendered
+    assert '<tr class="fx-row' not in rendered and 'class="day-row' not in rendered
+    # Every uid a view refers to exists in that option's fixture list.
+    for index, option in enumerate(data["options"]):
+        size = len(_fixtures(data, index))
+        referenced = set(option["list"])
+        for week in option["weeks"]:
+            referenced |= set(week["ids"])
+        for day in option["days"]:
+            referenced |= set(day["ids"])
+        for view in option["byCompetition"]:
+            for round_ in view["rounds"]:
+                referenced |= set(round_["ids"])
+        assert referenced and max(referenced) < size
+        # The combined list holds every fixture exactly once.
+        assert sorted(option["list"]) == list(range(size))
+
+
+def test_league_match_wire_is_compact_and_omits_the_defaults():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va", kickoff_time="18:00"),
+        f.match("elite", "opp_m", "b_m", date(2026, 6, 7), "va"),  # not opp_m's own ground
+    ]
     candidate = _candidate(world, season, matches, [])
-    result = SolverResult(candidates=[candidate], solver="test")
 
-    import tempfile
-    from pathlib import Path
+    data = _report_data(_render(world, season, [candidate]))
 
-    with tempfile.TemporaryDirectory() as tmp:
-        out = render_report(world, season, result, Path(tmp) / "out.html")
-        rendered = out.read_text(encoding="utf-8")
+    first, second = data["options"][0]["matches"]
+    assert first == {"d": "2026-06-06", "t": "18:00", "c": "elite", "h": "a_m", "a": "opp_m"}
+    assert second["v"] == "va" and "t" not in second
+    assert data["venues"]["va"] == world.venue("va").name
+    assert data["teams"]["a_m"]["short"] == world.team_short_label("a_m")
 
-    day_detail = rendered.split('data-date="2026-06-06" hidden>')[1].split("</div>\n    </div>")[0]
-    assert f'title="{comp_m.name}">{comp_m.short_name}<' in day_detail
+
+def test_paired_home_days_are_flagged_in_the_payload():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va"),
+        f.match("topp", "a_w", "opp_w", date(2026, 6, 7), "va"),
+        f.match("elite", "b_m", "opp_m", date(2026, 7, 4), "vb", round_index=1),
+    ]
+    candidate = _candidate(world, season, matches, [])
+
+    data = _report_data(_render(world, season, [candidate]))
+
+    flags = {m["h"]: m.get("p", 0) for m in data["options"][0]["matches"]}
+    assert flags == {"a_m": 1, "a_w": 1, "b_m": 0}
+
+
+def test_club_filter_headlines_are_embedded_per_option_for_the_page_to_swap():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    candidate = _candidate(world, season, [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")], [])
+
+    option = _report_data(_render(world, season, [candidate]))["options"][0]
+
+    assert option["clubHeadlines"]["club_a"][0] == {"value": "1", "label": "matches"}
+    assert isinstance(option["headlines"], list)
 
 
 # -- search stats (issue #34) -------------------------------------------------

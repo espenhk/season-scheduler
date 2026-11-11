@@ -42,6 +42,12 @@ jobs:
       - name: Install dependencies
         run: poetry install --only football-scheduler,football-scheduler-test
 
+      # Only the report suite drives a browser (tests/report/test_report_page.py),
+      # which skips itself when none is installed.
+      - name: Install Chromium for the report browser test
+        if: inputs.suites == '.' || contains(format(' {0} ', inputs.suites), ' report ')
+        run: poetry run playwright install --with-deps chromium
+
       - name: Run tests
         env:
           SUITES: ${{ inputs.suites }}
