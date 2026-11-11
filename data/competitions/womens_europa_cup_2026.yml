@@ -10,11 +10,22 @@
 # in q1, a third-qualifying-round loss in q2. The tie in q1 for those two is
 # therefore contingent, not an entry.
 #
+# Rosenborg's direct entry in the first qualifying round, the round structure
+# (Q1, Q2, round of 16, then quarter-finals onwards, all two-legged) and the
+# dates below are confirmed on UEFA.com (see Sources). The Brann/Vålerenga
+# drop-down routing follows UEFA's stated feeding rule (UWCL Q2 mini-tournament
+# runners-up to Q2, third place to Q1; Q3 losers to Q2). Which Norwegian club
+# actually reaches each round is not modelled beyond that.
+#
 # Only rounds that touch the Toppserien season are modelled: the quarter-finals
 # onwards fall in February-May 2027.
 #
-# Sources (verified: false):
-#   https://www.uefa.com/womenseuropacup/fixtures-results/format/
+# Sources (verified: false — rounds, dates and the Rosenborg Q1 entry match
+# UEFA.com; entrants beyond that and the drop-down split are not independently
+# confirmed):
+#   https://www.uefa.com/womenseuropacup/fixtures-results/format/ (rounds, dates)
+#   https://www.uefa.com/womenseuropacup/fixtures-results/ (Rosenborg in Q1 on 26 Aug, R16 vs Brøndby)
+#   https://www.uefa.com/womenschampionsleague/news/02a6-20d6044fbbb7-39fcd8e06d8b-1000--women-s-champions-league-first-and-second-qualifying-round-/ (feeding rule)
 #   https://en.wikipedia.org/wiki/2026%E2%80%9327_UEFA_Women%27s_Europa_Cup_qualifying_rounds
 id: womens_europa_cup_2026
 name: UEFA Women's Europa Cup
@@ -34,16 +45,17 @@ teams:
 
 min_rest_days: 2
 
-matchday_weekdays: [wednesday]
+# UEFA dates fall on Tue-Thu (Q1 26 Aug, R16 28/29 Oct and 10/11 Nov); windows
+# below hold only days these weekdays resolve. UEFA's Saturday 29 Aug Q1 option
+# is not modelled.
+matchday_weekdays: [tuesday, wednesday, thursday]
 
 european_rounds:
   - id: q1
     name: First qualifying round
     note: "Rosenborg's entry round; first legs 26/29 August, second legs 1/2 September 2026."
     first_leg:
-      window_start: 2026-08-26
-      window_end: 2026-08-29
-      granularity: week
+      forced_date: 2026-08-26
     second_leg:
       window_start: 2026-09-01
       window_end: 2026-09-02

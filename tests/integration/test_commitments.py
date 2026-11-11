@@ -8,6 +8,7 @@ import pytest
 
 from terminliste.frame import build_season_frame
 from terminliste.model.schema import ContingencyPolicy
+from terminliste.solvers.greedy import build_initial_schedule
 
 
 @pytest.fixture(scope="module")
@@ -147,6 +148,27 @@ def test_womens_europe_is_hard_only_at_entry_and_contingent_after(frame):
         "rosenborg_w/womens_europa_cup_2026/q2",
     ):
         assert not by_node[node].hard, node
+
+
+def test_no_toppserien_match_lands_on_a_hard_womens_european_date(world, season, frame):
+    league = world.competition("toppserien_2026")
+    matches, _, _ = build_initial_schedule(
+        world, season, [league], seed=1, commitments=frame.commitments
+    )
+    hard = [
+        c
+        for team in league.teams
+        for c in frame.commitments.hard_for(team)
+        if c.competition_id.startswith("womens_")
+    ]
+    assert hard
+    clashes = [
+        (m.home_team, m.away_team, m.date, c.node_id)
+        for m in matches
+        for c in hard
+        if c.team_id in (m.home_team, m.away_team) and c.clashes(m.date)
+    ]
+    assert not clashes
 
 
 def test_womens_uefa_weeks_never_touch_the_mens_clubs(frame):

@@ -18,10 +18,12 @@
 # The league phase (winner of the third qualifying round) isn't modelled; a
 # Q3 win simply ends the tree here.
 #
-# Sources (verified: false — dates cross-checked between UEFA.com and
-# Wikipedia, entrants and results only from Wikipedia):
-#   https://en.wikipedia.org/wiki/2026%E2%80%9327_UEFA_Women%27s_Champions_League_qualifying_rounds
-#   https://www.uefa.com/womenseuropacup/fixtures-results/format/
+# Sources (verified: false — Brann (Champions Path) and Vålerenga (League Path)
+# entering Q2 on 5/8 August and the Q3 dates are confirmed on UEFA.com; the
+# win probabilities are placeholders):
+#   https://www.uefa.com/womenschampionsleague/news/02a6-20d6044fbbb7-39fcd8e06d8b-1000--women-s-champions-league-first-and-second-qualifying-round-/
+#   https://www.uefa.com/womenschampionsleague/fixtures-results/format/
+#   https://www.uefa.com/womenschampionsleague/fixtures-results/
 id: womens_champions_league_2026
 name: UEFA Women's Champions League qualifying
 short_name: "UWCL(q)"
@@ -56,6 +58,7 @@ european_rounds:
       forced_date: 2026-08-08
     drop_to_competition: womens_europa_cup_2026
     drop_to_round: q1
+    # Placeholder odds (underdogs in four-team fields), not a model of strength.
     ties:
       - team: brann_w
         win_probability: 0.3
@@ -65,16 +68,11 @@ european_rounds:
   - id: q3
     name: Third qualifying round
     note: >-
-      Two-legged ties, first legs 25/26 August and second legs 1/2 September
-      2026. A loss drops to the Women's Europa Cup second qualifying round.
+      Two-legged ties, first legs 26 August and second legs 2 September 2026. A loss drops to the Women's Europa Cup second qualifying round.
     first_leg:
-      window_start: 2026-08-25
-      window_end: 2026-08-26
-      granularity: week
+      forced_date: 2026-08-26
     second_leg:
-      window_start: 2026-09-01
-      window_end: 2026-09-02
-      granularity: week
+      forced_date: 2026-09-02
     drop_to_competition: womens_europa_cup_2026
     drop_to_round: q2
     ties:
