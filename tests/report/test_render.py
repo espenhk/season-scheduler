@@ -1263,3 +1263,15 @@ def test_lens_controls_are_in_the_controls_area_with_a_caption_and_clear_button(
     controls = controls[: controls.index("</section>")]
     for hook in ("lens-select", "lens-only-box", "lens-caption", "lens-clear", "club-select"):
         assert hook in controls
+
+
+def test_each_option_panel_has_one_sticky_bar_with_summary_legend_and_unique_ids():
+    rendered, _ = _lens_page()
+    assert rendered.count('class="controls"') == rendered.count('role="tabpanel"')
+    bar = rendered[rendered.index('class="controls"') :]
+    bar = bar[: bar.index('class="lens-caption"')]
+    for hook in ("bar-summary", "back-to-score", "legend-toggle", "legend-panel", "filters-toggle", "club-clear", "lens-clear"):
+        assert hook in bar
+    assert "jump-cal" in rendered
+    ids = re.findall(r' id="((?:legend|filters)-\d+)"', rendered)
+    assert len(ids) == len(set(ids))
