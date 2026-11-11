@@ -50,6 +50,7 @@ class OutcomeTree:
     nodes: dict[str, OutcomeNode] = field(default_factory=dict)
     roots: list[str] = field(default_factory=list)
     probabilities: dict[str, float] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
     _successors: dict[str, frozenset[str]] = field(default_factory=dict, repr=False)
     _roots_of: dict[str, frozenset[str]] = field(default_factory=dict, repr=False)
 
@@ -143,8 +144,35 @@ class OutcomeTree:
     def exclusive_with(self, node_id: str) -> frozenset[str]:
         return frozenset(other for other in self.nodes if not self.co_occur(node_id, other))
 
+    def hard_nodes(self, hard_threshold: float) -> frozenset[str]:
+        """Nodes that block the calendar at `hard_threshold`.
+
+        Two nodes that can never both be played cannot both be certain, so
+        when a low threshold would make them both hard the likelier one stays
+        hard (ties go to the lower node id) and the other becomes contingent.
+        Each demotion is recorded in `warnings`.
+        """
+        self.warnings = []
+        kept: set[str] = set()
+        candidates = sorted(
+            (n for n in self.nodes if is_hard(self.probabilities[n], hard_threshold)),
+            key=lambda n: (-self.probabilities[n], n),
+        )
+        for node_id in candidates:
+            rival = next((k for k in sorted(kept) if k in self.exclusive_with(node_id)), None)
+            if rival is None:
+                kept.add(node_id)
+            else:
+                self.warnings.append(
+                    f"{self.team_id}: {node_id} (p={self.probabilities[node_id]:.2f}) is "
+                    f"mutually exclusive with {rival} (p={self.probabilities[rival]:.2f}); "
+                    f"kept contingent instead of hard (hard_threshold={hard_threshold:g})"
+                )
+        return frozenset(kept)
+
     def commitments(self, hard_threshold: float) -> list[Commitment]:
         result: list[Commitment] = []
+        hard_nodes = self.hard_nodes(hard_threshold)
         for node_id, node in self.nodes.items():
             probability = self.probabilities[node_id]
             exclusive = self.exclusive_with(node_id)
@@ -160,7 +188,7 @@ class OutcomeTree:
                         node_id=node_id,
                         reached_probability=probability,
                         exclusive_with=exclusive,
-                        hard=is_hard(probability, hard_threshold),
+                        hard=node_id in hard_nodes,
                     )
                 )
         return result

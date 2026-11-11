@@ -337,6 +337,8 @@ def resolve_main_stages(
 
     stages: list[MainStage] = []
     if league_legs:
+        # 0.5 is a flat estimate: top-8 teams skip the play-off, so later knockout
+        # rounds come out about 2x too low.
         stages.append(
             MainStage("league", "League phase", tuple(league_legs), competition.advance_probability)
         )

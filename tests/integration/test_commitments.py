@@ -125,3 +125,19 @@ def test_cup_rounds_after_the_entry_round_are_contingent_with_compounding_probab
     assert by_node["brann_m/cup_men_2027/r4"].reached_probability == pytest.approx(0.85**3)
     assert by_node["brann_m/cup_men_2027/qf"].reached_probability == pytest.approx(0.85**3 * 0.5)
     assert not by_node["brann_m/cup_men_2027/r2"].hard
+
+
+def test_a_low_threshold_never_makes_lillestroms_exclusive_league_phases_both_hard(world, season):
+    relaxed = season.model_copy(update={"contingency_policy": ContingencyPolicy(hard_threshold=0.5)})
+    frame, warnings = build_season_frame(world, relaxed)
+
+    def hard_nodes(competition_id):
+        return {
+            c.node_id for c in frame.commitments
+            if c.team_id == "lillestrom_m" and c.hard and c.competition_id == competition_id
+        }
+
+    europa = hard_nodes("europa_league_main_2026")
+    conference = hard_nodes("conference_league_main_2026")
+    assert bool(europa) != bool(conference)
+    assert any("lillestrom_m" in w and "mutually exclusive" in w for w in warnings)

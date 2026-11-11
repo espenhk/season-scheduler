@@ -121,6 +121,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
             print(f"FAIL: {exc}", file=sys.stderr)
             return 1
         if season.cup_competitions or season.european_competitions:
+            print(
+                f"     Commitments: hard from reach probability >= "
+                f"{season.contingency_policy.hard_threshold:g} (contingency_policy.hard_threshold)"
+            )
             for schedule in frame.cup_schedules:
                 print(f"     {schedule.competition_name} resolves cleanly:")
                 for placement in schedule.rounds:

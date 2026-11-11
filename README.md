@@ -362,6 +362,15 @@ block the calendar. Over the Eliteserien window that took the clubs' blocked
 team-days from 655 (every cup round and every UEFA leg hard) to 124 — Bodø/Glimt,
 Brann and Tromsø 15 each, Lillestrøm and Viking 12, the other eleven clubs 5.
 
+Two commitments that can never both be played are never both hard: if a low
+threshold would make them so, the likelier one stays hard (ties go to the
+lower node id), the other becomes contingent, and `validate` and the report
+warn. `validate` also prints the active threshold. The former
+`solver_commitments` opt-out is gone: it existed to keep every later cup round
+out of the solver because they were all hard, and with only entry rounds hard
+(Round 4, women's Round 2) the spring-2026 cups bind probabilistically and no
+longer need an exemption.
+
 Everything reads the one `CommitmentSet` held by `SeasonFrame.commitments` and
 `SolveRequest.commitments`: the slot planner (a cup weekend only removes a
 league slot when it is hard for someone), greedy placement and round pinning,
@@ -369,7 +378,8 @@ local search's move filter, CP-SAT's candidate domains, `CommitmentConflict`
 (hard, ids `cup_round_conflict` and `european_commitment_conflict`) and
 `ContingentCommitmentConflict` (soft, weight 3.0 x rest shortfall x
 probability). The soft rule stands in for a planned fallback until contingency
-plans exist (#9).
+plans exist (#9). CP-SAT carries the same penalty in its Level 2 objective, a
+precomputed linear term per candidate day.
 
 ### Main tournaments (Champions/Europa/Conference League)
 

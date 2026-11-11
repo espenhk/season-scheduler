@@ -738,7 +738,10 @@ class ContingencyPolicy(BaseModel):
 
     A commitment is a hard reservation only when the team reaches it with at
     least `hard_threshold` probability. 1.0 plans for elimination: only entry
-    rounds and rounds already reached block the league calendar.
+    rounds and rounds already reached block the league calendar. Commitments
+    that can never both be played (a team's Europa League and Conference
+    League league phases) are never both hard: at a low threshold the likelier
+    one stays hard, the other becomes contingent, and a warning is raised.
     """
 
     hard_threshold: float = Field(default=1.0, ge=0.0, le=1.0)
