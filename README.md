@@ -242,6 +242,16 @@ league has fewer usable slots than rounds. Days a neighbouring round would leave
 `min_rest_days` for the whole league (a Monday before a midweek round) are
 dropped from the slot.
 
+A competition file can also declare (#15): `phases` (regular, optional split)
+and `playoff_rounds`, whose dates are reserved in the frame and never used by
+a regular round (the report's "Play-off weeks" lists them); `fixed_round_dates`
+(1-based round to date, e.g. fixed by TV), which puts that round in the slot
+holding the date with every match on it; and `day_quota` (most matches of one
+round per weekday, e.g. Saturday 2 / Sunday 5 / Monday 1), enforced by the
+greedy placer, local-search `shift_day` and `round_day_quota`. The final round
+and fixed rounds are single-date and exempt from the quota. `format_source`
+cites where the format was confirmed.
+
 ### Day within the slot (Stage 4)
 
 A match's date is always one of its round's slot days (#7); the slot stays

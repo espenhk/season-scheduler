@@ -515,11 +515,15 @@ def _build_level_one(cp_model, problem: _Problem, cuts, tried) -> _LevelOne:
     for lg in problem.leagues:
         pin_ids = {q.date: q.id for q in hard_full_rounds if q.competition == lg.id}
         pinned = set(pin_ids)
+        fixed = _fixed_round_dates(lg)
         for r in range(lg.rounds):
             for s in domain[(lg.id, r)]:
                 slot = lg.slots[s]
                 var = x[(lg.id, r, s)]
-                day_pin = next((d for d in pinned if slot.contains(d) and d in slot.days), None)
+                if r in fixed:
+                    day_pin = fixed[r] if fixed[r] in slot.days else None
+                else:
+                    day_pin = next((d for d in pinned if slot.contains(d) and d in slot.days), None)
                 if r == lg.rounds - 1 and not _final_days(problem, lg, slot, day_pin):
                     model.AddBoolOr([var.Not()]).OnlyEnforceIf(final_lit)
                     continue
@@ -555,6 +559,17 @@ def _build_level_one(cp_model, problem: _Problem, cuts, tried) -> _LevelOne:
             if (lg.id, r, s) in x
         ]
         model.AddBoolOr(holding or [literal.Not()]).OnlyEnforceIf(literal)
+
+    # -- TV-fixed round dates: the round sits in the slot holding its date (#15) --
+    for lg in problem.leagues:
+        for r, day in _fixed_round_dates(lg).items():
+            literal = assume(f"fixed_round_date:{lg.id}:{r + 1}")
+            holding = [
+                x[(lg.id, r, s)]
+                for s, slot in enumerate(lg.slots)
+                if day in slot.days and (lg.id, r, s) in x
+            ]
+            model.AddBoolOr(holding or [literal.Not()]).OnlyEnforceIf(literal)
 
     # -- hard fixed requirements: the team hosts in the round at its slot ------
     home_at_cache: dict[tuple[str, str, int], object] = {}
@@ -769,6 +784,7 @@ def _place(problem: _Problem, solution: _LevelOneSolution):
     season = problem.season
     for lg in problem.leagues:
         pins = {q.date for q in season.full_round_requirements if q.hard and q.competition == lg.id}
+        fixed = _fixed_round_dates(lg)
         required: dict[tuple[str, int], date] = {}
         for requirement in season.fixed_requirements:
             if requirement.hard and requirement.competition == lg.id:
@@ -782,7 +798,9 @@ def _place(problem: _Problem, solution: _LevelOneSolution):
             oriented = _oriented(fixture, solution, lg)
             slot = lg.slots[solution.slot_of[(lg.id, fixture.round_index)]]
             days = list(problem.fixture_days(lg, oriented.home_team, oriented.away_team, slot))
-            pinned = next((d for d in pins if slot.contains(d) and d in slot.days), None)
+            pinned = fixed.get(fixture.round_index) or next(
+                (d for d in pins if slot.contains(d) and d in slot.days), None
+            )
             forced = required.get((fixture.competition_id, id(fixture)), pinned)
             if forced is not None:
                 days = [d for d in days if d == forced]
@@ -908,6 +926,19 @@ def _build_level_two(cp_model, problem: _Problem, placed: list[_Placed], previou
             vars_ = [v for t in team_ids for v in home_on_date.get((t, d), [])]
             if len({owner[id(v)] for v in vars_}) > 1:
                 model.Add(sum(vars_) <= 1).OnlyEnforceIf(club_lit)
+
+    # At most N matches of one round per weekday (#15).
+    quota_vars: dict[tuple[str, int, str], list[object]] = defaultdict(list)
+    for item in placed:
+        competition = item.league.plan.competition
+        if item.fixture.round_index in competition.day_quota_exempt_rounds:
+            continue
+        for d, var in days[item.index].items():
+            weekday = WEEKDAYS[d.weekday()]
+            if weekday in competition.day_quota:
+                quota_vars[(competition.id, item.fixture.round_index, weekday)].append(var)
+    for (competition_id, _, weekday), vars_ in quota_vars.items():
+        model.Add(sum(vars_) <= problem.by_id[competition_id].plan.competition.day_quota[weekday])
 
     # -- objective --------------------------------------------------------------
     terms: list[tuple[int, object]] = []
@@ -1066,7 +1097,18 @@ def _describe_culprit(problem: _Problem, name: str) -> list[str]:
         req = next((r for r in problem.season.full_round_requirements if r.id == ident), None)
         if req:
             return [f"  {name}: every {req.competition} team plays on {req.date}"]
+    if family == "fixed_round_date":
+        competition_id, _, round_number = ident.rpartition(":")
+        lg = problem.by_id.get(competition_id)
+        if lg is not None:
+            day = _fixed_round_dates(lg).get(int(round_number) - 1)
+            return [f"  {name}: {competition_id} round {round_number} is fixed to {day}"]
     return []
+
+
+def _fixed_round_dates(lg: _League) -> dict[int, date]:
+    """Round index -> the date a TV pick fixes that round to (#15)."""
+    return {f.round - 1: f.date for f in lg.plan.competition.fixed_round_dates}
 
 
 def _culprits(solver, status, assumptions, cp_model) -> list[str]:
