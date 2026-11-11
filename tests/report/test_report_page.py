@@ -20,6 +20,7 @@ sync_api = pytest.importorskip("playwright.sync_api")
 
 from terminliste.report.render import render_report  # noqa: E402
 from terminliste.scoring.base import EvalContext, evaluate  # noqa: E402
+from terminliste.scoring.soft import ConsecutiveHomeDays, PreferredWeekday  # noqa: E402
 from terminliste.solvers.base import Candidate, SolverResult  # noqa: E402
 
 
@@ -67,7 +68,9 @@ def report_url(tmp_path_factory):
         f.match("elite", "b_m", "opp_m", date(2026, 6, 13), "vb", round_index=1),
     ]
     ctx = EvalContext(world=world, season=season, travel=_FixedTravel(), detail=True)
-    candidate = Candidate(matches=matches, score=evaluate(matches, [], ctx), label="Option 1")
+    comps = [world.competition("elite"), world.competition("topp")]
+    constraints = [PreferredWeekday(competitions=comps), ConsecutiveHomeDays(competitions=comps)]
+    candidate = Candidate(matches=matches, score=evaluate(matches, constraints, ctx), label="Option 1")
     cup = f.cup_schedule(
         "cup1",
         [f.cup_placement("r1", {"a_m": date(2026, 6, 6)}, round_name="Round 1", venue_type="away")],
@@ -157,9 +160,6 @@ def test_by_competition_shows_league_cup_and_european_fixtures(page, world):
     assert any("v TBD" in c and world.team_short_label("a_m") in c for c in cards)  # cup
     assert any(f"v {OPPONENT}" in c for c in cards)  # European
     assert any("18:00" in c and world.team_short_label("opp_m") in c for c in cards)  # league
-    # Both of club A's home days are flagged as a back-to-back pair.
-    assert body.locator(".fx.paired").count() == 2
-    assert body.locator(".pair-badge").count() == 2
 
 
 def test_combined_views_tag_each_fixture_with_its_competition(page):
@@ -210,3 +210,75 @@ def test_club_filter_hides_other_clubs_fixtures_and_empty_rounds(page):
 
     page.select_option(".club-select", "")
     assert len(_texts(_view(page, "by-competition").locator(".fx"))) == 5
+
+
+# -- scoring badges (#29) ------------------------------------------------------
+#
+# The 6 June league match is a Saturday (off the preferred Sunday) and half of
+# club A's back-to-back home pair; 7 June is the Sunday other half.
+
+LEAGUE_RULES = {"consecutive_home_days", "preferred_weekday"}
+
+
+def _club_a_men(scope, element):
+    """Club A's men's league fixture drawn as `element`: the one carrying both the
+    off-day and the home-pair rule."""
+    return scope.locator(f'{element}[data-rules~="preferred_weekday"][data-rules~="consecutive_home_days"]').first
+
+
+def _assert_league_badges(element):
+    assert set(element.get_attribute("data-rules").split()) == LEAGUE_RULES
+    assert element.get_attribute("data-delta") == "12.5"  # half of the 25-point pair, off-day earns nothing
+    assert sorted(_texts(element.locator(".flag"))) == ["home pair", "off-day"]
+
+
+def test_badges_render_on_cards_rows_and_day_rows_with_their_rules_and_delta(page):
+    for view in ("by-competition", "combined-calendar"):
+        body = _view(page, view)
+        _assert_league_badges(_club_a_men(body, ".fx"))
+    _assert_league_badges(_club_a_men(_view(page, "combined-list"), "tr.fx-row"))
+    month = _view(page, "month-calendar")
+    month.locator(f'.cal-day[data-date="{DAY}"]').click()
+    _assert_league_badges(_club_a_men(month, ".day-row"))
+
+
+def test_cup_and_european_fixtures_stay_unbadged(page):
+    body = _view(page, "combined-calendar")
+    unbadged = body.locator('.fx[data-rules=""]')
+    assert unbadged.count() == 2  # the cup round and the European leg
+    assert unbadged.locator(".flag").count() == 0
+
+
+def test_badge_tint_follows_the_fixtures_net_points(page):
+    body = _view(page, "combined-calendar")
+    pair_sunday = body.locator('.fx[data-rules="consecutive_home_days"]')
+    assert "edge-good" in pair_sunday.get_attribute("class")  # +12.5
+    assert "edge-" not in body.locator('.fx[data-rules="preferred_weekday"]').get_attribute("class")  # 0
+
+
+def test_hovering_a_badge_shows_the_events_detail_and_points(page):
+    body = _view(page, "combined-calendar")
+    badge = _club_a_men(body, ".fx").locator('.flag[data-rule="consecutive_home_days"]')
+
+    badge.hover()
+
+    tooltip = badge.locator(".tooltip")
+    tooltip.wait_for(state="visible")
+    text = " ".join(tooltip.inner_text().split())
+    assert "home pair" in text and "+12.5 pts" in text
+    assert "split over 2 fixtures" in text
+    assert "home 2026-06-06" in text  # the event's own detail
+
+    off_day = _club_a_men(body, ".fx").locator('.flag[data-rule="preferred_weekday"]')
+    off_day.hover()
+    off_day.locator(".tooltip").wait_for(state="visible")
+    assert "Saturday; elite prefers Sunday" in " ".join(off_day.locator(".tooltip").inner_text().split())
+
+
+def test_tapping_a_badge_toggles_its_tooltip_on_touch_screens(page):
+    body = _view(page, "combined-list")
+    badge = _club_a_men(body, "tr.fx-row").locator(".flag").first
+    badge.click()
+    assert "open" in badge.get_attribute("class")
+    page.keyboard.press("Escape")
+    assert "open" not in badge.get_attribute("class")

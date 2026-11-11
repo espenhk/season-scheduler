@@ -52,7 +52,13 @@ def _sigmoid(x: float) -> float:
 
 @dataclass(frozen=True)
 class Event:
-    """One thing a constraint noticed: a violation to fix or a reward earned."""
+    """One thing a constraint noticed: a violation to fix or a reward earned.
+
+    `match_keys` pins the event to the fixtures it is about (gap and run rules:
+    the later match of the gap / each match extending the run). The report
+    splits `delta` equally across them, so a rule's per-fixture deltas sum to
+    its total; leave it empty only when no fixture is to blame (#29).
+    """
 
     delta: float
     detail: str
@@ -120,6 +126,16 @@ class ScheduleIndex:
 
     def team_matches(self, team_id: str) -> list[Match]:
         return self.by_team.get(team_id, [])
+
+    def match_on(self, team_id: str, day: date, *, home: bool | None = None) -> Match | None:
+        """The team's match on `day` (optionally only home or away); a linear
+        scan, so for the detail pass rather than the search loop."""
+        for match in self.by_team.get(team_id, ()):
+            if match.date != day:
+                continue
+            if home is None or (match.home_team == team_id) == home:
+                return match
+        return None
 
 
 @dataclass
