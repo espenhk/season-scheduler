@@ -23,3 +23,4 @@ jobs:
     uses: ./.github/workflows/football-scheduler-tests-reusable.yml
     with:
       suites: "rounds solvers integration"
+      with-cpsat: true

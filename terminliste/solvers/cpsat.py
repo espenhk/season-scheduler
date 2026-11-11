@@ -62,6 +62,8 @@ _EXTRA_SLOT_WEIGHT = 2.0
 # Share of rounds a later pass may leave in an earlier pass's slot.
 _SLOT_REUSE_SHARE = 0.8
 _MAX_LEVEL_TWO_RETRIES = 6
+# Share of a pass's remaining time one conflict shrink may spend.
+_SHRINK_BUDGET_SHARE = 0.25
 _LEVEL_ONE_BUDGET_SHARE = 0.3
 _MAX_LISTED = 12
 
@@ -435,14 +437,13 @@ def _run_pass(
             two.parameters.num_search_workers = 8
             two.parameters.random_seed = request.seed + pass_index + attempt
             relaxed_status = two.Solve(relaxed.model)
+            # Failure analysis below must describe the model that was last tried.
+            status2, built = relaxed_status, relaxed
             if relaxed_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-                status2, built = relaxed_status, relaxed
                 notes.append(
                     f"pass {pass_index}: min_rest_days RELAXED on request — some matches "
                     "fall on short rest; see the min_rest_days row in the score breakdown."
                 )
-            elif relaxed_status == cp_model.UNKNOWN:
-                status2 = relaxed_status
 
         if status2 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             if failed_culprits:
@@ -463,8 +464,16 @@ def _run_pass(
         failed_culprits.append(
             _culprits(two, status2, built.assumptions, cp_model) or [two.StatusName(status2)]
         )
+        shrink_deadline = time.perf_counter() + _SHRINK_BUDGET_SHARE * (
+            deadline - time.perf_counter()
+        )
         tried.append(
-            (solution, _conflicting_rounds(cp_model, problem, placed, previous_dates, deadline))
+            (
+                solution,
+                _conflicting_rounds(
+                    cp_model, problem, placed, shrink_deadline, relax=request.relax_min_rest
+                ),
+            )
         )
 
     if failed_culprits:
@@ -791,20 +800,26 @@ def _can_be_adjacent(first: RoundSlot, second: RoundSlot) -> bool:
     return any(abs((a - b).days) == 1 for a in first.days for b in second.days)
 
 
-def _conflicting_rounds(cp_model, problem: _Problem, placed, previous_dates, deadline):
-    """A minimal set of `(league, round)` whose placed fixtures Level 2 still
-    cannot fit, found by dropping rounds one at a time; None if time runs out."""
+def _conflicting_rounds(cp_model, problem: _Problem, placed, deadline, relax: bool = False):
+    """A small set of `(league, round)` whose placed fixtures Level 2 still
+    cannot fit, found by dropping rounds one at a time.
+
+    Runs without the per-pass diversity cap and with the Level 2 model the pass
+    used (`relax`), so infeasibility is monotone in the rounds kept and the set
+    is a conflict in every pass. If the time runs out, the set so far is
+    returned: it is infeasible, just not minimal.
+    """
     keep = sorted({(p.fixture.competition_id, p.fixture.round_index) for p in placed})
     for key in list(keep):
-        if deadline - time.perf_counter() <= 1.0:
-            return None
+        if deadline - time.perf_counter() <= 0:
+            break
         trial = [k for k in keep if k != key]
         subset = [p for p in placed if (p.fixture.competition_id, p.fixture.round_index) in trial]
         if not subset:
             continue
-        built = _build_level_two(cp_model, problem, subset, previous_dates, relax=False)
+        built = _build_level_two(cp_model, problem, subset, [], relax=relax)
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 0.5
+        solver.parameters.max_time_in_seconds = min(0.5, max(0.05, deadline - time.perf_counter()))
         solver.parameters.num_search_workers = 8
         if solver.Solve(built.model) == cp_model.INFEASIBLE:
             keep = trial

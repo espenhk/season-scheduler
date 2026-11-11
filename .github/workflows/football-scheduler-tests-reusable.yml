@@ -12,6 +12,13 @@ on:
           to run, e.g. "solvers integration". Use "." to run everything.
         required: true
         type: string
+      with-cpsat:
+        description: >
+          Install OR-Tools so the CP-SAT tests run instead of skipping.
+          Only the solvers and integration suites use it.
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.suites }}
@@ -36,11 +43,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: venv-fs-cpsat-${{ runner.os }}-py3.11-${{ hashFiles('poetry.lock') }}
+          key: venv-fs-${{ inputs.with-cpsat && 'cpsat-' || '' }}${{ runner.os }}-py3.11-${{ hashFiles('poetry.lock') }}
 
-      # OR-Tools is installed so the CP-SAT tests run instead of skipping.
       - name: Install dependencies
-        run: poetry install --only football-scheduler,football-scheduler-test,football-scheduler-cpsat
+        env:
+          GROUPS_TO_INSTALL: football-scheduler,football-scheduler-test${{ inputs.with-cpsat && ',football-scheduler-cpsat' || '' }}
+        run: poetry install --only "$GROUPS_TO_INSTALL"
 
       - name: Run tests
         env:
