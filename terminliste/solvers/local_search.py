@@ -311,11 +311,11 @@ def _polish_candidates(
     request: SolveRequest,
     calendars: dict[str, SeasonCalendar],
     budget_s: float,
-    fixed_iterations: int | None,
     restarts: int,
     start_temperature: float,
     end_temperature: float,
     notes: list[str],
+    fixed_iterations: int | None = None,
 ) -> tuple[int, SearchStats]:
     """Anneal each shortlisted candidate further from its own final state, at a
     low temperature so moves stay local (#98).
@@ -452,7 +452,14 @@ def _anneal(
 
     iterations = 0
     idle_draws = 0
+    started = time.perf_counter()
     while iterations < total_iterations:
+        # Time-budgeted runs steer the target by the measured pace, so a stale
+        # or noisy calibration cannot leave budget unspent.
+        if fixed_iterations is None and iterations and iterations % _RETARGET_EVERY == 0:
+            elapsed = time.perf_counter() - started
+            remaining = max(0.0, budget_s - elapsed)
+            total_iterations = iterations + max(1, round(remaining * iterations / elapsed))
         anneal_progress = iterations / max(1, total_iterations - 1)
         temperature = start_temperature * math.exp(decay * anneal_progress)
 
@@ -515,6 +522,7 @@ _RATE_CACHE: dict[tuple[int, int], float] = {}
 
 _CALIBRATION_ITERATIONS = 1500
 _RESYNC_EVERY = 4096
+_RETARGET_EVERY = 512
 _MAX_IDLE_DRAWS = 200_000
 
 
