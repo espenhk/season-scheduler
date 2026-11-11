@@ -272,7 +272,10 @@ def test_hovering_a_badge_shows_the_events_detail_and_points(page):
     off_day = _club_a_men(body, ".fx").locator('.flag[data-rule="preferred_weekday"]')
     off_day.hover()
     off_day.locator(".tooltip").wait_for(state="visible")
-    assert "Saturday; elite prefers Sunday" in " ".join(off_day.locator(".tooltip").inner_text().split())
+    text_off = " ".join(off_day.locator(".tooltip").inner_text().split())
+    assert "Saturday; elite prefers Sunday (misses +1)" in text_off
+    assert "reward forgone" in text_off
+    assert off_day.get_attribute("aria-label") == "off-day"
 
 
 def test_tapping_a_badge_toggles_its_tooltip_on_touch_screens(page):

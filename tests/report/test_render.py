@@ -880,6 +880,8 @@ def test_preferred_weekday_badges_the_off_day_minority_and_keeps_the_reward_quie
     ((rule, delta, note),) = off_day["f"]
     assert data["rules"][rule]["label"] == "off-day" and delta == 0
     assert "Tuesday" in data["options"][0]["notes"][note]
+    assert "(misses +" in data["options"][0]["notes"][note]
+    assert data["tint"] == {"good": 5.0, "cost": -3.0}
     assert "q" not in off_day
 
 

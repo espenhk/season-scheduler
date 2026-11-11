@@ -62,11 +62,9 @@
     return { name: team.short, full: team.label, club: team.club, cls: DATA.clubs[team.club], shape: shape };
   }
 
-  // A fixture's net delta needs to clear these to tint its card edge; a
-  // single short rest day (3 points) is already costly, a lone cold-grass
-  // nibble is not.
-  var TINT_GOOD = 5;
-  var TINT_COST = -3;
+  // Net points a fixture needs to tint its card edge (set in render.py).
+  var TINT_GOOD = DATA.tint.good;
+  var TINT_COST = DATA.tint.cost;
 
   // The wire's flags (see payload.py) grouped into one badge per rule, in
   // rule-table order.
@@ -200,6 +198,8 @@
     var badge = el('button', 'info-wrap flag flag-' + polarity, flag.rule.label);
     badge.type = 'button';
     badge.setAttribute('data-rule', flag.rule.id);
+    // Keeps the tooltip child out of the button's accessible name.
+    badge.setAttribute('aria-label', flag.rule.label);
     flagOf.set(badge, flag);
     return badge;
   }
@@ -210,7 +210,7 @@
     tip.id = 'flag-tt-' + (++tooltipCount);
     tip.setAttribute('role', 'tooltip');
     badge.setAttribute('aria-describedby', tip.id);
-    var points = flag.rule.hard ? 'broken rule' : flag.delta === 0 ? 'no points' : signed(flag.delta) + ' pts';
+    var points = flag.rule.hard ? 'broken rule' : flag.delta === 0 ? 'reward forgone' : signed(flag.delta) + ' pts';
     append(tip, el('b', 'tt-head', flag.rule.label + ' · ' + points));
     flag.items.forEach(function (item) {
       var text = item.detail;

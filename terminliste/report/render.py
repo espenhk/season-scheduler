@@ -27,6 +27,7 @@ from ..rounds.cup_schedule import NEUTRAL_CUP_VENUE, CupRoundPlacement, CupSched
 from ..rounds.european_schedule import ResolvedLegs
 from ..scoring.base import ConstraintResult, Event, Score
 from ..scoring.registry import BADGE_LABELS, badge_label, describe
+from ..scoring.soft import PreferredWeekday
 from ..slot_planner import search_space_log10
 from ..solvers.base import Candidate, SearchStats, SolverResult
 from . import payload
@@ -127,6 +128,7 @@ def render_report(
         **payload.shared_tables(
             world, club_colors, competitions, payload.rule_table(rule_ids, hard_ids)
         ),
+        "tint": {"good": TINT_GOOD, "cost": TINT_COST},
         "shared": [payload.shared_entry_wire(entry) for entry in shared_entries],
         "sharedByCompetition": payload.by_competition_wire(shared_views),
         "options": [option["client"] for option in options],
@@ -143,6 +145,8 @@ def render_report(
         season_exclusions=_season_exclusions(world, season),
         slot_views=_slot_views(world, season, result),
         flag_legend=_flag_legend(options, hard_ids),
+        tint_good=TINT_GOOD,
+        tint_cost=-TINT_COST,
         calendar_legend=[
             {**row, "cls": payload.competition_class(row["id"])} for row in calendar_legend
         ],
@@ -556,6 +560,10 @@ def _match_entries(
     return entries
 
 
+# Net points a fixture needs for its card edge to turn green / amber.
+TINT_GOOD = 5.0
+TINT_COST = -3.0
+
 # Rules whose reward is the common case: their fixtures stay quiet and the
 # report badges the exceptions instead (#29).
 _INVERSE_RULES = {"preferred_weekday"}
@@ -591,22 +599,32 @@ def _match_flags(world: World, candidate: Candidate) -> dict[str, list[dict]]:
                     }
                 )
 
+    by_key = {m.key: m for m in candidate.matches}
     for rule_id in _INVERSE_RULES:
         result = candidate.score.result(rule_id)
         if result is None or not result.events:
             continue
+        # What an on-day match of each competition earned, so an off-day
+        # fixture can say what it misses.
+        reward: dict[str, float] = {}
+        for event in result.events:
+            for key in event.match_keys:
+                reward[by_key[key].competition_id] = event.delta / len(event.match_keys)
         for match in candidate.matches:
             competition = world.competition(match.competition_id)
             preferred = getattr(competition, "preferred_weekday", None)
             if preferred is None or match.date.weekday() == WEEKDAYS.index(preferred):
                 continue
+            missed = reward.get(
+                match.competition_id, competition.weights.get(rule_id, PreferredWeekday.weight)
+            )
             flags[match.key].append(
                 {
                     "rule_id": rule_id,
                     "delta": 0.0,
                     "detail": (
                         f"{match.date.strftime('%A')}; {competition.name} prefers "
-                        f"{preferred.capitalize()}"
+                        f"{preferred.capitalize()}" + (f" (misses +{missed:g})" if missed else "")
                     ),
                     "shared_by": 1,
                     "quiet": False,

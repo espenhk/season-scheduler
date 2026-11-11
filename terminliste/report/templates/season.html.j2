@@ -239,7 +239,8 @@
   .tooltip { white-space: normal; text-align: left; }
   .tooltip .tt-head { display: block; font-weight: 700; }
   .tooltip .tt-detail { display: block; margin-top: 3px; }
-  .fx-row .flags { flex-wrap: wrap; min-width: 120px; }  .comp-tag {
+  .fx-row .flags { flex-wrap: wrap; min-width: 120px; }
+  .comp-tag {
     /* Short names (e.g. "NM(m)") carry their own deliberate case, so no
        text-transform here — unlike a full competition name, which would
        read fine either way. */
@@ -317,8 +318,8 @@
     .fx-main { flex-wrap: wrap; }
     /* The list's seven columns do not fit; each row becomes a small card so the
        Rules badges are not scrolled out of sight. */
-    .view-pane table, .view-pane tbody { display: block; }
-    .view-pane thead { display: none; }
+    .view-pane[data-view="combined-list"] table, .view-pane[data-view="combined-list"] tbody { display: block; }
+    .view-pane[data-view="combined-list"] thead { display: none; }
     .fx-row {
       display: grid; grid-template-columns: 1fr auto 1fr; gap: 2px 8px; align-items: center;
       grid-template-areas: "date date comp" "home vs away" "venue venue venue" "rules rules rules";
@@ -663,8 +664,8 @@
   </div>
 
   <div class="legend">
-    <span><span class="edge-demo edge-good" aria-hidden="true"></span>green edge: nets +5 or more</span>
-    <span><span class="edge-demo edge-cost" aria-hidden="true"></span>amber edge: costs 3 or more</span>
+    <span><span class="edge-demo edge-good" aria-hidden="true"></span>green edge: nets +{{ '%g' % tint_good }} or more</span>
+    <span><span class="edge-demo edge-cost" aria-hidden="true"></span>amber edge: costs {{ '%g' % tint_cost }} or more</span>
     <span><span class="edge-demo edge-broken" aria-hidden="true"></span>red edge: breaks a hard rule</span>
     <span><span class="swatch" style="margin-right:5px" aria-hidden="true"></span>square = home club colour</span>
     <span><span class="swatch-diamond" style="margin-right:5px" aria-hidden="true"></span>diamond = away club colour</span>
@@ -673,7 +674,7 @@
 
   {% if flag_legend %}
   <details class="flag-legend">
-    <summary>Badges on fixtures</summary>
+    <summary>What the badges mean (tap any badge on a fixture for details)</summary>
     <ul>
       {% for rule in flag_legend %}
       <li>
