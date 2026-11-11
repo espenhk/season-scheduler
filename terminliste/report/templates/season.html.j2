@@ -98,6 +98,7 @@
     font-size: 10px; transition: transform 0.12s ease;
   }
   details.item[open] > summary.top::before { transform: rotate(90deg); }
+  details.item > summary.top .name-row { margin-right: auto; }
   .item-body { padding: 0 8px 10px 16px; }
   .item .name { font-weight: 600; font-size: 14px; }
   .item .delta { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; white-space: nowrap; }
@@ -189,6 +190,78 @@
     font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line);
     background: var(--panel); color: var(--ink);
   }
+
+  .lens-filter select { max-width: 260px; }
+  .lens-only { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .lens-only:has(input:disabled) { opacity: 0.55; }
+  .lens-caption {
+    flex: 1 1 100%; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
+    padding: 8px 12px; border-left: 3px solid var(--accent); background: #eaf2f8;
+    border-radius: 0 6px 6px 0; font-size: 13px;
+  }
+  .lens-caption[hidden] { display: none; }
+  .lens-text { flex: 1 1 320px; min-width: 0; }
+  .lens-text b { font-weight: 700; }
+  .lens-clear, .lens-link {
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    border: 1px solid var(--accent); color: var(--accent); background: var(--panel);
+    padding: 2px 10px; border-radius: 14px;
+  }
+  .lens-clear:hover, .lens-link:hover { background: var(--accent); color: #fff; }
+  .lens-clear:focus-visible, .lens-link:focus-visible, .occ-row:focus-visible,
+  .lens-select:focus-visible, .lens-only input:focus-visible, .club-select:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .view-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* -- rule lens: what a rule's fixtures look like among the rest --
+     Dimmed fixtures stay legible (faded, not hidden); hits get a ring or band
+     so the state is not carried by colour alone. */
+  .lens-dim { opacity: 0.5; }
+  .fx.lens-hit, .day-row.lens-hit { box-shadow: 0 0 0 2px var(--accent); }
+  .day-row.lens-hit { background: #eaf2f8; }
+  .fx-row.lens-hit td { background: #eaf2f8; box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent); }
+  .flag.lens-rule { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .cal-day.lens-hit { border: 2px solid var(--accent); background: #eaf2f8; }
+  .cal-day.lens-dim { opacity: 0.4; }
+  .cal-hits {
+    font-size: 10.5px; font-weight: 700; line-height: 1; padding: 2px 5px; border-radius: 8px;
+    background: var(--accent); color: #fff;
+  }
+  /* Jump target: a ring that fades, so the eye finds the fixture after the scroll. */
+  .flash { outline: 3px solid #d35400; outline-offset: 2px; animation: flash-fade 2.2s ease-out; }
+  .fx-row.flash td { background: #fde9cf; }
+  @keyframes flash-fade { 0% { background-color: #ffd9a8; } 100% { background-color: transparent; } }
+  @media (prefers-reduced-motion: reduce) { .flash { animation: none; } }
+
+  /* A rule's fixtures, listed under the scorecard entry that names it. */
+  .rule-actions { margin: 2px 0 6px; }
+  .rule-fixtures { margin-top: 6px; }
+  details.fx-list { margin-top: 6px; }
+  details.fx-list > summary { font-size: 12.5px; font-weight: 600; color: var(--accent); }
+  .occ-summary { margin: 4px 0 6px; font-size: 12.5px; color: #45453f; }
+  .occ-groups { max-height: 380px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; background: #fcfcfb; }
+  .occ-groups:focus-visible { outline: 2px solid var(--accent); }
+  details.occ-group { margin: 0; border-bottom: 1px solid var(--line); }
+  details.occ-group:last-child { border-bottom: none; }
+  details.occ-group > summary { padding: 5px 10px; font-size: 13px; background: #f3f3ef; position: sticky; top: 0; }
+  .occ-groups ul { list-style: none; margin: 0; padding: 0; }
+  .occ-row {
+    display: grid; grid-template-columns: 74px minmax(110px, 150px) 1fr auto; gap: 2px 10px; width: 100%;
+    align-items: baseline; text-align: left; font: inherit; font-size: 12.5px; color: var(--ink);
+    background: none; border: none; border-top: 1px solid var(--line); padding: 5px 10px; cursor: pointer;
+  }
+  li:first-child > .occ-row { border-top: none; }
+  .occ-row:hover { background: #eaf2f8; }
+  .occ-groups .occ-count { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 400; }
+  .occ-date { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .occ-fx { font-weight: 600; }
+  .occ-detail { color: #45453f; min-width: 0; overflow-wrap: anywhere; }
+  .occ-delta { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; text-align: right; }
+  .occ-delta.good { color: var(--good); }
+  .occ-delta.cost, .occ-delta.broken { color: var(--bad); }
+  .occ-delta.none { color: var(--muted); font-weight: 400; }
+  .tooltip .tt-hint { display: block; margin-top: 5px; color: #c9c9c4; font-size: 11.5px; }
 
   /* -- calendar -- */
   .cal-wrap { overflow-x: auto; }
@@ -335,10 +408,16 @@
     .fx-row td:nth-child(7) { grid-area: rules; }
     .fx-row td:nth-child(7):empty { display: none; }
     .fx-row td:first-child { border-left: none; }
+    .fx-row.lens-hit { background: #eaf2f8; box-shadow: inset 0 0 0 2px var(--accent); }
+    .fx-row.lens-hit td { background: none; box-shadow: none; }
     .fx-row.edge-good { border-left-color: var(--good); }
     .fx-row.edge-cost { border-left-color: var(--warn); }
     .fx-row.edge-broken { border-left-color: var(--bad); }
     .fairness-bar { grid-template-columns: 110px 1fr 24px; }
+    .lens-filter { flex: 1 1 100%; min-width: 0; }
+    .lens-filter select { max-width: none; flex: 1; min-width: 0; }
+    .occ-row { grid-template-columns: auto 1fr auto; }
+    .occ-detail { grid-column: 1 / -1; }
     .month-grid { min-width: 0; }
     .cal-day { min-height: 40px; padding: 4px 1px; }
   }
@@ -349,6 +428,9 @@
 </head>
 <body>
 {% set ns = namespace(tooltip_id=0) %}
+{# A rule's fixtures are listed by report.js from the fixture flags, so only a rule with some (`row.pinned`) gets a mount and a calendar link. #}
+{% macro lens_link(row) %}{% if row.pinned %}<button type="button" class="lens-link" data-rule="{{ row.id }}">Show in calendar</button>{% else %}<span class="desc">Not tied to one fixture, so nothing to show in the calendar.</span>{% endif %}{% endmacro %}
+{% macro fixture_list(row) %}{% if row.pinned %}<details class="fx-list" data-rule="{{ row.id }}"><summary>{{ row.pinned }} fixture{{ '' if row.pinned == 1 else 's' }}, by team</summary><div class="rule-fixtures"></div></details>{% endif %}{% endmacro %}
 <div class="wrap">
 
 <header>
@@ -504,6 +586,8 @@
         </span>
         <span class="delta">{{ row.count }} violation{{ '' if row.count == 1 else 's' }}</span>
       </div>
+      <div class="rule-actions">{{ lens_link(row) }}</div>
+      {{ fixture_list(row) }}
       {% if row.examples %}
       <ul class="examples">{% for example in row.examples %}<li>{{ example }}</li>{% endfor %}</ul>
       {% if row.more %}<div class="more">…and {{ row.more }} more</div>{% endif %}
@@ -517,7 +601,7 @@
     <div class="col">
       <h3>{{ 'Every upside' if option.full else 'Biggest upsides' }}</h3>
       {% for row in option.upsides %}
-      <details class="item up">
+      <details class="item up"{% if row.pinned %} data-rule="{{ row.id }}"{% endif %}>
         <summary class="top">
           <span class="name-row">
             <span class="name">{{ row.id.replace('_', ' ') }}</span>
@@ -530,11 +614,14 @@
           <span class="delta">+{{ '%.0f'|format(row.total) }}</span>
         </summary>
         <div class="item-body">
+          <div class="rule-actions">{{ lens_link(row) }}</div>
+          {% if row.pinned %}<div class="rule-fixtures"></div>{% endif %}
           {% if row.occurrences %}
+          {% if row.pinned %}<div class="desc">Other events, not tied to one fixture:</div>{% endif %}
           <ul class="occurrences">
             {% for occ in row.occurrences %}<li>{{ occ.label }} <span class="occ-count">×{{ occ.count }}</span></li>{% endfor %}
           </ul>
-          {% else %}
+          {% elif not row.pinned %}
           <div class="desc">×{{ row.count }}</div>
           {% endif %}
         </div>
@@ -547,7 +634,7 @@
     <div class="col">
       <h3>{{ 'Every problem (including the hard rules above)' if option.full else 'Biggest problems' }}</h3>
       {% for row in option.problems %}
-      <details class="item down">
+      <details class="item down"{% if row.pinned %} data-rule="{{ row.id }}"{% endif %}>
         <summary class="top">
           <span class="name-row">
             <span class="name">{{ row.id.replace('_', ' ') }}</span>
@@ -560,11 +647,14 @@
           <span class="delta">{{ '%.0f'|format(row.total) }}</span>
         </summary>
         <div class="item-body">
+          <div class="rule-actions">{{ lens_link(row) }}</div>
+          {% if row.pinned %}<div class="rule-fixtures"></div>{% endif %}
           {% if row.occurrences %}
+          {% if row.pinned %}<div class="desc">Other events, not tied to one fixture:</div>{% endif %}
           <ul class="occurrences">
             {% for occ in row.occurrences %}<li>{{ occ.label }} <span class="occ-count">×{{ occ.count }}</span></li>{% endfor %}
           </ul>
-          {% else %}
+          {% elif not row.pinned %}
           <div class="desc">×{{ row.count }}</div>
           {% endif %}
         </div>
@@ -599,12 +689,13 @@
           <td class="num">{{ '%+.1f'|format(row.total) if row.total else '—' }}</td>
           <td class="num">{{ row.count }}</td>
           <td>
+            {% if row.pinned %}<div class="rule-actions">{{ lens_link(row) }}</div>{{ fixture_list(row) }}{% endif %}
             {% if row.examples %}
             <ul class="examples" style="margin:0;padding-left:16px">
               {% for example in row.examples %}<li>{{ example }}</li>{% endfor %}
             </ul>
             {% if row.more %}<span class="more">…and {{ row.more }} more</span>{% endif %}
-            {% else %}—{% endif %}
+            {% elif not row.pinned %}—{% endif %}
           </td>
         </tr>
       {% endfor %}
@@ -661,6 +752,16 @@
         {% endfor %}
       </select>
     </label>
+    {# Options are filled in by report.js from the rules this option has fixtures for. #}
+    <label class="club-filter lens-filter">
+      Highlight rule
+      <select class="lens-select"><option value="">No rule</option></select>
+    </label>
+    <label class="lens-only"><input type="checkbox" class="lens-only-box" disabled> Only show matching</label>
+    <div class="lens-caption" hidden>
+      <span class="lens-text" role="status"></span>
+      <button type="button" class="lens-clear">Clear highlight</button>
+    </div>
   </div>
 
   <div class="legend">

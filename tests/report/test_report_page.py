@@ -71,6 +71,12 @@ def report_url(tmp_path_factory):
     comps = [world.competition("elite"), world.competition("topp")]
     constraints = [PreferredWeekday(competitions=comps), ConsecutiveHomeDays(competitions=comps)]
     candidate = Candidate(matches=matches, score=evaluate(matches, constraints, ctx), label="Option 1")
+    # A second option with a rule set of its own, for the per-option lens state.
+    other = Candidate(
+        matches=matches,
+        score=evaluate(matches, [ConsecutiveHomeDays(competitions=comps)], ctx),
+        label="Option 2",
+    )
     cup = f.cup_schedule(
         "cup1",
         [f.cup_placement("r1", {"a_m": date(2026, 6, 6)}, round_name="Round 1", venue_type="away")],
@@ -86,7 +92,7 @@ def report_url(tmp_path_factory):
     path = render_report(
         world,
         season,
-        SolverResult(candidates=[candidate], solver="test"),
+        SolverResult(candidates=[candidate, other], solver="test"),
         tmp_path_factory.mktemp("report") / "report.html",
         cup_schedules=[cup],
         european_competitions=[europe],
@@ -278,10 +284,233 @@ def test_hovering_a_badge_shows_the_events_detail_and_points(page):
     assert off_day.get_attribute("aria-label") == "off-day"
 
 
-def test_tapping_a_badge_toggles_its_tooltip_on_touch_screens(page):
+def test_tapping_a_badge_toggles_its_tooltip_on_touch_screens(touch_page):
+    page = touch_page
     body = _view(page, "combined-list")
     badge = _club_a_men(body, "tr.fx-row").locator(".flag").first
-    badge.click()
+    badge.tap()
     assert "open" in badge.get_attribute("class")
+    assert page.input_value(".lens-select") == ""  # the first tap only shows the tooltip
     page.keyboard.press("Escape")
     assert "open" not in badge.get_attribute("class")
+
+
+# -- rule lens (#30) -----------------------------------------------------------
+#
+# Club A's men's league match (6 June) and women's (7 June) are the two fixtures of
+# the home pair; the men's match and club B's (13 June) are the Saturdays off the
+# preferred Sunday. The cup round and European leg carry no rule.
+
+PAIR = "consecutive_home_days"
+OFF_DAY = "preferred_weekday"
+
+
+@pytest.fixture
+def touch_page(browser, report_url):
+    context = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True)
+    page = context.new_page()
+    page.problems = []
+    page.on("console", lambda m: page.problems.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: page.problems.append(str(e)))
+    page.goto(report_url)
+    yield page
+    assert page.problems == []
+    context.close()
+
+
+def _lens(page, rule, panel="#panel-1"):
+    page.select_option(f"{panel} .lens-select", rule)
+
+
+def _counts(body, element):
+    return len(body.locator(f"{element}.lens-hit").all()), len(body.locator(f"{element}.lens-dim").all())
+
+
+def test_lens_selector_lists_only_rules_with_fixtures_and_their_totals(page):
+    options = page.locator("#panel-1 .lens-select option")
+    assert [o.get_attribute("value") for o in options.all()] == ["", PAIR, OFF_DAY]
+    texts = _texts(options)
+    assert texts[1].startswith("consecutive home days (+25")
+    assert "2 fixtures" in texts[1]
+    # The off-day rule is shown inversely: its fixtures are the ones that missed the reward.
+    assert "2 off-day fixtures" in texts[2] and "from 1 on-day" in texts[2]
+
+
+def test_lens_dims_other_fixtures_and_emphasises_matching_ones_in_every_view(page):
+    _lens(page, PAIR)
+    for view in ("by-competition", "combined-calendar"):
+        assert _counts(_view(page, view), ".fx") == (2, 3)
+    assert _counts(_view(page, "combined-list"), "tr.fx-row") == (2, 3)
+
+    month = _view(page, "month-calendar")
+    assert month.locator(".cal-day.lens-hit").count() == 2
+    assert [d.get_attribute("data-date") for d in month.locator(".cal-day.lens-hit").all()] == [
+        "2026-06-06",
+        "2026-06-07",
+    ]
+    assert "lens-dim" in month.locator('.cal-day[data-date="2026-06-13"]').get_attribute("class")
+    assert month.locator('.cal-day[data-date="2026-06-06"] .cal-hits').inner_text() == "1"
+    month.locator(f'.cal-day[data-date="{DAY}"]').click()
+    assert _counts(month, ".day-row") == (1, 2)  # the home-pair match among the cup and European rows
+
+    # The badge of the picked rule is marked on the fixtures that carry it.
+    badge = _view(page, "combined-calendar").locator(f'.fx.lens-hit .flag[data-rule="{PAIR}"]').first
+    assert "lens-rule" in badge.get_attribute("class")
+
+
+def test_lens_on_the_inverse_rule_highlights_the_off_day_fixtures_the_badges_show(page):
+    _lens(page, OFF_DAY)
+    body = _view(page, "combined-calendar")
+    hits = body.locator(".fx.lens-hit")
+    assert hits.count() == 2
+    assert set(hits.evaluate_all("els => els.map(e => e.getAttribute('data-rules'))")) >= {OFF_DAY}
+    caption = " ".join(page.locator("#panel-1 .lens-text").inner_text().split())
+    assert "2 fixtures off the preferred day (rule total +" in caption
+    assert "from 1 on-day fixture)" in caption
+
+
+def test_lens_combines_with_the_club_filter_and_only_matching_hides_and_collapses(page):
+    _lens(page, PAIR)
+    page.select_option(".club-select", "club_b")
+    body = _view(page, "combined-calendar")
+    assert _counts(body, ".fx") == (0, 1)  # club B has no home pair: its one match is dimmed
+
+    page.select_option(".club-select", "club_a")
+    assert _counts(_view(page, "combined-calendar"), ".fx") == (2, 2)  # + club A's cup round and European leg
+
+    page.check(".lens-only-box")
+    for view in ("by-competition", "combined-calendar"):
+        body = _view(page, view)
+        assert len(body.locator(".fx").all()) == 2
+    by_comp = _view(page, "by-competition")
+    assert by_comp.locator(".comp").count() == 2  # the cup and European competitions collapse
+    assert by_comp.locator(".round").count() == 2
+    assert len(_view(page, "combined-list").locator("tr.fx-row").all()) == 2
+    month = _view(page, "month-calendar")
+    assert month.locator(".cal-dot").count() == 2  # only the two home-pair days keep a dot
+
+    page.select_option(".club-select", "club_b")
+    assert "No fixtures match" in _view(page, "by-competition").inner_text()
+
+
+def test_lens_persists_across_views_and_is_kept_per_option(page):
+    _lens(page, PAIR)
+    page.check(".lens-only-box")
+    _view(page, "month-calendar")
+    _view(page, "by-competition")
+    panel = page.locator("#panel-1")
+    assert panel.get_attribute("data-lens-rule") == PAIR
+    assert panel.get_attribute("data-lens-only") == "true"
+    assert page.input_value("#panel-1 .lens-select") == PAIR
+
+    page.click('.tab[data-panel="panel-2"]')
+    assert page.locator("#panel-2").get_attribute("data-lens-rule") == ""
+    assert page.locator("#panel-2 .lens-hit, #panel-2 .lens-dim").count() == 0
+    assert [o.get_attribute("value") for o in page.locator("#panel-2 .lens-select option").all()] == ["", PAIR]
+    _lens(page, PAIR, "#panel-2")
+
+    page.click('.tab[data-panel="panel-1"]')
+    assert page.locator("#panel-1").get_attribute("data-lens-rule") == PAIR
+    assert page.locator("#panel-1 .view-pane:not([hidden]) .fx").count() == 2  # still only the matches
+
+
+def test_clearing_the_lens_restores_every_fixture(page):
+    _lens(page, PAIR)
+    page.check(".lens-only-box")
+    assert page.locator("#panel-1 .lens-caption").is_visible()
+
+    page.click("#panel-1 .lens-clear")
+
+    assert page.input_value("#panel-1 .lens-select") == ""
+    assert not page.locator("#panel-1 .lens-caption").is_visible()
+    assert page.is_disabled(".lens-only-box") and not page.is_checked(".lens-only-box")
+    body = _view(page, "combined-calendar")
+    assert len(body.locator(".fx").all()) == 5
+    assert body.locator(".lens-hit, .lens-dim").count() == 0
+
+
+def test_show_in_calendar_from_the_scorecard_sets_the_lens_and_scrolls_to_the_controls(page):
+    item = page.locator(f'#panel-1 details.item[data-rule="{PAIR}"]')
+    item.locator("summary").click()
+
+    item.locator(".lens-link").click()
+
+    assert page.input_value("#panel-1 .lens-select") == PAIR
+    assert page.locator("#panel-1").get_attribute("data-lens-rule") == PAIR
+    page.wait_for_function("() => document.querySelector('#panel-1 .controls').getBoundingClientRect().top < 300")
+
+
+def test_opening_a_scorecard_entry_lists_its_fixtures_grouped_by_team(page):
+    item = page.locator(f'#panel-1 details.item[data-rule="{PAIR}"]')
+    assert item.locator(".occ-row").count() == 0  # built lazily
+    item.locator("summary").click()
+
+    groups = _texts(item.locator(".occ-group > summary"))
+    assert groups == ["Club A ×2"]
+    rows = _texts(item.locator(".occ-row"))
+    assert len(rows) == 2
+    assert rows[0].startswith("Sat 06/06") and "+12.5" in rows[0] and "1 of 2 fixtures" in rows[0]
+    assert rows[1].startswith("Sun 07/06")
+
+    off_day = page.locator(f'#panel-1 details.item[data-rule="{OFF_DAY}"]')
+    off_day.locator("summary").click()
+    assert "2 fixtures off the preferred day" in off_day.locator(".occ-summary").inner_text()
+    assert any("reward forgone" in t for t in _texts(off_day.locator(".occ-row")))
+
+
+def test_an_occurrence_row_jumps_to_and_flashes_its_fixture(page):
+    item = page.locator(f'#panel-1 details.item[data-rule="{PAIR}"]')
+    item.locator("summary").click()
+    row = item.locator(".occ-row").nth(1)
+    uid = row.get_attribute("data-fx")
+
+    row.click()
+
+    flashed = page.locator("#panel-1 .view-pane:not([hidden]) .flash")
+    flashed.wait_for()
+    assert flashed.count() == 1 and flashed.get_attribute("data-uid") == uid
+
+    # In the month calendar the row opens its day; a hiding club filter is lifted.
+    page.wait_for_timeout(2600)
+    month = _view(page, "month-calendar")
+    page.select_option(".club-select", "club_b")
+    row.click()
+    flashed = month.locator(".flash")
+    flashed.wait_for()
+    assert flashed.get_attribute("data-uid") == uid
+    assert page.input_value(".club-select") == ""
+    assert month.locator(".cal-day.selected").get_attribute("data-date") == "2026-06-07"
+
+
+def test_clicking_a_badge_selects_its_rule_while_hover_still_shows_its_tooltip(page):
+    body = _view(page, "combined-calendar")
+    badge = _club_a_men(body, ".fx").locator(f'.flag[data-rule="{OFF_DAY}"]')
+
+    badge.hover()
+    badge.locator(".tooltip").wait_for(state="visible")
+    assert "highlight this rule" in badge.locator(".tooltip").inner_text()
+    badge.click()
+
+    assert page.input_value("#panel-1 .lens-select") == OFF_DAY
+    assert page.locator("#panel-1 .fx.lens-hit").count() == 2
+
+
+def test_the_second_tap_on_a_badge_selects_its_rule_on_touch_screens(touch_page):
+    page = touch_page
+    body = _view(page, "combined-calendar")
+    badge = _club_a_men(body, ".fx").locator(f'.flag[data-rule="{PAIR}"]')
+
+    badge.tap()
+    assert "open" in badge.get_attribute("class") and page.input_value(".lens-select") == ""
+    badge.tap()
+
+    assert page.input_value(".lens-select") == PAIR
+    assert "open" not in badge.get_attribute("class")
+
+
+def test_the_lens_controls_do_not_overflow_a_phone_screen(touch_page):
+    page = touch_page
+    _lens(page, PAIR)
+    for view in ("by-competition", "combined-list", "month-calendar", "combined-calendar"):
+        _view(page, view)
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

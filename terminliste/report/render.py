@@ -15,6 +15,7 @@ from __future__ import annotations
 import calendar
 import json
 from collections import defaultdict
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -126,7 +127,7 @@ def render_report(
     )
     report_data = {
         **payload.shared_tables(
-            world, club_colors, competitions, payload.rule_table(rule_ids, hard_ids)
+            world, club_colors, competitions, payload.rule_table(rule_ids, hard_ids, frozenset(_INVERSE_RULES))
         ),
         "tint": {"good": TINT_GOOD, "cost": TINT_COST},
         "shared": [payload.shared_entry_wire(entry) for entry in shared_entries],
@@ -175,6 +176,8 @@ def _build_option(
     for uid, entry in enumerate(entries, start=len(shared_entries)):
         entry["uid"] = uid
     combined_entries = entries + shared_entries
+    # Rules with at least one fixture to show, and how many.
+    pinned = _pinned_fixture_counts(entries)
     headlines = _headlines(world, candidate)
     club_headlines = _club_headlines(world, candidate, dual_club_ids)
     month_calendar, month_calendar_details = _month_calendar_view(combined_entries)
@@ -188,13 +191,13 @@ def _build_option(
         "points": score.points,
         "headlines": headlines,
         "hard_violation_detail": (
-            [_result_row(r, world, full=True) for r in score.hard_results() if r.count]
+            [_result_row(r, world, pinned, full=True) for r in score.hard_results() if r.count]
             if full_diagnostics
             else []
         ),
-        "problems": [_result_row(r, world, full=full_diagnostics) for r in score.biggest_problems(limit=limit)],
-        "upsides": [_result_row(r, world, full=full_diagnostics) for r in score.biggest_upsides(limit=limit)],
-        "breakdown": [_result_row(r, world, full=True) for r in _ordered_results(score)],
+        "problems": [_result_row(r, world, pinned, full=full_diagnostics) for r in score.biggest_problems(limit=limit)],
+        "upsides": [_result_row(r, world, pinned, full=full_diagnostics) for r in score.biggest_upsides(limit=limit)],
+        "breakdown": [_result_row(r, world, pinned, full=True) for r in _ordered_results(score)],
         "fairness": _fairness_rows(world, candidate),
         "league_entries": entries,
         "client": payload.option_wire(
@@ -208,6 +211,7 @@ def _build_option(
             combined_list=_combined_list_view(combined_entries),
             month_calendar=month_calendar,
             month_calendar_details=month_calendar_details,
+            rule_totals={r.constraint_id: r.total for r in score.results},
         ),
     }
 
@@ -338,7 +342,23 @@ def _ordered_results(score: Score) -> list[ConstraintResult]:
     return hard + soft
 
 
-def _result_row(result: ConstraintResult, world: World, full: bool = False) -> dict:
+def _pinned_fixture_counts(entries: list[dict]) -> dict[str, int]:
+    """How many fixtures each rule is drawn on; a rule absent here has nothing
+    to show in the calendar."""
+    counts: dict[str, int] = defaultdict(int)
+    for entry in entries:
+        for rule_id in {f["rule_id"] for f in entry["flags"] if not f["quiet"]}:
+            counts[rule_id] += 1
+    return counts
+
+
+def _result_row(
+    result: ConstraintResult, world: World, pinned: dict[str, int], full: bool = False
+) -> dict:
+    # A rule's fixtures are listed by the page from the fixture flags, so only
+    # the events that point at no fixture are spelled out here.
+    if pinned.get(result.constraint_id):
+        result = replace(result, events=[e for e in result.events if not e.match_keys])
     return {
         "id": result.constraint_id,
         "kind": result.kind,
@@ -353,6 +373,7 @@ def _result_row(result: ConstraintResult, world: World, full: bool = False) -> d
         # example list when a "biggest upsides"/"problems" entry is expanded
         # (#61).
         "occurrences": _entity_counts(world, result),
+        "pinned": pinned.get(result.constraint_id, 0),
     }
 
 
@@ -584,9 +605,11 @@ def _match_flags(world: World, candidate: Candidate) -> dict[str, list[dict]]:
     `_INVERSE_RULES` mark their rewarded matches `quiet` and flag the others,
     at no points, instead.
     """
+    by_key = {m.key: m for m in candidate.matches}
     flags: dict[str, list[dict]] = defaultdict(list)
     for result in candidate.score.results:
         inverse = result.constraint_id in _INVERSE_RULES
+        group_of = _event_groups(world, result)
         for event in result.events:
             for key in event.match_keys:
                 flags[key].append(
@@ -596,10 +619,10 @@ def _match_flags(world: World, candidate: Candidate) -> dict[str, list[dict]]:
                         "detail": "" if inverse else event.detail,
                         "shared_by": 1 if inverse else len(event.match_keys),
                         "quiet": inverse,
+                        "group": "" if inverse else group_of(event, by_key[key]),
                     }
                 )
 
-    by_key = {m.key: m for m in candidate.matches}
     for rule_id in _INVERSE_RULES:
         result = candidate.score.result(rule_id)
         if result is None or not result.events:
@@ -631,6 +654,25 @@ def _match_flags(world: World, candidate: Candidate) -> dict[str, list[dict]]:
                 }
             )
     return flags
+
+
+def _event_groups(world: World, result: ConstraintResult):
+    """`group(event, match)` -> the team (or dual club) the event is about, as
+    the page's lists of a rule's fixtures head them; "" when it has none. Picks
+    the same bucket as `_entity_counts`, so the two never disagree."""
+    club_events, team_events = _classify_events(world, result.events)
+    by_club = len(club_events) >= len(team_events)
+    in_bucket = {id(e) for e in (club_events if by_club else team_events)}
+
+    def group(event: Event, match: Match) -> str:
+        if id(event) not in in_bucket:
+            return ""
+        if by_club:
+            return world.club(world.team(event.team_ids[0]).club_id).name
+        playing = [t for t in event.team_ids if t in (match.home_team, match.away_team)]
+        return world.team_label((playing or event.team_ids)[0])
+
+    return group
 
 
 def _flag_legend(options: list[dict], hard_ids: set[str]) -> list[dict]:

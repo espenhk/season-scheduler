@@ -4,7 +4,8 @@
 //
 // Layout of this file:
 //   1. helpers          2. fixture model (hydration)   3. fixture representations
-//   4. views            5. option controller            6. rule tooltips
+//   4. views            5. option controller (incl. the rule lens)
+//   6. rule tooltips    7. scorecard links and fixture lists
 //
 // Only the visible option's active view is ever in the DOM (#42). Data strings
 // reach the page via textContent / setAttribute only, never innerHTML.
@@ -52,7 +53,7 @@
   //   uid, kind, date, time, comp, clubs[], venue,
   //   home / away: {name, full, cls, shape}  (away is null for cup/European)
   //   versus: text after "v" when there is no away side, round: round name
-  //   flags[]: scoring badges, one per rule {rule, delta, items[{delta, detail, n}]};
+  //   flags[]: scoring badges, one per rule {rule, delta, items[{delta, detail, n, group}]};
   //   rules: their rule ids; delta: their net; tint: 'good' | 'cost' | ''
 
   var SHAPE_BY_VENUE_TYPE = { home: 'square', away: 'diamond', neutral: 'circle' };
@@ -68,7 +69,7 @@
 
   // The wire's flags (see payload.py) grouped into one badge per rule, in
   // rule-table order.
-  function decodeFlags(wireFlags, notes) {
+  function decodeFlags(wireFlags, notes, groups) {
     var byRule = {};
     var flags = [];
     (wireFlags || []).forEach(function (w) {
@@ -79,13 +80,13 @@
         flags.push(flag);
       }
       flag.delta += w[1];
-      flag.items.push({ delta: w[1], detail: notes[w[2] || 0], n: w[3] || 1 });
+      flag.items.push({ delta: w[1], detail: notes[w[2] || 0], n: w[3] || 1, group: groups[w[4] || 0] });
     });
     return flags;
   }
 
-  function withFlags(fx, wireFlags, notes) {
-    fx.flags = decodeFlags(wireFlags, notes);
+  function withFlags(fx, wireFlags, notes, groups) {
+    fx.flags = decodeFlags(wireFlags, notes, groups);
     fx.rules = fx.flags.map(function (flag) { return flag.rule.id; });
     fx.delta = fx.flags.reduce(function (sum, flag) { return sum + flag.delta; }, 0);
     fx.broken = fx.flags.some(function (flag) { return flag.rule.hard; });
@@ -93,14 +94,14 @@
     return fx;
   }
 
-  function leagueFixture(uid, m, notes) {
+  function leagueFixture(uid, m, notes, groups) {
     var home = side(m.h, 'square');
     var away = side(m.a, 'diamond');
     return withFlags({
       uid: uid, kind: 'league', date: m.d, time: m.t || '', comp: m.c,
       clubs: [home.club, away.club], home: home, away: away, versus: '', round: '',
       venue: DATA.venues[m.v || DATA.teams[m.h].venue]
-    }, m.f, notes);
+    }, m.f, notes, groups);
   }
 
   function sharedFixture(uid, e) {
@@ -113,7 +114,7 @@
       uid: uid, kind: european ? 'european' : 'cup', date: e.d, time: '', comp: e.c,
       clubs: [home.club], home: home, away: null, versus: european ? e.o : 'TBD', round: e.n,
       venue: e.vl
-    }, null, null);
+    }, null, null, null);
   }
 
   var sharedFixtures = null;
@@ -126,7 +127,7 @@
     }
     var offset = sharedFixtures.length;
     return sharedFixtures.concat(optionData.matches.map(function (m, i) {
-      return leagueFixture(offset + i, m, optionData.notes);
+      return leagueFixture(offset + i, m, optionData.notes, optionData.groups);
     }));
   }
 
@@ -186,6 +187,7 @@
   // positioning) is built on first use, so a page full of badges stays light.
 
   var flagOf = new WeakMap();
+  var HOVER_NONE = window.matchMedia('(hover: none)').matches;
   var tooltipCount = 0;
 
   function signed(delta) {
@@ -217,6 +219,7 @@
       if (item.n > 1) text += ' (this fixture’s share of ' + signed(item.delta * item.n) + ', split over ' + item.n + ' fixtures)';
       if (text) tip.appendChild(el('span', 'tt-detail', text));
     });
+    append(tip, el('span', 'tt-hint', (HOVER_NONE ? 'Tap again' : 'Click') + ' to highlight this rule in the calendar'));
     badge.appendChild(tip);
   }
 
@@ -289,8 +292,14 @@
   // ------------------------------------------------------------------ views
   //
   // A view is `function (ctx) -> Node`, drawn into its pane's .pane-body when
-  // the pane is activated. `ctx.visible(ids)` is the single place the club
-  // filter applies; later filters belong in `ctx.show`.
+  // the pane is activated. `ctx.visible(ids)` is the single place the filters
+  // (club, and the lens's "only show matching") apply; they live in `ctx.show`.
+  // `ctx.filtering` is true while either hides anything, so rounds and days left
+  // empty collapse.
+
+  function noMatches() {
+    return el('div', 'desc', 'No fixtures match the club and rule selected.');
+  }
 
   function fixturesOf(ctx, ids, showCompetition) {
     var box = el('div', 'fixtures');
@@ -309,12 +318,12 @@
   function byCompetitionView(ctx) {
     var root = document.createDocumentFragment();
     ctx.opt.data.byCompetition.concat(DATA.sharedByCompetition).forEach(function (view) {
-      // Under a club filter a round (or a whole competition) with nothing left
+      // Under a filter a round (or a whole competition) with nothing left
       // collapses rather than leaving a bare heading.
       var rounds = view.rounds.filter(function (round) {
-        return !ctx.club || !round.ids.length || ctx.visible(round.ids).length;
+        return !ctx.filtering || !round.ids.length || ctx.visible(round.ids).length;
       });
-      if (ctx.club && view.rounds.length && !rounds.length) return;
+      if (ctx.filtering && view.rounds.length && !rounds.length) return;
       var comp = append(el('div', 'comp'), el('h3', '', view.name), el('div', 'meta', view.meta));
       rounds.forEach(function (round) {
         append(
@@ -345,7 +354,9 @@
       head.appendChild(el('th', '', name));
     });
     var body = el('tbody');
-    ctx.visible(ctx.opt.data.list).forEach(function (uid) {
+    var shown = ctx.visible(ctx.opt.data.list);
+    if (!shown.length) return noMatches();
+    shown.forEach(function (uid) {
       body.appendChild(fixtureRow(ctx.fx[uid]));
     });
     return append(el('table'), append(el('thead'), head), body);
@@ -382,10 +393,9 @@
           var selected = iso === state.date;
           if (selected) button.classList.add('selected');
           button.setAttribute('aria-pressed', String(selected));
-          button.setAttribute(
-            'aria-label',
-            iso + (dots.length ? ': ' + dots.map(function (c) { return DATA.competitions[c].name; }).join(', ') : '')
-          );
+          var label = iso + (dots.length ? ': ' + dots.map(function (c) { return DATA.competitions[c].name; }).join(', ') : '');
+          button.setAttribute('aria-label', label);
+          button.setAttribute('data-label', label);
           var dotBox = el('span', 'cal-dots');
           dots.forEach(function (comp) {
             var dot = el('span', 'cal-dot ' + DATA.competitions[comp].cls);
@@ -416,6 +426,7 @@
       } else {
         details.appendChild(el('div', 'day-detail-empty', state.date ? 'No games on this day.' : 'Tap a day above to see its games here.'));
       }
+      ctx.opt.markLens(details);
       return details.firstChild;
     }
 
@@ -447,16 +458,36 @@
 
   // ------------------------------------------------------ option controller
   //
-  // One controller per option panel, each with its own view and club state.
+  // One controller per option panel, each with its own state:
+  //   view, club, date (month calendar's selected day), and the rule lens:
+  //   rule (a rule id, '' for none) and only (hide instead of dim).
   // `render()` is the single place a view is activated: it draws the active
-  // view into its pane and empties the others.
+  // view into its pane and empties the others. The panel carries the lens as
+  // data-lens-rule / data-lens-only, and each fixture element is marked
+  // .lens-hit or .lens-dim by `markLens`.
+
+  var REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function ruleName(rule) { return rule.id.replace(/_/g, ' '); }
+
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+
+  // A rule total as a whole number, one decimal when it is small.
+  function points(total) {
+    var text = Math.abs(total) < 10 ? (Math.round(total * 10) / 10).toFixed(1) : String(Math.round(total));
+    return total > 0 ? '+' + text : text.replace('-', '−');
+  }
 
   function Option(index, panel) {
     this.data = DATA.options[index];
     this.panel = panel;
     this.fx = null;
-    this.state = { view: panel.querySelector('.view-btn').dataset.view, club: '', date: '' };
+    this.stats = null;
+    this.state = { view: panel.querySelector('.view-btn').dataset.view, club: '', date: '', rule: '', only: false };
     this.clubSelect = panel.querySelector('.club-select');
+    this.lensSelect = panel.querySelector('.lens-select');
+    this.lensOnly = panel.querySelector('.lens-only-box');
+    this.lensCaption = panel.querySelector('.lens-caption');
     this.headlines = panel.querySelector('.headlines');
     this.headlineScope = panel.querySelector('.headline-scope');
     var self = this;
@@ -470,16 +501,28 @@
       self.state.club = self.clubSelect.value;
       self.render();
     });
+    this.lensSelect.addEventListener('change', function () { self.setLens(self.lensSelect.value); });
+    this.lensOnly.addEventListener('change', function () { self.setLens(self.state.rule, self.lensOnly.checked); });
+    panel.querySelector('.lens-clear').addEventListener('click', function () {
+      self.setLens('');
+      self.lensSelect.focus();
+    });
   }
 
   Option.prototype.context = function () {
     var club = this.state.club;
+    var rule = this.state.rule;
+    var only = this.state.only;
     var fx = this.fx;
-    function show(f) { return !club || f.clubs.indexOf(club) !== -1; }
+    function matches(f) { return !rule || f.rules.indexOf(rule) !== -1; }
+    function show(f) { return (!club || f.clubs.indexOf(club) !== -1) && (!only || matches(f)); }
     return {
       opt: this,
       fx: fx,
       club: club,
+      rule: rule,
+      filtering: !!club || only,
+      matches: matches,
       show: show,
       visible: function (ids) { return ids.filter(function (uid) { return show(fx[uid]); }); }
     };
@@ -500,8 +543,174 @@
       : '';
   };
 
+  // ------------------------------------------------------------- rule lens
+  //
+  // The lens picks one rule. Its fixtures are the ones badged with it, so for
+  // an inverse rule (preferred_weekday, `inv` in the rule table) that is the
+  // off-day fixtures the badges show, not the on-day ones that earned the
+  // rule's total; every count and caption below says so.
+
+  // Per rule with fixtures in this option: {rule, fixtures, onDay, total}.
+  Option.prototype.ruleStats = function () {
+    if (this.stats) return this.stats;
+    var stats = {};
+    function entry(rule) {
+      return stats[rule.id] || (stats[rule.id] = { rule: rule, fixtures: 0, onDay: 0, total: 0 });
+    }
+    this.fx.forEach(function (f) { f.flags.forEach(function (flag) { entry(flag.rule).fixtures++; }); });
+    this.data.matches.forEach(function (m) {
+      (m.q || []).forEach(function (quiet) { entry(DATA.rules[quiet[0]]).onDay++; });
+    });
+    this.data.totals.forEach(function (t) { entry(DATA.rules[t[0]]).total = t[1]; });
+    this.stats = stats;
+    return stats;
+  };
+
+  function statsWording(s) {
+    if (s.rule.inv) {
+      // preferred_weekday: the badge is the exception, the total is earned by the rest.
+      return plural(s.fixtures, 'fixture', 'fixtures') + ' off the preferred day (rule total ' +
+        points(s.total) + ' from ' + plural(s.onDay, 'on-day fixture', 'on-day fixtures') + ')';
+    }
+    return plural(s.fixtures, 'fixture', 'fixtures') + (s.rule.hard ? ' breaking it' : ', ' + points(s.total) + ' pts');
+  }
+
+  Option.prototype.buildLensOptions = function () {
+    var stats = this.ruleStats();
+    var list = Object.keys(stats).map(function (id) { return stats[id]; }).filter(function (s) { return s.fixtures; });
+    list.sort(function (a, b) {
+      return (b.rule.hard ? 1 : 0) - (a.rule.hard ? 1 : 0) || Math.abs(b.total) - Math.abs(a.total) ||
+        (ruleName(a.rule) < ruleName(b.rule) ? -1 : 1);
+    });
+    var select = this.lensSelect;
+    list.forEach(function (s) {
+      var text = ruleName(s.rule) + ' (';
+      if (s.rule.inv) text += plural(s.fixtures, 'off-day fixture', 'off-day fixtures') + ' · ' + points(s.total) + ' from ' + s.onDay + ' on-day';
+      else text += (s.rule.hard ? 'broken' : points(s.total)) + ' · ' + plural(s.fixtures, 'fixture', 'fixtures');
+      var option = el('option', '', text + ')');
+      option.value = s.rule.id;
+      select.appendChild(option);
+    });
+  };
+
+  Option.prototype.setLens = function (rule, only) {
+    var state = this.state;
+    var redraw = state.only;
+    state.rule = rule || '';
+    state.only = state.rule ? (only === undefined ? state.only : only) : false;
+    // Hiding changes the layout, so a view is redrawn; dimming only re-marks
+    // it, which keeps a focused badge in place.
+    if (redraw || state.only) {
+      this.render();
+    } else {
+      this.markLens(this.activeBody());
+      this.renderLensUi();
+    }
+  };
+
+  Option.prototype.activeBody = function () {
+    return this.panel.querySelector('.view-pane:not([hidden]) .pane-body');
+  };
+
+  Option.prototype.dayIndex = function () {
+    if (!this.days) {
+      this.days = {};
+      var days = this.days;
+      this.data.days.forEach(function (day) { days[day.date] = day; });
+    }
+    return this.days;
+  };
+
+  // Marks what the lens shows among the fixtures drawn under `root`.
+  Option.prototype.markLens = function (root) {
+    var rule = this.state.rule;
+    if (!root) return;
+    root.querySelectorAll('[data-uid]').forEach(function (node) {
+      var hit = (' ' + node.getAttribute('data-rules') + ' ').indexOf(' ' + rule + ' ') !== -1;
+      node.classList.toggle('lens-hit', !!rule && hit);
+      node.classList.toggle('lens-dim', !!rule && !hit);
+    });
+    root.querySelectorAll('.flag[data-rule]').forEach(function (badge) {
+      badge.classList.toggle('lens-rule', !!rule && badge.getAttribute('data-rule') === rule);
+    });
+    var ctx = this.context();
+    var days = this.dayIndex();
+    var name = rule ? ruleName(DATA.rules.filter(function (r) { return r.id === rule; })[0]) : '';
+    root.querySelectorAll('.cal-day').forEach(function (button) {
+      var day = days[button.dataset.date];
+      var n = rule && day ? ctx.visible(day.ids).filter(function (uid) { return ctx.matches(ctx.fx[uid]); }).length : 0;
+      button.classList.toggle('lens-hit', n > 0);
+      button.classList.toggle('lens-dim', !!rule && !n);
+      var chip = button.querySelector('.cal-hits');
+      if (chip) chip.remove();
+      if (n) {
+        var count = el('span', 'cal-hits', String(n));
+        count.setAttribute('aria-hidden', 'true');
+        button.appendChild(count);
+      }
+      button.setAttribute('aria-label', button.dataset.label + (n ? ': ' + plural(n, 'fixture', 'fixtures') + ' with ' + name : ''));
+    });
+  };
+
+  Option.prototype.renderLensUi = function () {
+    var state = this.state;
+    var stats = state.rule && this.ruleStats()[state.rule];
+    this.lensSelect.value = state.rule;
+    this.lensOnly.checked = state.only;
+    this.lensOnly.disabled = !state.rule;
+    this.panel.setAttribute('data-lens-rule', state.rule);
+    this.panel.setAttribute('data-lens-only', String(state.only));
+    this.lensCaption.hidden = !stats;
+    if (!stats) return;
+    var text = this.panel.querySelector('.lens-text');
+    text.textContent = '';
+    var rule = stats.rule;
+    append(text, el('b', '', ruleName(rule) + ': '), document.createTextNode(statsWording(stats) + '. ' + rule.desc));
+    if (state.club) {
+      var club = state.club;
+      var inClub = this.fx.filter(function (f) { return f.clubs.indexOf(club) !== -1 && f.rules.indexOf(rule.id) !== -1; }).length;
+      var name = this.clubSelect.options[this.clubSelect.selectedIndex].text;
+      append(text, document.createTextNode(' ' + name + ': ' + plural(inClub, 'such fixture', 'such fixtures') + '.'));
+    }
+    append(text, document.createTextNode(' Badge: “' + rule.label + '”.'));
+  };
+
+  // Brings fixture `uid` into view in the current view and flashes it. A filter
+  // that would hide it is lifted first; the month calendar opens its day.
+  Option.prototype.reveal = function (uid) {
+    var fx = this.fx[uid];
+    var state = this.state;
+    var redraw = false;
+    if (state.club && fx.clubs.indexOf(state.club) === -1) {
+      state.club = '';
+      this.clubSelect.value = '';
+      redraw = true;
+    }
+    if (state.only && fx.rules.indexOf(state.rule) === -1) {
+      state.only = false;
+      redraw = true;
+    }
+    if (state.view === 'month-calendar' && state.date !== fx.date) {
+      state.date = fx.date;
+      redraw = true;
+    }
+    if (redraw) this.render();
+    var node = this.activeBody().querySelector('[data-uid="' + uid + '"]');
+    if (!node) return;
+    node.classList.remove('flash');
+    void node.offsetWidth;
+    node.classList.add('flash');
+    node.tabIndex = -1;
+    node.focus({ preventScroll: true });
+    node.scrollIntoView({ block: 'center', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
+    setTimeout(function () { node.classList.remove('flash'); }, 2400);
+  };
+
   Option.prototype.render = function () {
-    if (!this.fx) this.fx = hydrate(this.data);
+    if (!this.fx) {
+      this.fx = hydrate(this.data);
+      this.buildLensOptions();
+    }
     var state = this.state;
     var ctx = this.context();
     this.panel.querySelectorAll('.view-btn').forEach(function (button) {
@@ -514,9 +723,14 @@
       pane.hidden = !active;
       var body = pane.querySelector('.pane-body');
       body.textContent = '';
-      if (active) body.appendChild(VIEWS[state.view](ctx));
+      if (active) {
+        var drawn = VIEWS[state.view](ctx);
+        body.appendChild(drawn.childNodes.length ? drawn : noMatches());
+      }
     });
     this.renderHeadlines();
+    this.renderLensUi();
+    this.markLens(this.activeBody());
   };
 
   // Frees the panel's view while another option is shown.
@@ -606,6 +820,15 @@
     // toggle the enclosing <details>.
     e.preventDefault();
     var wrap = icon.closest('.info-wrap');
+    if (!wrap) return;
+    // A fixture's badge picks its rule for the lens. Its tooltip is already up
+    // on hover or focus; a touch has neither, so the first tap shows the
+    // tooltip and the second picks the rule.
+    if (flagOf.has(wrap) && (!(e.pointerType === 'touch' || e.pointerType === 'pen') || wrap.classList.contains('open'))) {
+      closeTooltips();
+      optionOf(wrap).setLens(wrap.getAttribute('data-rule'));
+      return;
+    }
     var wasOpen = wrap.classList.contains('open');
     closeTooltips();
     if (!wasOpen) {
@@ -620,4 +843,91 @@
   // 'scroll' event doesn't bubble.
   window.addEventListener('scroll', repositionVisibleTooltips, true);
   window.addEventListener('resize', repositionVisibleTooltips);
+
+  // ------------------------------------- scorecard links and fixture lists
+  //
+  // The upsides, problems and breakdown rows name rules; a rule with fixtures
+  // gets a "Show in calendar" button and, once its <details> is opened, the
+  // list of those fixtures, built here from the fixture flags rather than
+  // shipped a second time.
+
+  function optionOf(node) {
+    return option(Array.prototype.indexOf.call(panels, node.closest('.panel')));
+  }
+
+  function occurrenceRow(fx, flag, item) {
+    var button = el('button', 'occ-row');
+    button.type = 'button';
+    button.setAttribute('data-fx', fx.uid);
+    var gain = flag.rule.hard ? 'broken' : item.delta > 0 ? 'good' : item.delta < 0 ? 'cost' : 'none';
+    var detail = item.detail + (item.n > 1 ? ' (1 of ' + item.n + ' fixtures sharing this)' : '');
+    append(
+      button,
+      el('span', 'occ-date', shortDate(fx.date)),
+      el('span', 'occ-fx', fx.home.name + (fx.away ? ' v ' + fx.away.name : ' ' + versusText(fx))),
+      el('span', 'occ-delta ' + gain, flag.rule.hard ? 'broken' : item.delta === 0 ? 'reward forgone' : signed(item.delta)),
+      el('span', 'occ-detail', detail)
+    );
+    return append(el('li'), button);
+  }
+
+  // Lists a rule's fixtures grouped by team (or dual club), biggest group first,
+  // each group headed by its count.
+  Option.prototype.fillRuleList = function (mount, ruleId) {
+    var stats = this.ruleStats()[ruleId];
+    var groups = {};
+    this.fx.forEach(function (fx) {
+      fx.flags.forEach(function (flag) {
+        if (flag.rule.id !== ruleId) return;
+        flag.items.forEach(function (item) {
+          (groups[item.group] || (groups[item.group] = [])).push({ fx: fx, flag: flag, item: item });
+        });
+      });
+    });
+    var names = Object.keys(groups).sort(function (a, b) {
+      return groups[b].length - groups[a].length || (a < b ? -1 : 1);
+    });
+    var total = names.reduce(function (sum, name) { return sum + groups[name].length; }, 0);
+    var box = el('div', 'occ-groups');
+    var summary = el('p', 'occ-summary', statsWording(stats) + '. Select a row to find it in the calendar.');
+    if (total > 14) {
+      box.tabIndex = 0;
+      box.setAttribute('role', 'region');
+      box.setAttribute('aria-label', ruleName(stats.rule) + ' fixtures');
+    }
+    names.forEach(function (name) {
+      var rows = groups[name].sort(function (a, b) { return a.fx.date < b.fx.date ? -1 : a.fx.date > b.fx.date ? 1 : a.fx.uid - b.fx.uid; });
+      var list = el('ul');
+      rows.forEach(function (r) { list.appendChild(occurrenceRow(r.fx, r.flag, r.item)); });
+      if (!name) {
+        box.appendChild(list);
+        return;
+      }
+      var group = el('details', 'occ-group');
+      group.open = total <= 30;
+      append(group, append(el('summary'), document.createTextNode(name + ' '), el('span', 'occ-count', '\u00d7' + rows.length)), list);
+      box.appendChild(group);
+    });
+    append(mount, summary, box);
+  };
+
+  // `toggle` does not bubble, hence the capture phase.
+  document.addEventListener('toggle', function (e) {
+    var details = e.target;
+    if (!details.open || !details.dataset || !details.dataset.rule) return;
+    var mount = details.querySelector('.rule-fixtures');
+    if (mount && !mount.firstChild) optionOf(details).fillRuleList(mount, details.dataset.rule);
+  }, true);
+
+  document.addEventListener('click', function (e) {
+    var link = e.target.closest ? e.target.closest('.lens-link, .occ-row') : null;
+    if (!link) return;
+    var opt = optionOf(link);
+    if (link.classList.contains('occ-row')) {
+      opt.reveal(+link.getAttribute('data-fx'));
+    } else {
+      opt.setLens(link.getAttribute('data-rule'));
+      opt.panel.querySelector('.controls').scrollIntoView({ block: 'start', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
+    }
+  });
 })();

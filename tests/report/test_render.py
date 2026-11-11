@@ -1182,3 +1182,83 @@ def test_render_report_lists_the_round_slots_and_search_space():
     assert "ways to pick compatible slots" in rendered
     first = plans["elite"].chosen[0]
     assert f"default {first.default_day.strftime('%a %d %b')}" in rendered
+
+
+# -- rule lens (#30) ---------------------------------------------------------
+
+
+class _Unpinned:
+    """A soft rule whose one event points at no fixture, like `home_away_balance`."""
+
+    id = "home_away_balance"
+    kind = "soft"
+    weight = 1.0
+
+    def evaluate(self, index, ctx):
+        return ConstraintResult(
+            "home_away_balance", "soft", -6.0, 1, [Event(delta=-6.0, detail="drifted", team_ids=("a_m",))]
+        )
+
+
+def _lens_page():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va"),  # Saturday, off the preferred Sunday
+        f.match("topp", "a_w", "opp_w", date(2026, 6, 7), "va"),
+        f.match("elite", "b_m", "opp_m", date(2026, 6, 14), "vb", round_index=1),  # Sunday, on day
+    ]
+    comps = [comp_m, comp_w]
+    candidate = _candidate(
+        world,
+        season,
+        matches,
+        [PreferredWeekday(competitions=comps), ConsecutiveHomeDays(competitions=comps), _Unpinned()],
+    )
+    rendered = _render(world, season, [candidate])
+    return rendered, _report_data(rendered)
+
+
+def test_flags_name_the_team_or_club_their_event_is_about_for_the_fixture_lists():
+    _, data = _lens_page()
+    option = data["options"][0]
+    pair, other = option["matches"][0], option["matches"][1]
+    flag = next(fl for fl in pair["f"] if data["rules"][fl[0]]["id"] == "consecutive_home_days")
+    assert flag[3] == 2  # padded so the group sits in a fixed position
+    assert option["groups"][flag[4]] == "Club A"
+    assert option["groups"][next(fl for fl in other["f"])[4]] == "Club A"
+    assert option["groups"][0] == ""
+
+
+def test_option_totals_give_each_drawn_rules_full_total_and_mark_the_inverse_rule():
+    _, data = _lens_page()
+    ids = {i: rule["id"] for i, rule in enumerate(data["rules"])}
+    totals = {ids[rule]: total for rule, total in data["options"][0]["totals"]}
+    assert set(totals) == {"preferred_weekday", "consecutive_home_days"}  # not the unpinned rule
+    assert totals["preferred_weekday"] > 0  # earned by the on-day fixtures, badged on the off-day one
+    inverse = [r["id"] for r in data["rules"] if r.get("inv")]
+    assert inverse == ["preferred_weekday"]
+
+
+def test_scorecard_offers_show_in_calendar_only_for_rules_with_fixtures():
+    rendered, _ = _lens_page()
+    linked = set(re.findall(r'class="lens-link" data-rule="(\w+)"', rendered))
+    assert linked == {"preferred_weekday", "consecutive_home_days"}
+    assert 'data-rule="home_away_balance"' not in rendered
+    assert "Not tied to one fixture" in rendered  # the unpinned rule says why
+    # The lazily filled list is announced with its fixture count.
+    assert re.search(r'data-rule="consecutive_home_days"><summary>2 fixtures, by team', rendered)
+
+
+def test_scorecard_keeps_server_text_only_for_events_without_a_fixture():
+    rendered, _ = _lens_page()
+    markup = rendered.split('<script type="application/json"')[0]
+    assert "drifted" in markup  # the unpinned rule's event stays spelled out
+    assert "home 2026-06-06" not in markup  # pinned events are listed by the page instead
+
+
+def test_lens_controls_are_in_the_controls_area_with_a_caption_and_clear_button():
+    rendered, _ = _lens_page()
+    controls = rendered[rendered.index('class="controls"') :]
+    controls = controls[: controls.index("</section>")]
+    for hook in ("lens-select", "lens-only-box", "lens-caption", "lens-clear", "club-select"):
+        assert hook in controls
