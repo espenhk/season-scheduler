@@ -1257,12 +1257,13 @@ def test_scorecard_keeps_server_text_only_for_events_without_a_fixture():
     assert "home 2026-06-06" not in markup  # pinned events are listed by the page instead
 
 
-def test_lens_controls_are_in_the_controls_area_with_a_caption_and_clear_button():
+def test_lens_controls_and_chips_are_in_the_bar_and_the_caption_follows_it():
     rendered, _ = _lens_page()
-    controls = rendered[rendered.index('class="controls"') :]
-    controls = controls[: controls.index("</section>")]
-    for hook in ("lens-select", "lens-only-box", "lens-caption", "lens-clear", "club-select"):
-        assert hook in controls
+    bar = rendered[rendered.index('class="controls"') :]
+    bar, after = bar[: bar.index('class="lens-caption"')], bar[bar.index('class="lens-caption"') :]
+    for hook in ("lens-select", "lens-only-box", "club-select", "club-clear", "lens-clear"):
+        assert hook in bar
+    assert "lens-clear" not in after[: after.index("</section>")]
 
 
 def test_each_option_panel_has_one_sticky_bar_with_summary_legend_and_unique_ids():

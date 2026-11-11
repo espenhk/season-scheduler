@@ -693,7 +693,6 @@ def test_the_phone_bar_stays_compact_collapses_its_filters_and_never_overflows(t
     assert fields.is_visible() and toggle.get_attribute("aria-expanded") == "true"
     assert _rect(page, "#panel-1 .controls")["h"] < 844 * 0.25
     page.select_option("#panel-1 .lens-select", PAIR)
-    toggle.tap()
     assert not fields.is_visible() and "1" in toggle.inner_text()
     assert page.locator("#panel-1 .lens-clear").is_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
@@ -707,3 +706,52 @@ def test_focus_and_anchors_leave_room_for_the_bar(page):
     height = _rect(page, "#panel-1 .controls")["h"]
     padding = page.evaluate("parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop)")
     assert padding >= height
+
+
+def test_all_four_phone_view_buttons_fit_the_bar_without_scrolling(browser, report_url):
+    for width in (390, 360):
+        context = browser.new_context(viewport={"width": width, "height": 800}, has_touch=True)
+        page = context.new_page()
+        page.goto(report_url)
+        boxes = [b.bounding_box() for b in page.locator("#panel-1 .view-btn").all()]
+        assert len(boxes) == 4
+        assert all(b["x"] >= 0 and b["x"] + b["width"] <= width for b in boxes)
+        assert len({round(b["y"]) for b in boxes}) == 1
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        strip = page.locator("#panel-1 .view-toggle")
+        assert strip.evaluate("e => e.scrollWidth <= e.clientWidth")
+        assert page.get_by_role("button", name="Combined calendar").count() >= 1
+        context.close()
+
+
+def _open_phone_filters(page):
+    page.evaluate("document.querySelector('#panel-1 .controls').scrollIntoView({block: 'start'})")
+    page.tap("#panel-1 .filters-toggle")
+    assert page.locator("#panel-1 .bar-fields").is_visible()
+
+
+def test_phone_filters_close_after_a_change_a_real_scroll_and_escape(touch_page):
+    page = touch_page
+    toggle = page.locator("#panel-1 .filters-toggle")
+    fields = page.locator("#panel-1 .bar-fields")
+
+    _open_phone_filters(page)
+    page.select_option("#panel-1 .club-select", "club_b")
+    assert not fields.is_visible() and toggle.get_attribute("aria-expanded") == "false"
+    assert page.locator("#panel-1 .club-clear").is_visible()
+    assert page.evaluate("document.activeElement.classList.contains('filters-toggle')")
+
+    # A small nudge (e.g. focus scrolling) keeps it open; a real scroll closes it.
+    toggle.tap()
+    page.evaluate("window.scrollBy(0, 5)")
+    page.wait_for_timeout(100)
+    assert fields.is_visible()
+    page.evaluate("window.scrollBy(0, -200)")
+    page.wait_for_function("() => !document.querySelector('#panel-1 .bar-fields').offsetParent")
+    assert toggle.get_attribute("aria-expanded") == "false"
+
+    toggle.tap()
+    page.focus("#panel-1 .lens-select")
+    page.keyboard.press("Escape")
+    assert not fields.is_visible() and toggle.get_attribute("aria-expanded") == "false"
+    assert page.evaluate("document.activeElement.classList.contains('filters-toggle')")

@@ -762,7 +762,8 @@
   };
 
   Option.prototype.showScore = function () {
-    var top = this.panel.getBoundingClientRect().top + window.pageYOffset - 48;
+    // The option tabs sit just above the panel; 8px of air keeps them from touching the edge.
+    var top = document.querySelector('.tabs').getBoundingClientRect().top + window.pageYOffset - 8;
     window.scrollTo({ top: Math.max(0, top), behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
   };
 
@@ -779,11 +780,6 @@
       var active = button.dataset.view === state.view;
       button.classList.toggle('active', active);
       button.setAttribute('aria-pressed', String(active));
-      // The phone bar scrolls its view buttons sideways; keep the active one in sight.
-      var strip = button.parentNode;
-      if (active && strip.scrollWidth > strip.clientWidth) {
-        strip.scrollLeft = button.offsetLeft - (strip.clientWidth - button.offsetWidth) / 2;
-      }
     });
     this.panel.querySelectorAll('.view-pane').forEach(function (pane) {
       var active = pane.dataset.view === state.view;
@@ -1062,13 +1058,34 @@
     if (toggle.classList.contains('legend-toggle')) {
       setLegend(toggle.parentNode, toggle.getAttribute('aria-expanded') !== 'true');
     } else {
-      var open = toggle.getAttribute('aria-expanded') !== 'true';
-      toggle.setAttribute('aria-expanded', String(open));
-      toggle.closest('.controls').classList.toggle('filters-open', open);
+      setFilters(toggle.closest('.controls'), toggle.getAttribute('aria-expanded') !== 'true');
     }
   });
+  // A phone's filter fields close once used, on the next real scroll, or on
+  // Escape, so the bar does not stay tall over the calendar.
+  var FILTER_SCROLL_SLACK = 24;
+  var filtersOpenAt = 0;
+  function setFilters(bar, open, refocus) {
+    var toggle = bar.querySelector('.filters-toggle');
+    var hadFocus = bar.querySelector('.bar-fields').contains(document.activeElement);
+    bar.classList.toggle('filters-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+    if (open) filtersOpenAt = window.pageYOffset;
+    else if (hadFocus || refocus) toggle.focus();
+  }
+  document.addEventListener('change', function (e) {
+    var bar = e.target.closest ? e.target.closest('.controls.filters-open') : null;
+    if (bar && bar.querySelector('.bar-fields').contains(e.target)) setFilters(bar, false);
+  });
+  window.addEventListener('scroll', function () {
+    var bar = document.querySelector('.controls.filters-open');
+    // Focusing a select can nudge the page a little; only a real scroll closes.
+    if (bar && Math.abs(window.pageYOffset - filtersOpenAt) > FILTER_SCROLL_SLACK) setFilters(bar, false);
+  }, { passive: true });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
+    var bar = document.querySelector('.controls.filters-open');
+    if (bar) setFilters(bar, false, true);
     document.querySelectorAll('.legend-wrap').forEach(function (wrap) {
       var button = wrap.querySelector('.legend-toggle');
       if (button.getAttribute('aria-expanded') !== 'true') return;
