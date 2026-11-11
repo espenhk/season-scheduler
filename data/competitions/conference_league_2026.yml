@@ -83,6 +83,7 @@ european_rounds:
       window_start: 2026-08-26
       window_end: 2026-08-27
       granularity: week
+    on_win_main: conference_league_main_2026
     ties:
       - team: brann_m
       - team: tromso_m

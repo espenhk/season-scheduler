@@ -186,7 +186,7 @@ def plan_league_slots(
         teams = ", ".join(world.team_label(t) for t in slot)
         plan.warnings.append(
             f"{competition.id}: round {round_index + 1} on {plan.chosen[round_index].default_day} "
-            f"clashes with a binding cup or UEFA date for {teams}; no clear slot was available"
+            f"clashes with a hard cup or UEFA commitment for {teams}; no clear slot was available"
         )
     return plan
 
@@ -228,13 +228,13 @@ def _with_clashes(
 ) -> RoundSlot:
     """The slot with its default day moved to the day fewest teams clash on,
     nearest the preferred weekday among equals. A pinned day stays put."""
-    dates = {team_id: _binding_dates(frame, team_id) for team_id in competition.teams}
+    dates = {team_id: _hard_dates(frame, team_id) for team_id in competition.teams}
 
     def clashing(day: date) -> tuple[str, ...]:
         return tuple(
             team_id
-            for team_id, binding in dates.items()
-            if any(abs((day - d).days) - 1 < min_rest for d, min_rest in binding)
+            for team_id, hard in dates.items()
+            if any(abs((day - d).days) - 1 < min_rest for d, min_rest in hard)
         )
 
     preferred = WEEKDAYS.index(competition.preferred_weekday)
@@ -284,12 +284,8 @@ def _trim_unusable_days(
     return result
 
 
-def _binding_dates(frame: SeasonFrame, team_id: str) -> list[tuple[date, int]]:
-    cups = [(d.date, d.min_rest_days) for d in frame.cup_days_of(team_id=team_id)]
-    european = [
-        (w.date, w.min_rest_days) for w in frame.uefa_weeks if team_id in w.binding_teams
-    ]
-    return cups + european
+def _hard_dates(frame: SeasonFrame, team_id: str) -> list[tuple[date, int]]:
+    return [(c.date, c.min_rest_days) for c in frame.commitments.hard_for(team_id)]
 
 
 def _slot_cost(slot: RoundSlot, competition: Competition, calendar: SeasonCalendar) -> float:

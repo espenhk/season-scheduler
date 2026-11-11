@@ -12,13 +12,11 @@ from datetime import date
 
 import factories as f
 
-from terminliste.rounds.european_schedule import EuropeanCommitmentDate
 from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.hard import (
     BlackoutDates,
     ClubHomeClash,
-    CupRoundConflict,
-    EuropeanCommitmentConflict,
+    CommitmentConflict,
     FinalRoundSameSlot,
     FixedDateRequirement,
     FullRoundOnDate,
@@ -360,6 +358,25 @@ def test_one_match_per_team_per_day():
 # -- cup_round_conflict -------------------------------------------------
 
 
+def _cup_rule(schedule) -> CommitmentConflict:
+    """The cup rule over every round of `schedule`, each a hard commitment."""
+    commitments = f.commitment_set(
+        *(
+            f.commitment(
+                team,
+                day,
+                min_rest_days=schedule.min_rest_days,
+                source="cup",
+                competition_id=schedule.competition_id,
+                node_id=f"{team}/{schedule.competition_id}/{placement.round_id}",
+            )
+            for placement in schedule.rounds
+            for team, day in placement.dates.items()
+        )
+    )
+    return CommitmentConflict(commitments=commitments, source="cup")
+
+
 def _cup_world():
     v1 = f.venue("v1")
     t1 = f.team("t1", "c1", "v1")
@@ -379,7 +396,7 @@ def _cup_world():
 
 def test_cup_round_conflict_fires_at_two_rest_days_but_not_three():
     world, season, schedule = _cup_world()
-    constraint = CupRoundConflict(cup_schedules=[schedule])
+    constraint = _cup_rule(schedule)
 
     # 3 full rest days from the 22 Aug cup round -> no violation.
     ok = [f.match("league", "t1", "t2", date(2026, 8, 26), "v1")]
@@ -405,7 +422,7 @@ def test_cup_round_conflict_is_silent_for_a_team_not_entered_in_the_cup():
     )
 
     matches = [f.match("league", "t3", "t1", date(2026, 8, 23), "v1")]
-    result = evaluate(matches, [CupRoundConflict(cup_schedules=[schedule])], _ctx(world, season))
+    result = evaluate(matches, [_cup_rule(schedule)], _ctx(world, season))
     # t1 (entered in the cup) is one day from the round — a violation. t3 is
     # not entered, so it contributes nothing of its own.
     assert result.hard_violations == 1
@@ -428,7 +445,7 @@ def test_cup_round_conflict_uses_each_teams_own_resolved_date():
             f.cup_placement("r1", {"t1": date(2026, 8, 22), "t2": date(2026, 8, 25)}, "Round 1")
         ],
     )
-    constraint = CupRoundConflict(cup_schedules=[schedule])
+    constraint = _cup_rule(schedule)
 
     # t1's cup date is 22 Aug: a league match on 21 Aug is 1 day away (violation).
     # t2's cup date is 25 Aug, 4 days clear of that same match, so only t1's
@@ -448,19 +465,15 @@ def _european_world():
     clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
     world = f.world(clubs, [v1], [])
     season = f.season(competitions=[], european_competitions=["euro"])
-    commitment = EuropeanCommitmentDate(
-        team_id="t1",
-        date=date(2026, 8, 4),
-        min_rest_days=3,
-        label="cl: q3 (first leg)",
-        competition_id="cl",
+    commitment = f.commitment(
+        "t1", date(2026, 8, 4), min_rest_days=3, label="cl: q3 (first leg)", competition_id="cl"
     )
     return world, season, commitment
 
 
 def test_european_commitment_conflict_fires_on_the_commitment_date_itself():
     world, season, commitment = _european_world()
-    constraint = EuropeanCommitmentConflict(commitments_by_team={"t1": [commitment]})
+    constraint = CommitmentConflict(commitments=f.commitment_set(commitment), source="uefa")
 
     on_date = [f.match("league", "t1", "t2", date(2026, 8, 4), "v1")]
     result = evaluate(on_date, [constraint], _ctx(world, season))
@@ -469,7 +482,7 @@ def test_european_commitment_conflict_fires_on_the_commitment_date_itself():
 
 def test_european_commitment_conflict_fires_within_min_rest_days_but_not_beyond():
     world, season, commitment = _european_world()
-    constraint = EuropeanCommitmentConflict(commitments_by_team={"t1": [commitment]})
+    constraint = CommitmentConflict(commitments=f.commitment_set(commitment), source="uefa")
 
     # 1 full rest day before (4 Aug): a violation, short of the 3 required.
     too_close_before = [f.match("league", "t1", "t2", date(2026, 8, 2), "v1")]
@@ -492,7 +505,7 @@ def test_european_commitment_conflict_fires_within_min_rest_days_but_not_beyond(
 
 def test_european_commitment_conflict_is_silent_for_a_team_with_no_commitments():
     world, season, commitment = _european_world()
-    constraint = EuropeanCommitmentConflict(commitments_by_team={"t1": [commitment]})
+    constraint = CommitmentConflict(commitments=f.commitment_set(commitment), source="uefa")
 
     matches = [f.match("league", "t2", "t1", date(2026, 8, 5), "v1")]
     result = evaluate(matches, [constraint], _ctx(world, season))
@@ -502,22 +515,16 @@ def test_european_commitment_conflict_is_silent_for_a_team_with_no_commitments()
     assert result.hard_violations == 1
 
 
-def test_european_commitment_conflict_ignores_an_uncertain_commitment():
-    """A commitment reachable only via one of several mutually-exclusive
-    cascade branches (`certain=False`, issue #93) isn't a guaranteed
-    fixture, so it must not gate a hard exclusion —
-    `EuropeanCommitmentSoftConflict` (scoring/soft.py) is where it shows up
+def test_european_commitment_conflict_ignores_a_contingent_commitment():
+    """A commitment the team only reaches with some probability (#8) isn't a
+    guaranteed fixture, so it must not gate a hard exclusion —
+    `ContingentCommitmentConflict` (scoring/soft.py) is where it shows up
     instead."""
-    world, season, commitment = _european_world()
-    uncertain = EuropeanCommitmentDate(
-        team_id="t1",
-        date=date(2026, 8, 4),
-        min_rest_days=3,
-        label="uecl: playoff (first leg)",
-        competition_id="uecl",
-        certain=False,
+    world, season, _ = _european_world()
+    contingent = f.commitment(
+        "t1", date(2026, 8, 4), min_rest_days=3, hard=False, probability=0.5, competition_id="uecl"
     )
-    constraint = EuropeanCommitmentConflict(commitments_by_team={"t1": [uncertain]})
+    constraint = CommitmentConflict(commitments=f.commitment_set(contingent), source="uefa")
 
     on_date = [f.match("league", "t1", "t2", date(2026, 8, 4), "v1")]
     result = evaluate(on_date, [constraint], _ctx(world, season))

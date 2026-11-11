@@ -1,7 +1,7 @@
 """Unit tests for `solvers/greedy.py`'s round-pin resolution (#94).
 
 A pinned round — a league's final, or a hard `FullRoundRequirement`'s — must
-clear resolved cup and European commitments the same way every other
+clear hard cup and European commitments the same way every other
 fixture's candidate window does. `resolve_round_pins` is shared by both
 solver backends.
 """
@@ -13,11 +13,6 @@ from datetime import date, timedelta
 import factories as f
 
 from terminliste.model.calendar import build_calendar, calendars_by_competition
-from terminliste.rounds.cup_schedule import cup_conflict
-from terminliste.rounds.european_schedule import (
-    EuropeanCommitmentDate,
-    european_conflict,
-)
 from terminliste.solvers.greedy import plan_competitions, resolve_round_pins
 
 
@@ -46,19 +41,14 @@ def test_final_round_pin_moves_off_a_date_that_conflicts_with_a_european_commitm
 
     # A commitment on the final round's anchor that also blocks the day
     # either side: the pin moves to another day of the same slot.
-    commitment = EuropeanCommitmentDate(
-        team_id="t0", date=anchor, min_rest_days=1, label="cl: matchday 1", competition_id="cl"
-    )
-    commitments = {"t0": [commitment]}
+    commitments = f.commitment_set(f.commitment("t0", anchor, min_rest_days=1))
 
-    pins, warnings = resolve_round_pins(
-        season, planned, by_competition, cup_windows={}, european_commitments=commitments
-    )
+    pins, warnings = resolve_round_pins(season, planned, by_competition, commitments)
 
     chosen = pins[("men", final_round)]
     assert chosen != anchor
     assert planned[0].slots[final_round].contains(chosen)
-    assert not european_conflict(commitments, "t0", chosen)
+    assert not commitments.blocked("t0", chosen)
     assert warnings == []
 
 
@@ -70,23 +60,15 @@ def test_final_round_pin_stays_put_and_flags_when_every_team_is_committed():
     season, planned, by_competition = _world_and_plan(competition)
     final_round, anchor = _final_round(planned, "men")
 
-    commitments = {
-        f"t{i}": [
-            EuropeanCommitmentDate(
-                team_id=f"t{i}",
-                date=anchor + timedelta(days=offset),
-                min_rest_days=3,
-                label="cl: matchday 1",
-                competition_id="cl",
-            )
+    commitments = f.commitment_set(
+        *(
+            f.commitment(f"t{i}", anchor + timedelta(days=offset), min_rest_days=3)
+            for i in range(4)
             for offset in range(-9, 10, 6)
-        ]
-        for i in range(4)
-    }
-
-    pins, warnings = resolve_round_pins(
-        season, planned, by_competition, cup_windows={}, european_commitments=commitments
+        )
     )
+
+    pins, warnings = resolve_round_pins(season, planned, by_competition, commitments)
 
     chosen = pins[("men", final_round)]
     assert chosen == anchor
@@ -114,14 +96,9 @@ def test_full_round_requirement_pin_cannot_move_and_flags_instead():
             FullRoundRequirement(id="fr1", date=required_date, competition="men")
         ],
     )
-    commitment = EuropeanCommitmentDate(
-        team_id="t0", date=required_date, min_rest_days=3, label="cl: matchday 2", competition_id="cl"
-    )
-    commitments = {"t0": [commitment]}
+    commitments = f.commitment_set(f.commitment("t0", required_date, min_rest_days=3))
 
-    pins, warnings = resolve_round_pins(
-        season, planned, by_competition, cup_windows={}, european_commitments=commitments
-    )
+    pins, warnings = resolve_round_pins(season, planned, by_competition, commitments)
 
     round_index = min(planned[0].anchors, key=lambda r: abs((planned[0].anchors[r] - required_date).days))
     assert pins[("men", round_index)] == required_date
@@ -130,18 +107,16 @@ def test_full_round_requirement_pin_cannot_move_and_flags_instead():
 
 
 def test_cup_conflict_also_moves_the_pin():
-    """`_round_clear` checks cup conflicts too, not just European ones."""
+    """`_round_clear` reads cup commitments too, not just European ones."""
     competition = f.competition("men", [f"t{i}" for i in range(4)])
     season, planned, by_competition = _world_and_plan(competition)
     final_round, anchor = _final_round(planned, "men")
 
-    cup_windows = {"t1": [(anchor, 1)]}
+    commitments = f.commitment_set(f.commitment("t1", anchor, min_rest_days=1, source="cup"))
 
-    pins, warnings = resolve_round_pins(
-        season, planned, by_competition, cup_windows=cup_windows, european_commitments={}
-    )
+    pins, warnings = resolve_round_pins(season, planned, by_competition, commitments)
 
     chosen = pins[("men", final_round)]
     assert chosen != anchor
-    assert not cup_conflict(cup_windows, "t1", chosen)
+    assert not commitments.blocked("t1", chosen)
     assert warnings == []

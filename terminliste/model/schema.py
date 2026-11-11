@@ -160,6 +160,13 @@ class CupRound(_ScheduledRound):
 
     preferred_weekday: Weekday = "wednesday"
     team_overrides: dict[str, date] = Field(default_factory=dict)
+    # Chance an entrant gets through this round; `None` falls back to the
+    # competition's `advance_probability` (#8). Set high on early rounds a
+    # top-flight side plays against lower divisions.
+    advance_probability: float | None = Field(default=None, ge=0.0, le=1.0)
+    # Teams known to have reached this round: their commitment for it, and for
+    # every round before it, is certain (#8).
+    reached_teams: list[str] = Field(default_factory=list)
 
 
 class EuropeanLeg(_DateSpec):
@@ -187,6 +194,12 @@ class EuropeanTie(BaseModel):
     team: str
     opponent: str = "TBD"
     home_leg: EuropeanHomeLeg | None = None
+    # Chance this team wins the tie (#8); the outcome tree weights its win and
+    # loss branches by it.
+    win_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+    # The team is known to be in this round, so it and every earlier round of
+    # its path are certain.
+    reached: bool = False
 
 
 class EuropeanRound(BaseModel):
@@ -200,13 +213,13 @@ class EuropeanRound(BaseModel):
 
     `drop_to_competition`/`drop_to_round` model the cascade: where an entrant
     losing here lands instead. Both are `None` when a loss has no further
-    *qualifying* round to model — the team goes straight into a league phase
-    (out of scope), or the hop simply isn't wired yet.
+    *qualifying* round to model: the team is out, or `on_loss_main` sends it
+    into a main tournament's league phase.
 
-    Outcomes are unknown ahead of time, so `rounds/european_schedule.py` picks
-    no branch: it blocks every reachable leg date at once. Resolving a
-    conditional once results are in is a data edit — delete the rounds on the
-    branch not taken, or narrow a surviving leg to a `forced_date`.
+    Outcomes are unknown ahead of time, so `rounds/european_schedule.py` builds
+    an outcome tree from these edges and weights each branch by the tie's
+    `win_probability` (#8). Once a result is known, set the tie's `reached`,
+    or delete the rounds on the branch not taken.
     """
 
     id: str
@@ -217,6 +230,21 @@ class EuropeanRound(BaseModel):
     note: str = ""
     drop_to_competition: str | None = None
     drop_to_round: str | None = None
+    # Where a winner / loser of this round goes when it is straight into a main
+    # tournament's league phase rather than another qualifying round (#8).
+    # Without them a win continues to the team's next round in this
+    # competition, and a loss is elimination unless `drop_to_*` says otherwise.
+    on_win_main: str | None = None
+    on_loss_main: str | None = None
+
+    @model_validator(mode="after")
+    def _loss_has_one_destination(self) -> EuropeanRound:
+        if self.on_loss_main is not None and self.drop_to_competition is not None:
+            raise ValueError(
+                f"european round {self.id!r}: a loss goes either to drop_to_* or on_loss_main, "
+                f"not both"
+            )
+        return self
 
     @model_validator(mode="after")
     def _drop_to_is_paired(self) -> EuropeanRound:
@@ -268,6 +296,8 @@ class MainTournamentRound(BaseModel):
     second_leg: EuropeanLeg | None = None
     venue_name: str | None = None
     note: str = ""
+    # Chance of getting through this round; `None` uses the competition's (#8).
+    advance_probability: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _venue_only_for_single_match(self) -> MainTournamentRound:
@@ -495,10 +525,6 @@ class Competition(BaseModel):
     # Cup-only: the real-world rounds this competition's teams are entered
     # into, in playing order.
     cup_rounds: list[CupRound] = Field(default_factory=list)
-    # Cup-only: false keeps the cup in the frame and report but out of the
-    # solvers' and scorer's hard cup constraints, for cups whose round dates
-    # assume every club survives to the final.
-    solver_commitments: bool = True
 
     # European-only: the UEFA qualifying rounds this competition's Norwegian
     # entrant(s) play, in playing order (#29). Empty for a main tournament,
@@ -510,27 +536,18 @@ class Competition(BaseModel):
     # is populated, same reasoning as `movable`.
     is_main_tournament: bool = False
 
-    # Main-tournament-only: every league-phase matchday reachable entrants
-    # (see `reachable_from`) could be drawn into.
+    # Main-tournament-only: every league-phase matchday of the competition. Who
+    # plays them comes from the qualifying rounds' `on_win_main`/`on_loss_main`.
     league_phase_matchdays: list[EuropeanMatchday] = Field(default_factory=list)
 
     # Main-tournament-only: the knockout rounds following the league phase, in
     # playing order.
     knockout_rounds: list[MainTournamentRound] = Field(default_factory=list)
 
-    # Main-tournament-only: which qualifying competitions' entrants can reach
-    # this one (#79). Every entrant of every listed competition is assumed able to
-    # reach the final — the same "assume it goes all the way" simplification
-    # `rounds/cup_schedule.py` makes, since where a qualifying entrant lands
-    # isn't known until results are in. Coarser than UEFA's round-by-round
-    # drop rule; `docs/european_qualifiers_plan.md` has the follow-up.
-    #
-    # Only wire a hop the qualifying data itself wires via
-    # `drop_to_competition`/`drop_to_round`. Champions League qualifying wires
-    # none deliberately: listing it blocks an entrant's dates across every
-    # reachable tournament's calendar at once, which put a feasible schedule
-    # out of reach of `cli.py generate`'s time budget.
-    reachable_from: list[str] = Field(default_factory=list)
+    # Chance of getting through a cup round or a main tournament stage that
+    # does not set its own (#8). 0.5 suits a bracket of equals; early rounds
+    # against lower divisions override it.
+    advance_probability: float = Field(default=0.5, ge=0.0, le=1.0)
 
     @property
     def day_quota_exempt_rounds(self) -> frozenset[int]:
@@ -716,6 +733,20 @@ class RivalryFixture(BaseModel):
     reason: str = ""
 
 
+class ContingencyPolicy(BaseModel):
+    """How the season treats commitments it may not reach (#8).
+
+    A commitment is a hard reservation only when the team reaches it with at
+    least `hard_threshold` probability. 1.0 plans for elimination: only entry
+    rounds and rounds already reached block the league calendar. Commitments
+    that can never both be played (a team's Europa League and Conference
+    League league phases) are never both hard: at a low threshold the likelier
+    one stays hard, the other becomes contingent, and a warning is raised.
+    """
+
+    hard_threshold: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
 class FixedRequirement(BaseModel):
     """A date that must carry a match, with a named team at home.
 
@@ -772,6 +803,7 @@ class Season(BaseModel):
     full_round_requirements: list[FullRoundRequirement] = Field(default_factory=list)
     rivalry_fixtures: list[RivalryFixture] = Field(default_factory=list)
     extra_round_slots: list[ExtraRoundSlot] = Field(default_factory=list)
+    contingency_policy: ContingencyPolicy = Field(default_factory=ContingencyPolicy)
 
     @cached_property
     def blacked_out_dates(self) -> dict[date, str]:

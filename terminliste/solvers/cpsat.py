@@ -33,10 +33,10 @@ from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_compet
 from ..model.loader import World
 from ..model.schema import WEEKDAYS, Fixture, Match
 from ..model.slots import RoundSlot, max_compatible_slots, slots_compatible
-from ..rounds.cup_schedule import cup_conflict, resolved_cup_windows
-from ..rounds.european_schedule import european_conflict
+from ..rounds.commitments import CommitmentSet
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import evaluate
+from ..scoring.soft import ContingentCommitmentConflict
 from ..slot_planner import SlotPlan
 from .base import (
     Candidate,
@@ -101,6 +101,9 @@ class _League:
         return self.plan.competition.min_gap_days
 
 
+_CONFLICT_RULES = {"cup": "cup_round_conflict", "uefa": "european_commitment_conflict"}
+
+
 class _Problem:
     """Everything both levels read, resolved once per solve."""
 
@@ -108,10 +111,9 @@ class _Problem:
         self.request = request
         self.world: World = request.world
         self.season = request.season
-        self.cup_windows = resolved_cup_windows(request.cup_schedules)
-        self.european = request.european_commitments
+        self.commitments = request.commitments
         self.frame = request.frame or SeasonFrame.from_resolved(
-            request.world, request.cup_schedules, request.european_commitments
+            request.world, request.cup_schedules, request.commitments
         )
         self.slot_plans = slot_plans
         by_competition = calendars_by_competition(calendar, request.competitions)
@@ -133,26 +135,18 @@ class _Problem:
     def clear(self, team_id: str, day: date) -> bool:
         key = (team_id, day)
         if key not in self._clear:
-            self._clear[key] = not (
-                cup_conflict(self.cup_windows, team_id, day)
-                or european_conflict(self.european, team_id, day)
-            )
+            self._clear[key] = not self.commitments.blocked(team_id, day)
         return self._clear[key]
 
     def blockers(self, team_id: str, day: date) -> list[tuple[str, str]]:
         """Why `team_id` cannot play on `day`: (rule family, frame entry)."""
         found: list[tuple[str, str]] = []
-        for cup in self.frame.cup_days_of(team_id=team_id):
-            if abs((day - cup.date).days) - 1 < cup.min_rest_days:
+        for commitment in self.commitments.hard_for(team_id):
+            if commitment.clashes(day):
                 found.append(
-                    ("cup_round_conflict",
-                     f"{cup.label} on {cup.date} (needs {cup.min_rest_days} rest days)")
-                )
-        for commitment in self.european.get(team_id, ()):
-            if commitment.binding and abs((day - commitment.date).days) - 1 < commitment.min_rest_days:
-                found.append(
-                    ("european_commitment_conflict",
-                     f"{commitment.label} on {commitment.date} (needs {commitment.min_rest_days} rest days)")
+                    (_CONFLICT_RULES[commitment.source],
+                     f"{commitment.label} on {commitment.date} "
+                     f"(needs {commitment.min_rest_days} rest days)")
                 )
         return found
 
@@ -162,12 +156,7 @@ class _Problem:
         if key not in self._days:
             venue = self.world.team(home).home_venue
             days = [d for d in slot.days if league.calendar.is_allowed(d, venue)]
-            sides = _Sides(home, away)
-            days = _european_clear(
-                _cup_clear(days, sides, {t: w for t, w in self.cup_windows.items()}),
-                sides,
-                self.european,
-            )
+            days = _commitment_clear(days, _Sides(home, away), self.commitments)
             self._days[key] = tuple(days)
         return self._days[key]
 
@@ -843,7 +832,7 @@ def _slot_plans(problem: _Problem, solution: _LevelOneSolution) -> dict[str, Slo
             teams = ", ".join(problem.world.team_label(t) for t in slot)
             plan.warnings.append(
                 f"{lg.id}: round {round_index + 1} on {chosen[round_index].default_day} "
-                f"clashes with a binding cup or UEFA date for {teams}"
+                f"clashes with a hard cup or UEFA commitment for {teams}"
             )
         plans[lg.id] = plan
     return plans
@@ -1032,6 +1021,18 @@ def _build_level_two(cp_model, problem: _Problem, placed: list[_Placed], previou
             if d in discouraged:
                 terms.append((-_scaled(venue_weight), var))
 
+    # Same price as the scorer's `ContingentCommitmentConflict`, so a day near a
+    # commitment the team only maybe reaches is steered away from (#8).
+    contingent_weight = ContingentCommitmentConflict.weight
+    for item in placed:
+        for team_id in (item.fixture.home_team, item.fixture.away_team):
+            for commitment in problem.commitments.contingent_for(team_id):
+                for d, var in days[item.index].items():
+                    shortfall = commitment.min_rest_days - (abs((d - commitment.date).days) - 1)
+                    if shortfall > 0:
+                        penalty = contingent_weight * shortfall * commitment.reached_probability
+                        terms.append((-_scaled(penalty), var))
+
     for club in world.dual_clubs():
         seniors = [t.id for t in club.teams if t.level == "senior"]
         weight = _dual_weight(problem.planned, seniors, "consecutive_home_days", 25.0)
@@ -1214,25 +1215,14 @@ def _with_detail(ctx):
     )
 
 
-def _cup_clear(window: list[date], fixture, cup_windows: dict[str, list[tuple[date, int]]]) -> list[date]:
-    """Drop candidate dates that conflict with either side's cup commitment."""
+def _commitment_clear(window: list[date], fixture, commitments: CommitmentSet) -> list[date]:
+    """Drop candidate dates within rest of either side's hard commitment;
+    contingent ones stay in the domain and are scored instead."""
     return [
         day
         for day in window
-        if not cup_conflict(cup_windows, fixture.home_team, day)
-        and not cup_conflict(cup_windows, fixture.away_team, day)
-    ]
-
-
-def _european_clear(window: list[date], fixture, european_commitments) -> list[date]:
-    """`_cup_clear`'s counterpart for European dates. Only binding ones narrow
-    the domain (#93, #112); `EuropeanCommitmentSoftConflict` discourages the
-    rest instead of this excluding them outright."""
-    return [
-        day
-        for day in window
-        if not european_conflict(european_commitments, fixture.home_team, day)
-        and not european_conflict(european_commitments, fixture.away_team, day)
+        if not commitments.blocked(fixture.home_team, day)
+        and not commitments.blocked(fixture.away_team, day)
     ]
 
 

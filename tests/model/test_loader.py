@@ -503,7 +503,6 @@ def test_european_competitions_are_present_and_shaped_correctly(world):
         assert not comp.european_rounds
         assert comp.league_phase_matchdays
         assert comp.knockout_rounds
-        assert comp.reachable_from
         all_bounds = [r.earliest for r in (*comp.league_phase_matchdays, *comp.knockout_rounds)]
         assert all_bounds == sorted(all_bounds), f"{comp_id} matchdays/rounds are not in order"
         # The final is the last knockout round, a single match at a named venue.
@@ -530,16 +529,21 @@ def test_european_commitments_resolve_cleanly_from_the_shipped_data(world):
 
     season = world.season("2026")
     competitions = [world.competition(c) for c in season.european_competitions]
-    commitments_by_team, warnings = resolve_european_commitments(competitions, season)
-    assert commitments_by_team["bodo_glimt_m"], "Bodø/Glimt's Champions League run should resolve"
-    assert commitments_by_team["viking_m"]
-    # Tromsø's cascade crosses into conference_league_2026 at Q3 -> playoff,
-    # so Q2, Q3 and *both* still-open play-off branches give 8 qualifying leg
-    # dates; Brann's uncascaded Q2 -> Q3 -> play-off gives 6. Main tournaments
-    # (#79) add every matchday and knockout leg of each reachable competition:
-    # 17 + 15 for Tromsø, 15 for Brann.
-    assert len(commitments_by_team["tromso_m"]) == 8 + 32
-    assert len(commitments_by_team["brann_m"]) == 6 + 15
+    commitments, warnings = resolve_european_commitments(competitions, season)
+    by_team: dict[str, list] = {}
+    for commitment in commitments:
+        by_team.setdefault(commitment.team_id, []).append(commitment)
+    assert by_team["bodo_glimt_m"], "Bodø/Glimt's Champions League run should resolve"
+    assert by_team["viking_m"]
+    # Tromsø's cascade crosses into conference_league_2026 at Q3 -> playoff:
+    # 8 qualifying leg dates, plus the league phase and knockout legs of both
+    # main tournaments it can reach (17 Europa League + 15 Conference League).
+    # Brann's Q2 -> Q3 -> play-off is 6, plus 15 Conference League legs.
+    assert len(by_team["tromso_m"]) == 8 + 32
+    assert len(by_team["brann_m"]) == 6 + 15
+    # Only the entry round is hard by default (#8).
+    for team_id, hard_legs in by_team.items():
+        assert sum(c.hard for c in hard_legs) == 2, team_id
     assert warnings == []
 
 
@@ -736,69 +740,63 @@ def test_main_tournament_duplicate_matchday_id_is_caught():
     assert any("duplicate league phase matchday id" in e for e in errors)
 
 
-def test_main_tournament_reachable_from_unknown_competition_is_caught():
+def _routing_world(target_id: str, *, target_format: str = "european", main: bool = True):
     import factories as f
 
     v = f.venue("v1")
     t1 = f.team("t1", "c1", "v1")
     clubs = [f.club("c1", [t1])]
-    comp = f.competition(
-        "cl_main",
-        [],
+    qualifying = f.competition(
+        "cl_q",
+        ["t1"],
         format="european",
-        is_main_tournament=True,
-        reachable_from=["ghost_competition"],
-        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
+        european_rounds=[
+            f.european_round(
+                "playoff", entrants=["t1"], forced_date=date(2026, 8, 4), on_win_main=target_id
+            )
+        ],
     )
-    bad_world = f.world(clubs, [v], [comp])
-    errors = validate_world(bad_world)
-    assert any("reachable_from unknown competition" in e for e in errors)
+    target = f.competition(
+        target_id if target_id != "ghost_competition" else "other",
+        [],
+        format=target_format,
+        is_main_tournament=main and target_format == "european",
+        league_phase_matchdays=(
+            [f.european_matchday("md1", forced_date=date(2026, 9, 10))]
+            if target_format == "european"
+            else []
+        ),
+    )
+    return f.world(clubs, [v], [qualifying, target])
 
 
-def test_main_tournament_reachable_from_a_non_european_competition_is_caught():
+def test_on_win_main_naming_an_unknown_competition_is_caught():
+    errors = validate_world(_routing_world("ghost_competition"))
+    assert any("names unknown competition 'ghost_competition'" in e for e in errors)
+
+
+def test_on_win_main_naming_a_non_european_competition_is_caught():
+    errors = validate_world(_routing_world("league", target_format="league"))
+    assert any("which is not a main tournament" in e for e in errors)
+
+
+def test_on_win_main_naming_a_qualifying_competition_is_caught():
+    errors = validate_world(_routing_world("el_q", main=False))
+    assert any("which is not a main tournament" in e for e in errors)
+
+
+def test_a_round_cannot_both_drop_and_go_to_a_main_tournament_on_loss():
     import factories as f
 
-    v = f.venue("v1")
-    t1 = f.team("t1", "c1", "v1")
-    clubs = [f.club("c1", [t1])]
-    league = f.competition("league", ["t1"])
-    comp = f.competition(
-        "cl_main",
-        [],
-        format="european",
-        is_main_tournament=True,
-        reachable_from=["league"],
-        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
-    )
-    bad_world = f.world(clubs, [v], [league, comp])
-    errors = validate_world(bad_world)
-    assert any("which is a league, not european" in e for e in errors)
-
-
-def test_main_tournament_reachable_from_another_main_tournament_is_caught():
-    import factories as f
-
-    v = f.venue("v1")
-    t1 = f.team("t1", "c1", "v1")
-    clubs = [f.club("c1", [t1])]
-    other_main = f.competition(
-        "el_main",
-        [],
-        format="european",
-        is_main_tournament=True,
-        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
-    )
-    comp = f.competition(
-        "cl_main",
-        [],
-        format="european",
-        is_main_tournament=True,
-        reachable_from=["el_main"],
-        league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
-    )
-    bad_world = f.world(clubs, [v], [other_main, comp])
-    errors = validate_world(bad_world)
-    assert any("is itself a main tournament" in e for e in errors)
+    with pytest.raises(ValueError, match="either to drop_to"):
+        f.european_round(
+            "q3",
+            entrants=["t1"],
+            forced_date=date(2026, 8, 4),
+            drop_to_competition="uecl",
+            drop_to_round="playoff",
+            on_loss_main="el_main",
+        )
 
 
 def test_main_tournament_round_venue_name_requires_a_single_match():

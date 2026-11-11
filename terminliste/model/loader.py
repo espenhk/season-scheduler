@@ -566,32 +566,23 @@ def _validate_main_tournament_rounds(competition: Competition) -> list[str]:
 
 
 def _validate_main_tournaments(world: World) -> list[str]:
-    """Every `reachable_from` id (#79) names an existing UEFA *qualifying*
-    competition: reachability is only ever computed from a qualifying
-    entrant, never from one main tournament into another."""
+    """Every `on_win_main` / `on_loss_main` id (#8) names an existing UEFA
+    main tournament: a qualifying round only ever feeds a league phase."""
     errors: list[str] = []
     for competition in world.competitions.values():
-        if competition.format != "european" or not competition.is_main_tournament:
+        if competition.format != "european":
             continue
-        for source_id in competition.reachable_from:
-            source = world.competitions.get(source_id)
-            if source is None:
-                errors.append(
-                    f"main tournament {competition.id!r} is reachable_from unknown competition "
-                    f"{source_id!r}"
-                )
-                continue
-            if source.format != "european":
-                errors.append(
-                    f"main tournament {competition.id!r} is reachable_from {source_id!r}, which "
-                    f"is a {source.format}, not european"
-                )
-                continue
-            if source.is_main_tournament:
-                errors.append(
-                    f"main tournament {competition.id!r} is reachable_from {source_id!r}, which "
-                    f"is itself a main tournament, not a qualifying competition"
-                )
+        for round_ in competition.european_rounds:
+            for field_name in ("on_win_main", "on_loss_main"):
+                target_id = getattr(round_, field_name)
+                if target_id is None:
+                    continue
+                target = world.competitions.get(target_id)
+                where = f"{competition.id!r} round {round_.id!r} {field_name}"
+                if target is None:
+                    errors.append(f"{where} names unknown competition {target_id!r}")
+                elif target.format != "european" or not target.is_main_tournament:
+                    errors.append(f"{where} names {target_id!r}, which is not a main tournament")
     return errors
 
 

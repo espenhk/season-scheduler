@@ -5,16 +5,9 @@
 # file, its sourcing/verification notes, and the "assume it reaches the
 # final" simplification `league_phase_matchdays`/`knockout_rounds` make.
 #
-# reachable_from lists conference_league_2026 (Brann and, via
-# europa_league_2026's own cascade, Tromsø IL) and europa_league_2026
-# (Tromsø IL, Lillestrøm SK) — not champions_league_2026, even though a
-# team could in principle fall all the way from Champions League qualifying
-# into the Conference League league phase across two cascade hops. See
-# europa_league_main_2026.yml's header for why champions_league_2026 is
-# left out here too: its qualifying data deliberately wires no
-# drop_to_competition out of Champions League, and including it anyway
-# made a feasible schedule practically unreachable within `cli.py
-# generate`'s time budget.
+# Reached from conference_league_2026 (a play-off win) and from
+# europa_league_2026 (a play-off loss) via `on_win_main` / `on_loss_main` on
+# those rounds (#8).
 #
 # matchday_weekdays: Thursday — see champions_league_main_2026.yml's header
 # (#112). The final is a confirmed Wednesday `forced_date`, which a
@@ -42,10 +35,6 @@ teams: []
 
 min_rest_days: 2
 matchday_weekdays: [thursday]
-
-reachable_from:
-  - europa_league_2026
-  - conference_league_2026
 
 league_phase_matchdays:
   - id: md1

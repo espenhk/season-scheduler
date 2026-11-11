@@ -19,8 +19,8 @@ from ..model.calendar import SeasonCalendar
 from ..model.loader import World
 from ..model.schema import Competition, Match, Season
 from ..model.slots import RoundSlot
+from ..rounds.commitments import CommitmentSet
 from ..rounds.cup_schedule import CupSchedule
-from ..rounds.european_schedule import EuropeanCommitmentDate
 from ..scoring.base import Constraint, EvalContext, Score
 from ..slot_planner import SlotPlan, plan_slots
 
@@ -157,8 +157,9 @@ class SolveRequest:
     # Cups sharing teams with `competitions`, already resolved to a date per
     # team — not scheduled themselves, only used to steer league placement.
     cup_schedules: list[CupSchedule] = field(default_factory=list)
-    # Same, for resolved UEFA qualifying leg dates.
-    european_commitments: dict[str, list[EuropeanCommitmentDate]] = field(default_factory=dict)
+    # Every cup and UEFA commitment, hard or contingent (#8). All solvers read
+    # this one set.
+    commitments: CommitmentSet = field(default_factory=CommitmentSet)
     # The season frame and the round slots planned from it. Left unset, the
     # solver rebuilds the frame from the cups and commitments above.
     frame: SeasonFrame | None = None
@@ -177,7 +178,7 @@ def resolve_slot_plans(request: SolveRequest, calendar: SeasonCalendar) -> dict[
     if request.slot_plans is not None:
         return request.slot_plans
     frame = request.frame or SeasonFrame.from_resolved(
-        request.world, request.cup_schedules, request.european_commitments, request.competitions
+        request.world, request.cup_schedules, request.commitments, request.competitions
     )
     return plan_slots(request.world, request.season, request.competitions, calendar, frame)
 

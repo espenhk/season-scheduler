@@ -3,10 +3,15 @@
 A cup's "fixtures" are never modelled as pairings: who plays whom is drawn
 round by round. What is known per round is either an exact date
 (`forced_date`) or a window it must fall inside. A windowed round resolves to
-ONE date shared by every entrant, assuming every team survives through the
-final: NFF lays the cup weeks before the season, midweek and clear of UEFA
-weeks, and the league is fitted around them (#5). `team_overrides` move
-individual teams off that date, e.g. a club still in Europe.
+ONE date shared by every entrant: NFF lays the cup weeks before the season,
+midweek and clear of UEFA weeks, and the league is fitted around them (#5).
+`team_overrides` move individual teams off that date, e.g. a club still in
+Europe.
+
+Whether a team is still in the cup by a given round is a probability, not an
+assumption: `build_cup_trees` turns the resolved rounds into one outcome tree
+per team, and only the rounds a team is (near-)certain to play become hard
+commitments (#8).
 
 A separate one-shot pass rather than another dimension of the league's
 annealing: month- or quarter-wide windows are far too coarse to need a search,
@@ -36,7 +41,8 @@ from datetime import date, timedelta
 from typing import Literal
 
 from ..model.schema import WEEKDAYS, Competition, CupRound, Season
-from .european_schedule import EuropeanCommitmentDate
+from .commitments import CommitmentSet
+from .outcome_tree import OutcomeNode, OutcomeTree
 
 VenueType = Literal["home", "away", "neutral"]
 
@@ -87,13 +93,12 @@ class CupSchedule:
     competition_short_name: str | None
     min_rest_days: int
     rounds: list[CupRoundPlacement] = field(default_factory=list)
-    solver_commitments: bool = True
 
 
 def schedule_cup(
     competition: Competition,
     blackouts: set[date],
-    european_commitments: dict[str, list[EuropeanCommitmentDate]] | None = None,
+    european_commitments: CommitmentSet | None = None,
 ) -> tuple[CupSchedule, list[str]]:
     """Resolve one cup competition's rounds to dates.
 
@@ -158,7 +163,6 @@ def schedule_cup(
             competition_short_name=competition.short_name,
             min_rest_days=competition.min_rest_days,
             rounds=placements,
-            solver_commitments=competition.solver_commitments,
         ),
         warnings,
     )
@@ -200,16 +204,17 @@ class _UefaLeg:
     team_id: str
     date: date
     min_rest_days: int
-    binding: bool
+    hard: bool
 
 
-def _uefa_legs(
-    teams: list[str], commitments: dict[str, list[EuropeanCommitmentDate]] | None
-) -> list[_UefaLeg]:
+def _uefa_legs(teams: list[str], commitments: CommitmentSet | None) -> list[_UefaLeg]:
+    if commitments is None:
+        return []
+    wanted = set(teams)
     return [
-        _UefaLeg(team, c.date, c.min_rest_days, c.binding)
-        for team in teams
-        for c in (commitments or {}).get(team, ())
+        _UefaLeg(c.team_id, c.date, c.min_rest_days, c.hard)
+        for c in commitments
+        if c.source == "uefa" and c.team_id in wanted
     ]
 
 
@@ -219,11 +224,11 @@ def _clashes(day: date, rest: int, leg: _UefaLeg) -> bool:
 
 def _uefa_level(day: date, rest: int, uefa: list[_UefaLeg], teams: set[str]) -> int:
     """0 clear, 1 clashes only with legs a team might reach, 2 clashes with a
-    leg some team is certain to play."""
+    hard leg."""
     level = 0
     for leg in uefa:
         if leg.team_id in teams and _clashes(day, rest, leg):
-            if leg.binding:
+            if leg.hard:
                 return 2
             level = 1
     return level
@@ -234,7 +239,7 @@ def _binding_clashes(day: date, rest: int, uefa: list[_UefaLeg], teams: set[str]
         {
             leg.team_id
             for leg in uefa
-            if leg.team_id in teams and leg.binding and _clashes(day, rest, leg)
+            if leg.team_id in teams and leg.hard and _clashes(day, rest, leg)
         }
     )
 
@@ -328,7 +333,7 @@ def _uefa_warnings(
 def schedule_cups(
     competitions: list[Competition],
     season: Season,
-    european_commitments: dict[str, list[EuropeanCommitmentDate]] | None = None,
+    european_commitments: CommitmentSet | None = None,
 ) -> tuple[list[CupSchedule], list[str]]:
     """Resolve every cup competition, pooling their warnings.
 
@@ -347,29 +352,67 @@ def schedule_cups(
     return schedules, warnings
 
 
-def resolved_cup_windows(schedules: list[CupSchedule]) -> dict[str, list[tuple[date, int]]]:
-    """Per-team (resolved date, min rest days) pairs, for conflict avoidance
-    by `CupRoundConflict` and both solver backends."""
-    windows: dict[str, list[tuple[date, int]]] = {}
-    for schedule in schedules:
-        for placement in schedule.rounds:
-            for team_id, day in placement.dates.items():
-                windows.setdefault(team_id, []).append((day, schedule.min_rest_days))
-    return windows
+def build_cup_trees(
+    competitions: list[Competition], schedules: list[CupSchedule]
+) -> dict[str, OutcomeTree]:
+    """One outcome tree per team over every cup it plays: a chain of rounds
+    entered at the competition's first round, where a loss ends the run (#8).
 
-
-def cup_conflict(cup_windows: dict[str, list[tuple[date, int]]], team_id: str, day: date) -> bool:
-    """Whether `day` falls inside one of `team_id`'s cup-round rest windows.
-
-    The greedy placer uses it to steer initial placement; CP-SAT uses it to
-    exclude conflicting dates from a fixture's candidate set up front, since
-    its fixtures cannot route around a conflict found after the fact the way
-    annealing can relocate a whole round.
+    A round's advance probability is its own `advance_probability`, else the
+    competition's. A team listed in a round's `reached_teams` is certain to
+    be in it, and so in every round before it.
     """
-    return any(
-        abs((day - cup_date).days) - 1 < minimum
-        for cup_date, minimum in cup_windows.get(team_id, ())
-    )
+    by_id = {c.id: c for c in competitions}
+    trees: dict[str, OutcomeTree] = {}
+    for schedule in schedules:
+        competition = by_id[schedule.competition_id]
+        rounds = {r.id: r for r in competition.cup_rounds}
+        for team_id in competition.teams:
+            placements = [p for p in schedule.rounds if team_id in p.dates]
+            tree = trees.setdefault(team_id, OutcomeTree(team_id))
+            for position, placement in enumerate(placements):
+                round_ = rounds[placement.round_id]
+                following = placements[position + 1] if position + 1 < len(placements) else None
+                node_id = f"{team_id}/{competition.id}/{placement.round_id}"
+                advance = (
+                    round_.advance_probability
+                    if round_.advance_probability is not None
+                    else competition.advance_probability
+                )
+                tree.add(
+                    OutcomeNode(
+                        node_id=node_id,
+                        team_id=team_id,
+                        competition_id=competition.id,
+                        round_id=placement.round_id,
+                        source="cup",
+                        min_rest_days=schedule.min_rest_days,
+                        legs=(
+                            (
+                                f"{schedule.competition_name}: {placement.round_name}",
+                                placement.dates[team_id],
+                            ),
+                        ),
+                        on_win=(
+                            f"{team_id}/{competition.id}/{following.round_id}" if following else None
+                        ),
+                        win_probability=advance,
+                        known_reached=team_id in round_.reached_teams,
+                    ),
+                    root=position == 0,
+                )
+    for tree in trees.values():
+        tree.finalize()
+    return trees
+
+
+def cup_commitments(
+    competitions: list[Competition], schedules: list[CupSchedule], hard_threshold: float
+) -> CommitmentSet:
+    """Every cup round as a commitment, hard where the team reaches it with
+    at least `hard_threshold` probability."""
+    trees = build_cup_trees(competitions, schedules)
+    return CommitmentSet(c for tree in trees.values() for c in tree.commitments(hard_threshold))
 
 
 __all__ = [
@@ -378,8 +421,8 @@ __all__ = [
     "CupSchedule",
     "CupSchedulingError",
     "VenueType",
-    "cup_conflict",
-    "resolved_cup_windows",
+    "build_cup_trees",
+    "cup_commitments",
     "schedule_cup",
     "schedule_cups",
 ]

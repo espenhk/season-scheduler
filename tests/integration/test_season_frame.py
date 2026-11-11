@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from datetime import date
 
+import factories as f
+
 from terminliste.frame import UefaWeek, build_season_frame, build_uefa_weeks
 from terminliste.model.schema import WEEKDAYS
-from terminliste.rounds.european_schedule import EuropeanCommitmentDate
+from terminliste.rounds.commitments import CommitmentSet
 
 
 def test_every_european_competition_declares_its_matchday_weekdays(world, season):
@@ -36,33 +38,32 @@ def test_frame_lists_uefa_weeks_with_their_participants(world, season):
     assert q2.date == date(2026, 7, 23)
     assert q2.kind == "uefa_week"
     assert q2.teams == ("brann_m",)
-    assert q2.binding_teams == ("brann_m",)
+    assert q2.hard_teams == ("brann_m",)
 
     playoff = by_label[
         ("conference_league_2026", "UEFA Conference League qualifying: Play-off round (first leg)")
     ]
     assert set(playoff.teams) == {"brann_m", "tromso_m"}
-    assert "tromso_m" not in playoff.binding_teams  # only via its Europa League Q3 exit
+    assert "tromso_m" not in playoff.hard_teams  # only via its Europa League Q3 exit
 
 
 def test_build_uefa_weeks_groups_one_entry_per_leg_in_date_order():
-    def commitment(team, day, certain=True):
-        return EuropeanCommitmentDate(
-            team_id=team, date=day, min_rest_days=2, label="cl: md1",
-            competition_id="cl", certain=certain,
-        )
+    def commitment(team, day, hard=True):
+        return f.commitment(team, day, hard=hard, label="cl: md1", competition_id="cl")
 
     weeks = build_uefa_weeks(
-        {
-            "a": [commitment("a", date(2026, 9, 8))],
-            "b": [commitment("b", date(2026, 9, 8), certain=False)],
-            "c": [commitment("c", date(2026, 8, 4))],
-        }
+        CommitmentSet(
+            [
+                commitment("a", date(2026, 9, 8)),
+                commitment("b", date(2026, 9, 8), hard=False),
+                commitment("c", date(2026, 8, 4)),
+            ]
+        )
     )
     assert [w.date for w in weeks] == [date(2026, 8, 4), date(2026, 9, 8)]
     assert weeks[1] == UefaWeek(
         competition_id="cl", label="cl: md1", date=date(2026, 9, 8), min_rest_days=2,
-        teams=("a", "b"), binding_teams=("a",),
+        teams=("a", "b"), hard_teams=("a",),
     )
     assert weeks[1].weekday == WEEKDAYS[1]  # tuesday
     assert weeks[1].iso_week == (2026, 37)

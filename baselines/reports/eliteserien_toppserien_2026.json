@@ -19,7 +19,7 @@
     "Eliteserien: 8 pair(s) meet a different number of times than 2 — e.g. Aalesunds FK v Lillestrøm SK met 1 time(s)",
     "Toppserien: 60 pair(s) never meet (expected 2 meetings each) — e.g. Aalesunds FK Kvinner v FK Bodø/Glimt Kvinner",
     "Toppserien: 6 pair(s) meet a different number of times than 2 — e.g. Aalesunds FK Kvinner v Vålerenga Fotball Kvinner met 1 time(s)",
-    "NM Cupen (menn): Round 1 is forced to 2026-08-22, inside a UEFA week for brann_m, lillestrom_m"
+    "NM Cupen (menn): Round 1 is forced to 2026-08-22, inside a UEFA week for lillestrom_m"
   ],
   "breakdown": [
     {
@@ -42,6 +42,12 @@
     },
     {
       "constraint": "consecutive_home_days",
+      "kind": "soft",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "contingent_commitment_conflict",
       "kind": "soft",
       "total": 0.0,
       "count": 0

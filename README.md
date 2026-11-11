@@ -132,8 +132,9 @@ Season    id, year, window, competitions[], cup_competitions[], european_competi
 Fixture   an unscheduled pairing (home, away, leg, round)         # league only
 Match     a Fixture placed on a date at a venue                    # league only
 CupSchedule  a cup's rounds resolved to dates (see below)
-EuropeanCommitmentDate  one resolved leg date a team is committed to,
-             from the reachable part of its UEFA qualifying cascade (see below)
+Commitment  one cup round or UEFA leg date a team may have to keep clear,
+             with the probability it is played and the nodes it excludes (see
+             "Elimination-aware commitments" below)
 ```
 
 `Competition.movable` (issue #31) is explicit rather than inferred from
@@ -193,11 +194,10 @@ another date. When no such date exists the round settles for the least bad
 one and warns rather than failing. Each resolved date becomes a `CupDay` in
 the season frame (`terminliste/frame.py`): `cup_week` when midweek,
 `cup_weekend` when it falls Fri-Mon, queryable per gender, competition and
-team. `validate` warns when a forced date sits in a UEFA week. Slot planning
-skips any league weekend holding a `cup_weekend` day of the league's gender. A cup
-sets `solver_commitments: false` to stay in the frame and report without
-binding the scorer or solvers (the spring 2026 cups, whose rounds assume every
-club survives); `match_window_days` is league-only and rejected on a cup. See
+team. `match_window_days` is league-only and rejected on a cup. `validate` warns
+when a forced date sits in a UEFA week. Slot planning
+skips any league weekend holding a hard `cup_weekend` day of the league's gender
+(a contingent one keeps its slot, see "Elimination-aware commitments"). See
 `data/competitions/cup_men_2027.yml` and `cup_women_2027.yml` for the
 2026-27 Norwegian Cup, and `cup_men_2026.yml` / `cup_women_2026.yml` for the
 spring 2026 rounds of the previous edition.
@@ -214,7 +214,7 @@ ground (Ullevål stadion) — see `_venue_type` in `cup_schedule.py`. A season l
 kind it holds under `competitions` (leagues) and `cup_competitions` (cups)
 respectively; the two are kept separate because only the former is fed to
 the round-robin/solver pipeline — a cup is resolved once, up front, and the
-league solver treats the result as fixed input. `CupRoundConflict` then keeps league fixtures at least `min_rest_days` full
+league solver treats the result as fixed input. `CommitmentConflict` (cup source) then keeps league fixtures at least `min_rest_days` full
 rest days clear of each team's own resolved cup dates; CP-SAT additionally excludes a
 conflicting date from a fixture's candidate set outright, rather than
 modelling it as a constraint to satisfy after the fact, since its fixtures
@@ -230,8 +230,8 @@ under `extra_round_slots` in the season file (Easter Monday, Ascension Day,
 Whit Monday, plus placeholder midweeks). Blackouts, the World Cup break and
 FIFA windows remove slots per league; a weekend holding a cup day of the
 league's gender is dropped. A small exact DP then picks one slot per round:
-a full-round requirement date must be covered, a clash (a team with a binding
-cup or UEFA date too close to the slot's default day) costs far more than
+a full-round requirement date must be covered, a clash (a team with a hard
+cup or UEFA commitment too close to the slot's default day) costs far more than
 anything else, so the plan is clear wherever a clear slot exists and
 otherwise takes the least-clashing one and warns, and the rest spreads rounds
 evenly over the weeks that can host one. A slot's default day is the day
@@ -305,14 +305,13 @@ resolved to its earliest non-blackout day, the same idea as
 ordering to derive since each `EuropeanRound`'s dates come from real,
 independently-sourced UEFA scheduling data rather than being inferred from
 where the previous round landed. Then, starting from a team's entry round,
-`resolve_team_cascade` walks every reachable round — the next round in the
-same competition if the team survives (implicit: no pointer needed, just
-listed as that round's own entrant too), and whatever
-`drop_to_competition`/`drop_to_round` names if it doesn't — collecting both
-legs' resolved dates from every round reached, across every cascade branch
-still open, as a flat list of `EuropeanCommitmentDate`. `EuropeanCommitmentConflict`
-(`scoring/hard.py`) is `CupRoundConflict`'s counterpart for these — point-date-
-plus-`min_rest_days`, the same arithmetic as `cup_conflict`, not a range.
+`resolve_team_tree` builds an outcome tree from there — the next round in the
+same competition if the team wins (implicit: no pointer needed, just
+listed as that round's own entrant too), and on a loss whatever
+`drop_to_competition`/`drop_to_round` or `on_loss_main` names, else the run
+ends. Each round's two legs become `Commitment`s; `CommitmentConflict`
+(`scoring/hard.py`) checks them as point-date-plus-`min_rest_days`, not a
+range.
 
 Resolving a real result is a data edit, not a re-model: once a tie is
 decided, delete the `EuropeanRound` on the branch not taken (or turn a
@@ -335,6 +334,53 @@ cup pair): the real opponent where UEFA has named one, "TBD" where the tie
 is still conditional. A written plan for all of this lives in
 `docs/european_qualifiers_plan.md`.
 
+### Elimination-aware commitments (#8)
+
+Real clubs plan for elimination: a cup tie or European round only blocks the
+league calendar once the club is actually in it, and a nearby slot is kept to
+move a match to if it advances. The model follows that.
+
+Per team, `rounds/outcome_tree.py` builds a DAG of the rounds it may play —
+nodes `(competition, round)` with a win and a loss edge. A loss drops to
+another competition's round (`drop_to_*`), goes to a main tournament's league
+phase (`on_loss_main`; `on_win_main` for a win) or ends the run. Each node gets
+`reached_probability`, summed over the routes into it: from
+`EuropeanTie.win_probability` (default 0.5), `CupRound.advance_probability`
+(0.85 for the early rounds against lower divisions in the shipped cup files)
+and `Competition.advance_probability` (default 0.5) for everything else,
+including main-tournament stages. A tie marked `reached: true` (or a team in
+`CupRound.reached_teams`) is certain, and so is every round before it.
+
+The tree yields one `Commitment(team_id, date, min_rest_days, label, source,
+node_id, reached_probability, exclusive_with, hard)` per cup round or UEFA leg.
+`exclusive_with` names the nodes that can never be played in the same scenario
+as this one: Lillestrøm's Europa League and Conference League league phases, or
+Tromsø's Europa League and Conference League play-offs. A commitment is `hard`
+when its probability reaches `Season.contingency_policy.hard_threshold`. The
+default 1.0 plans for elimination: only entry rounds and rounds already reached
+block the calendar. Over the Eliteserien window that took the clubs' blocked
+team-days from 655 (every cup round and every UEFA leg hard) to 124 — Bodø/Glimt,
+Brann and Tromsø 15 each, Lillestrøm and Viking 12, the other eleven clubs 5.
+
+Two commitments that can never both be played are never both hard: if a low
+threshold would make them so, the likelier one stays hard (ties go to the
+lower node id), the other becomes contingent, and `validate` and the report
+warn. `validate` also prints the active threshold. The former
+`solver_commitments` opt-out is gone: it existed to keep every later cup round
+out of the solver because they were all hard, and with only entry rounds hard
+(Round 4, women's Round 2) the spring-2026 cups bind probabilistically and no
+longer need an exemption.
+
+Everything reads the one `CommitmentSet` held by `SeasonFrame.commitments` and
+`SolveRequest.commitments`: the slot planner (a cup weekend only removes a
+league slot when it is hard for someone), greedy placement and round pinning,
+local search's move filter, CP-SAT's candidate domains, `CommitmentConflict`
+(hard, ids `cup_round_conflict` and `european_commitment_conflict`) and
+`ContingentCommitmentConflict` (soft, weight 3.0 x rest shortfall x
+probability). The soft rule stands in for a planned fallback until contingency
+plans exist (#9). CP-SAT carries the same penalty in its Level 2 objective, a
+precomputed linear term per candidate day.
+
 ### Main tournaments (Champions/Europa/Conference League)
 
 Issue #79 lifts the "qualifying only" boundary above for the three UEFA
@@ -349,70 +395,14 @@ a venue fixed years in advance and almost always outside Norway — freeform
 text rather than a `Venue.id` reference, since `world.venues` only models
 Norwegian grounds).
 
-A main tournament has no static `teams` list — which of several possible
-tournaments a qualifying entrant ends up in isn't known until results are
-in — so `reachable_from` names the *qualifying* competitions whose entrants
-(every team listed in any of their rounds) are reachable here, and every one
-of them is assumed to reach the final, the same "assume it goes all the way"
-simplification `rounds/cup_schedule.py` makes for NM Cupen's final. This is
-coarser than UEFA's real round-by-round drop rule — which round a team is
-eliminated from decides whether it can fall as far as the next competition
-at all, something this project doesn't attempt to model precisely (see
-`Competition.reachable_from`'s docstring in `schema.py`).
-
-`reachable_from` only crosses into another competition where the qualifying
-data itself already wires that hop via `drop_to_competition`/
-`drop_to_round` — `europa_league_main_2026.yml` lists `europa_league_2026`
-plus (via the one real wired hop) `conference_league_2026`'s entrants
-reaching it; `champions_league_2026.yml` deliberately wires no
-`drop_to_competition` at all, so no main tournament's `reachable_from` lists
-it as a source for anyone but `champions_league_main_2026` itself. That
-restriction isn't just for consistency: an earlier version listed
-`champions_league_2026` under every main tournament's `reachable_from`
-(matching the issue's own "both CL, EL and UECL are reachable" framing
-literally), which meant a Champions League qualifying entrant blocked its
-own dates across all three main tournaments' calendars simultaneously —
-`cli.py generate` found zero feasible schedules even at the full 180s
-default budget, with `european_commitment_conflict` overwhelmingly the most
-common dead end (86,236 of 86,236 investigated scenarios hit one, more than
-`min_rest_days` or any other hard rule). Since a team is only ever in *one*
-main tournament's league phase at a time, not all three at once, unioning
-every reachable tournament's whole calendar for one team is a real
-over-approximation, not just a documented simplification.
-
-Narrowing `reachable_from` to what the qualifying cascade already
-corroborates (above) measurably helps — the best candidate at 180s goes from
-3-6 hard violations down to 2 — but used to fall short of full feasibility
-for a further reason: Tromsø IL is reachable for both
-`europa_league_main_2026` and `conference_league_main_2026` (the one real
-wired cascade hop), and until issue #93 both blocks were unconditional hard
-exclusions, as if Tromsø were certain to reach *both* main tournaments —
-when winning Europa League Q3 (reaching the first) and losing it (the only
-way to reach the second, via the Conference League drop) are mutually
-exclusive outcomes.
-
-Issue #93 fixes that: `resolve_team_cascade` now tags every commitment
-`EuropeanCommitmentDate.certain` — true only for the entry round and
-anything reached without ever passing through a fork (a round offering both
-win-progression and a `drop_to_competition`/`drop_to_round`), false for
-everything reachable only via one side of a fork, including all of it
-transitively once a branch has forked. `resolve_main_tournament_commitments`
-reads the same flag to decide each reachable team's block: certain only if
-at least one named `reachable_from` source is fully certain for that team.
-Tromsø's route to each main tournament runs through the Q3 fork, so both
-blocks are now soft (`EuropeanCommitmentSoftConflict`, `scoring/soft.py`)
-rather than hard — still steering the solver away from the date when a
-cheaper alternative exists, but no longer able to rule out an otherwise
-workable schedule over a branch that never materializes. The same certain/
-uncertain split applies to `EuropeanCommitmentConflict` itself for the
-qualifying cascade, and to `solvers/cpsat.py`'s candidate-domain pruning
-(`_european_clear` now only excludes a date over a *certain* commitment) —
-which is what let a 120s `cli.py generate --solver cpsat` run stop naming
-`european_commitment_conflict` among its infeasibility culprits at all,
-where it used to dominate. Closing the *remaining* gap on the real 2026 data
-(Bodø/Glimt's and Viking's dense, non-branching Champions League qualifying
-calendar) is unrelated to cascade branching — see below for how issue #95
-handles it instead.
+A main tournament has no static `teams` list: who plays it is wired from the
+qualifying rounds by `on_win_main` / `on_loss_main` (#8). Champions League
+Q3 and play-off losers go to the Europa League league phase, a Europa League
+play-off win goes to the Europa League and its loss to the Conference League,
+a Conference League play-off win goes to the Conference League. Every route
+is a branch of the team's outcome tree (see "Elimination-aware commitments"),
+so a team is only ever blocked for a league phase it is actually on the way
+to, and two league phases it can never both play are marked exclusive.
 
 **A tight August (issue #95).** Bodø/Glimt's and Viking's Champions League
 qualifying calendar (`champions_league_2026.yml`: Q3 legs 4/5 and 11 August,
@@ -427,25 +417,22 @@ rounds. Level 2 reaching a proven dead end cuts that Level 1 choice and
 re-solves (at most 6 times); a Level 2 timeout is reported as a timeout, not
 as infeasibility.
 
-`resolve_main_tournament_commitments` (`rounds/european_schedule.py`)
-resolves each main tournament's own dates once — no branching to walk, since
-every reachable team blocks the same list — and merges them into the same
-`EuropeanCommitmentDate` list `resolve_european_commitments` already builds
-from the qualifying cascade, so `EuropeanCommitmentConflict` and both
-solvers' cup/European candidate-date pruning need no changes at all to cover
-main tournaments too. The one genuinely new piece of resolution logic is
-matchday-aware date selection: `resolve_leg_date` resolves a window to the
-first occurrence of the competition's `matchday_weekdays`, in preference
-order (falling back to the plain earliest day when the window doesn't
-contain one). Champions League plays Tuesday/Wednesday and Europa/Conference
-League Thursday, qualifying and main tournament alike (#112).
+`resolve_main_stages` (`rounds/european_schedule.py`) resolves each main
+tournament's dates once: the league phase as one stage holding every matchday,
+then each knockout round. Teams reach those stages through the outcome tree.
+The one genuinely new piece of resolution logic is matchday-aware date
+selection: `resolve_leg_date` resolves a window to the first occurrence of the
+competition's `matchday_weekdays`, in preference order (falling back to the
+plain earliest day when the window doesn't contain one). Champions League plays
+Tuesday/Wednesday and Europa/Conference League Thursday, qualifying and main
+tournament alike (#112).
 
 The resolved legs form the season frame's UEFA weeks (`terminliste/frame.py`):
 one `uefa_week` entry per leg, listing every team that might play it and
-the subset for whom it binds. `cli.py validate` prints them. Which dates
-bind is defined once, by `EuropeanCommitmentDate.binding`, and the greedy
-placer, CP-SAT's candidate domains, round pinning and the hard/soft rules
-all read it, so the solvers agree on which European dates are hard.
+the subset for whom it is hard. `cli.py validate` prints them. Which dates
+are hard is defined once, by `Commitment.hard`, and the greedy placer, CP-SAT's
+candidate domains, round pinning, the slot planner and the hard/soft rules all
+read it, so the solvers agree.
 
 Because main tournament competitions are `movable: false` and resolved
 before the domestic solver ever runs (same as qualifying), "European games
@@ -667,7 +654,7 @@ python -m pytest tests/ -v
 
 See the write-up delivered alongside this project for the full discussion.
 The Norwegian Cup is in (`cup_men_2027.yml` / `cup_women_2027.yml`,
-`terminliste/rounds/cup_schedule.py`, `CupRoundConflict`) — only the
+`terminliste/rounds/cup_schedule.py`, `CommitmentConflict`) — only the
 top-flight clubs' rounds are tracked, and only Round 1 (men), Round 2
 (women), and the "final in spring 2027, end of May" framing are
 NFF-confirmed; every other round is an estimated window, flagged per round
@@ -684,23 +671,13 @@ phase this project doesn't track).
 
 That league-phase boundary is now crossed — issue #79 adds each
 competition's *main* tournament (league phase plus knockout rounds) as its
-own competition, see "Main tournaments" above. Its `reachable_from`
-simplification (every entrant of a listed qualifying competition is assumed
-able to reach a main tournament's final) is coarser than the boundary it
-replaces and a natural next step in its own right: modelling UEFA's real
-round-by-round drop rule precisely (which round a team is eliminated from
-decides whether it can fall as far as the next competition at all) would
-tighten `reachable_from` from "every entrant of this whole qualifying
-competition" down to "every entrant still alive from this specific round
-onward," at the cost of the same kind of round-to-round wiring
-`drop_to_competition`/`drop_to_round` already does for the qualifying
-cascade.
+own competition, see "Main tournaments" above, and #8 wires which qualifying
+outcome lands in which one.
 
-Both solvers already prune candidate dates that conflict with a resolved
-European commitment up front — `solvers/greedy.py`'s cost function
-(`_EUROPEAN_CONFLICT`) and `solvers/cpsat.py`'s candidate-set construction
-(`_european_clear`, composed with the existing `_cup_clear`) — mirroring
-how each already treats `cup_conflict`. European commitments block only
+Both solvers already prune candidate dates that conflict with a hard
+commitment up front — `solvers/greedy.py`'s cost function
+(`_COMMITMENT_CONFLICT`) and `solvers/cpsat.py`'s candidate-set construction
+(`_commitment_clear`). European commitments block only
 each leg's own resolved date plus `min_rest_days`, not the whole span
 between a tie's two legs — an earlier version of this modelled a round as
 one range covering both legs, which ruled out a normal Thu-Sun-Thu week by

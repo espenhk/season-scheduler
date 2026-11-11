@@ -62,13 +62,17 @@ teams:
 # real spacing. Also how close a league match may land to a team's cup date.
 min_rest_days: 2
 
+# Early rounds are played against lower divisions, so a top-flight side usually
+# advances; the competition default (0.5) covers the later rounds (#8).
 cup_rounds:
   - id: r1
     name: Round 1
+    advance_probability: 0.85
     forced_date: 2026-08-22
     note: "Confirmed — NFF terminliste. Eliteserien enters from Round 1 under the 2027 format."
   - id: r2
     name: Round 2
+    advance_probability: 0.85
     preferred_weekday: wednesday
     window_start: 2026-09-01
     window_end: 2026-09-30
@@ -76,6 +80,7 @@ cup_rounds:
     note: "NFF has confirmed only that Round 2 is played midweek in September 2026; exact date not yet published."
   - id: r3
     name: Round 3
+    advance_probability: 0.85
     preferred_weekday: wednesday
     window_start: 2026-10-01
     window_end: 2026-10-31

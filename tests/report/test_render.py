@@ -472,18 +472,11 @@ def test_main_tournament_renders_via_the_display_adapter():
 
     world, season, comp_m, comp_w = _two_dual_clubs_world()
     club_colors = {c.id: c.color for c in world.clubs.values()}
-    qualifying = f.competition(
-        "cl",
-        ["a_m"],
-        format="european",
-        european_rounds=[f.european_round("playoff", entrants=["a_m"], forced_date=date(2026, 8, 18))],
-    )
     main = f.competition(
         "cl_main",
         [],
         format="european",
         is_main_tournament=True,
-        reachable_from=["cl"],
         league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
         knockout_rounds=[
             f.main_tournament_round(
@@ -495,7 +488,7 @@ def test_main_tournament_renders_via_the_display_adapter():
         ],
     )
 
-    rounds, resolved_legs = build_main_tournament_rounds_for_display(main, [qualifying, main], set())
+    rounds, resolved_legs = build_main_tournament_rounds_for_display(main, ["a_m"], set())
     display_main = main.model_copy(update={"european_rounds": rounds})
 
     entries = _european_entries(world, [display_main], resolved_legs, club_colors, {})

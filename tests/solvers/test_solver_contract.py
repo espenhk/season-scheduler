@@ -8,13 +8,15 @@ test_integration_coupled_leagues.py, where solve time actually matters.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 
 import factories as f
 import pytest
 
 from terminliste.model.travel import ApiTravelModel
-from terminliste.rounds.cup_schedule import schedule_cups
+from terminliste.rounds.commitments import CommitmentSet
+from terminliste.rounds.cup_schedule import cup_commitments, schedule_cups
 from terminliste.scoring.base import EvalContext
 from terminliste.scoring.registry import build_constraints
 from terminliste.solvers.base import SolveRequest, divergence
@@ -105,7 +107,7 @@ def test_cup_schedule_is_respected_by_both_backends(solver_name):
     window around a round anchor chosen without cup awareness, so unlike the
     greedy/annealing backend it has no way to route around a cup conflict
     discovered only after the fact — it must exclude conflicting dates from
-    the candidate set up front (see `_cup_clear` in `solvers/cpsat.py`), or a
+    the candidate set up front (see `_commitment_clear` in `solvers/cpsat.py`), or a
     real cup schedule can push the whole model to a false "infeasible"."""
     world, season, competitions = _small_world()
     men_team_ids = competitions[0].teams
@@ -129,11 +131,15 @@ def test_cup_schedule_is_respected_by_both_backends(solver_name):
     cup_schedules, cup_warnings = schedule_cups([cup], season)
     assert cup_warnings == []
 
-    constraints = build_constraints(world, season, competitions, cup_schedules)
+    # A threshold of 0.5 makes round 2 (reached with probability 0.5) hard too.
+    commitments = cup_commitments([cup], cup_schedules, hard_threshold=0.5)
+    assert all(c.hard for c in commitments)
+    constraints = build_constraints(world, season, competitions, commitments)
     ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
     request = SolveRequest(
         world=world, season=season, competitions=competitions, cup_schedules=cup_schedules,
-        constraints=constraints, ctx=ctx, seed=11, top_n=1, time_budget_s=15.0,
+        commitments=commitments, constraints=constraints, ctx=ctx, seed=11, top_n=1,
+        time_budget_s=15.0,
     )
     result = _get_scheduler(solver_name).solve(request)
     assert result.best is not None
@@ -493,22 +499,22 @@ def test_cpsat_names_the_requirement_when_its_date_lies_in_no_slot():
 def test_cpsat_names_the_frame_entry_that_closes_every_slot():
     """A binding European date whose rest window outlasts the season closes
     every slot to its team; the report names the team and the commitment."""
-    from terminliste.rounds.european_schedule import EuropeanCommitmentDate
+    from terminliste.rounds.commitments import Commitment, CommitmentSet
 
     world, season, competitions = _small_world()
-    commitments = {
-        "m0": [
-            EuropeanCommitmentDate(
+    commitments = CommitmentSet(
+        [
+            Commitment(
                 team_id="m0", date=date(2026, 6, 1), min_rest_days=400,
-                label="Test qualifier", competition_id="uefa",
+                label="Test qualifier", source="uefa", competition_id="uefa", node_id="q1",
             )
         ]
-    }
-    constraints = build_constraints(world, season, competitions, [], commitments)
+    )
+    constraints = build_constraints(world, season, competitions, commitments)
     ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
     request = SolveRequest(
         world=world, season=season, competitions=competitions, constraints=constraints,
-        ctx=ctx, seed=1, top_n=1, time_budget_s=15.0, european_commitments=commitments,
+        ctx=ctx, seed=1, top_n=1, time_budget_s=15.0, commitments=commitments,
     )
     result = _get_scheduler("cpsat").solve(request)
 
@@ -824,3 +830,105 @@ def test_local_moves_never_leave_the_round_slot():
     for _ in range(1500):
         moves.apply(rng)
         assert all(m.date in m.slot.days for m in working)
+
+
+def _cup_request(rounds, **overrides):
+    world, season, competitions = _small_world()
+    cup = f.competition(
+        "cup", competitions[0].teams, format="cup", min_rest_days=3, match_window_days=2,
+        cup_rounds=rounds,
+    )
+    schedules, _ = schedule_cups([cup], season)
+    commitments = cup_commitments([cup], schedules, hard_threshold=1.0)
+    constraints = build_constraints(world, season, competitions, commitments)
+    ctx = EvalContext(world=world, season=season, travel=ApiTravelModel(world))
+    request = SolveRequest(
+        world=world, season=season, competitions=competitions, cup_schedules=schedules,
+        commitments=commitments, constraints=constraints, ctx=ctx, seed=1, top_n=1,
+        time_budget_s=20.0, **overrides,
+    )
+    return request, commitments
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_excludes_hard_cup_dates_but_keeps_contingent_ones_in_the_domain():
+    from terminliste.model.calendar import build_calendar
+    from terminliste.solvers.base import resolve_slot_plans
+    from terminliste.solvers.cpsat import _Problem
+
+    _, season, _ = _small_world()
+    entry = season.start + timedelta(days=21)
+    later = season.start + timedelta(days=42)
+    request, commitments = _cup_request([
+        f.cup_round("r1", forced_date=entry, name="Round 1"),
+        f.cup_round("r2", forced_date=later, name="Round 2"),
+    ])
+    hard = {c.date for c in commitments if c.hard}
+    contingent = {c.date for c in commitments if not c.hard}
+    assert hard == {entry} and contingent == {later}
+
+    calendar = build_calendar(request.world, request.season)
+    problem = _Problem(request, calendar, resolve_slot_plans(request, calendar))
+    men = problem.by_id["men"]
+    later_slot = next(s for s in men.slot_plan.candidates if later in s.days)
+    assert later_slot in men.slots and later_slot not in men.closed
+    # Every club shares the cup, so treated as hard the later weekend would
+    # close its slot.
+    hard_everywhere = CommitmentSet(replace(c, hard=True) for c in request.commitments)
+    forced = _Problem(
+        replace(request, commitments=hard_everywhere), calendar, resolve_slot_plans(request, calendar)
+    )
+    assert later_slot in forced.by_id["men"].closed or later_slot not in forced.by_id["men"].slots
+
+    domain: set[date] = set()
+    for slot in men.slots:
+        for team in men.teams:
+            opponent = next(t for t in men.teams if t != team)
+            days = problem.fixture_days(men, team, opponent, slot)
+            assert not any(abs((d - entry).days) - 1 < 3 for d in days)
+            domain.update(days)
+    assert later in domain
+
+    result = _get_scheduler("cpsat").solve(request)
+    assert result.best is not None, result.notes
+    assert result.best.score.feasible, result.best.score.hard_results()
+    assert result.search_stats.hard_violation_counts.get("round_slot_capacity", 0) == 0
+
+
+@pytest.mark.skipif(not HAS_ORTOOLS, reason="needs ortools")
+def test_cpsat_level_two_prefers_a_day_clear_of_a_contingent_commitment():
+    from ortools.sat.python import cp_model
+
+    from terminliste.model.calendar import build_calendar
+    from terminliste.model.schema import WEEKDAYS
+    from terminliste.solvers.base import resolve_slot_plans
+    from terminliste.solvers.cpsat import _build_level_two, _Placed, _Problem
+
+    world, season, competitions = _small_world()
+    base = _cpsat_request()
+    calendar = build_calendar(world, season)
+    problem = _Problem(base, calendar, resolve_slot_plans(base, calendar))
+    men = problem.by_id["men"]
+    slot = men.slots[3]
+    team = men.teams[0]
+    fixture = men.team_fixture[(team, 3)]
+    venue = world.team(fixture.home_team).home_venue
+    days = list(problem.fixture_days(men, fixture.home_team, fixture.away_team, slot))
+    assert len(days) > 2
+    clear = [d for d in days if d.weekday() == WEEKDAYS.index("sunday")]
+    assert clear, "the competition's preferred weekday must be in the slot"
+    target = clear[0]
+    # The preferred weekday is the cheapest day, so only the contingent penalty
+    # (3.0 x 2 x 1.0 > the 4.0 weekday bonus) can move the match off it.
+    problem.commitments = f.commitment_set(
+        f.commitment(team, target, hard=False, probability=1.0, min_rest_days=1, source="cup")
+    )
+    fixture = men.team_fixture[(team, 3)]
+
+    item = _Placed(0, fixture, men, venue, slot, days)
+    built = _build_level_two(cp_model, problem, [item], [], relax=False)
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 10
+    assert solver.Solve(built.model) in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+    chosen = next(d for d, var in built.days[0].items() if solver.Value(var))
+    assert chosen != target
