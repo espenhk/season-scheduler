@@ -18,10 +18,12 @@ from .hard import (
     CommitmentConflict,
     FinalRoundSameSlot,
     FixedDateRequirement,
+    FixedRoundDates,
     FullRoundOnDate,
     LegOrdering,
     MinRestDays,
     OneMatchPerTeamPerDay,
+    RoundDayQuota,
     VenueDoubleBooking,
 )
 from .soft import (
@@ -70,6 +72,10 @@ def build_constraints(
     hard_full_rounds = [r for r in season.full_round_requirements if r.hard]
     if hard_full_rounds:
         constraints.append(FullRoundOnDate(requirements=hard_full_rounds))
+    if any(c.fixed_round_dates for c in competitions):
+        constraints.append(FixedRoundDates(competitions=competitions))
+    if any(c.day_quota for c in competitions):
+        constraints.append(RoundDayQuota(competitions=competitions))
     commitments = commitments or CommitmentSet()
     for source in ("cup", "uefa"):
         if any(c.source == source for c in commitments):
@@ -133,6 +139,8 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
     "rest_comfort": "Rest gaps at or above the comfortable target, not just the legal minimum.",
     "soft_venue_preference": "Matches avoid dates that are legal but discouraged.",
     "final_round_same_slot": "Every league's final round shares one date and kickoff time.",
+    "fixed_round_dates": "A round whose date is fixed (by TV) is played entirely on that date.",
+    "round_day_quota": "No weekday hosts more matches of one round than the league's quota.",
     "full_round_on_date": "Every team in a competition has a match on a named date.",
     "grass_away_round_one": "Grass-pitch clubs play away in round 1.",
     "grass_season_edge": "Grass-pitch home matches avoid the cold edges of the season, with the window shifted by latitude.",

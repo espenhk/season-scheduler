@@ -278,6 +278,7 @@ def validate_world(world: World) -> list[str]:
     errors.extend(_validate_european_cascade(world))
     errors.extend(_validate_main_tournaments(world))
     errors.extend(_validate_competition_colors(world))
+    errors.extend(_validate_league_formats(world))
     errors.extend(_validate_competition_short_names(world))
 
     for season in world.seasons.values():
@@ -582,6 +583,50 @@ def _validate_main_tournaments(world: World) -> list[str]:
                     errors.append(f"{where} names unknown competition {target_id!r}")
                 elif target.format != "european" or not target.is_main_tournament:
                     errors.append(f"{where} names {target_id!r}, which is not a main tournament")
+    return errors
+
+
+def _validate_league_formats(world: World) -> list[str]:
+    """Phases, play-offs and fixed round dates of every league (#15)."""
+    errors: list[str] = []
+    for competition in world.competitions.values():
+        cid = competition.id
+        regular = sum(p.rounds for p in competition.phases if p.kind == "regular")
+        if competition.phases and regular != competition.rounds:
+            errors.append(
+                f"competition {cid!r} declares {regular} regular-phase rounds but plays "
+                f"{competition.rounds}"
+            )
+        playoff_ids = [p.id for p in competition.playoff_rounds]
+        if len(set(playoff_ids)) != len(playoff_ids):
+            errors.append(f"competition {cid!r} has duplicate play-off ids")
+        fixed = competition.fixed_round_dates
+        if not fixed:
+            continue
+        if competition.format != "league":
+            errors.append(f"competition {cid!r} is not a league but fixes round dates")
+            continue
+        rounds = [f.round for f in fixed]
+        if len(set(rounds)) != len(rounds):
+            errors.append(f"competition {cid!r} fixes the same round twice")
+        ordered = sorted(fixed, key=lambda f: f.round)
+        for f in ordered:
+            if f.round > competition.rounds:
+                errors.append(
+                    f"competition {cid!r} fixes round {f.round}, beyond its {competition.rounds} rounds"
+                )
+        for earlier, later in zip(ordered, ordered[1:], strict=False):
+            if later.date <= earlier.date:
+                errors.append(
+                    f"competition {cid!r}: round {later.round} ({later.date}) is not after "
+                    f"round {earlier.round} ({earlier.date})"
+                )
+        reserved = {d for p in competition.playoff_rounds if p.reserves_league for d in p.dates}
+        errors.extend(
+            f"competition {cid!r} fixes round {f.round} on {f.date}, a play-off date"
+            for f in fixed
+            if f.date in reserved
+        )
     return errors
 
 
