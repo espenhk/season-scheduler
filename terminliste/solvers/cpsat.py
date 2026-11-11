@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import NamedTuple
 
+from ..contingency import ContingencyPlanner
 from ..frame import SeasonFrame
 from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
 from ..model.loader import World
@@ -36,6 +37,7 @@ from ..model.slots import RoundSlot, max_compatible_slots, slots_compatible
 from ..rounds.commitments import CommitmentSet
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import evaluate
+from ..scoring.soft import ExpectedDisruption
 from ..slot_planner import SlotPlan
 from .base import (
     Candidate,
@@ -774,7 +776,7 @@ def _slot_plans(problem: _Problem, solution: _LevelOneSolution) -> dict[str, Slo
             teams = ", ".join(problem.world.team_label(t) for t in slot)
             plan.warnings.append(
                 f"{lg.id}: round {round_index + 1} on {chosen[round_index].default_day} "
-                f"clashes with a binding cup or UEFA date for {teams}"
+                f"clashes with a hard cup or UEFA commitment for {teams}"
             )
         plans[lg.id] = plan
     return plans
@@ -962,6 +964,21 @@ def _build_level_two(cp_model, problem: _Problem, placed: list[_Placed], previou
                 terms.append((_scaled(weekday_weight), var))
             if d in discouraged:
                 terms.append((-_scaled(venue_weight), var))
+
+    # A day that collides with a maybe-round needs a fallback; price it as
+    # `expected_disruption` would at best, so uncovered-prone days lose (#9).
+    planner = ContingencyPlanner(
+        world, problem.season, problem.request.competitions, problem.commitments
+    )
+    for item in placed:
+        for team_id in (item.fixture.home_team, item.fixture.away_team):
+            for commitment in problem.commitments.contingent_for(team_id):
+                penalty = ExpectedDisruption.weight * planner.collision_cost(
+                    commitment.reached_probability
+                )
+                for d, var in days[item.index].items():
+                    if commitment.clashes(d):
+                        terms.append((-_scaled(penalty), var))
 
     for club in world.dual_clubs():
         seniors = [t.id for t in club.teams if t.level == "senior"]

@@ -183,6 +183,7 @@ class ContingencyPlanner:
         )
         self._scenarios: dict[tuple[str, frozenset[str]], frozenset[int]] = {}
         self._hard_blocked: dict[str, frozenset[int]] = {}
+        self._any_blocked: dict[str, frozenset[int]] = {}
         self._co_cache: dict[tuple[tuple[str, ...], tuple[str, ...]], bool] = {}
 
         self._blocked = {
@@ -221,10 +222,10 @@ class ContingencyPlanner:
 
     def plan_for(self, index) -> ContingencyPlan:
         """The plan for a `ScheduleIndex`, computed once per index."""
-        cached = index.contingency.get(id(self))
+        cached = index.contingency.get(self)
         if cached is None:
             cached = self.plan(index.matches, index)
-            index.contingency[id(self)] = cached
+            index.contingency[self] = cached
         return cached
 
     def plan(self, matches, index=None) -> ContingencyPlan:
@@ -272,6 +273,13 @@ class ContingencyPlanner:
 
     def move_cost(self, fallback: Fallback) -> float:
         return KIND_COST[fallback.kind] + DAY_COST * fallback.days_moved
+
+    def collision_cost(self, probability: float) -> float:
+        """The least a match colliding with a commitment reached at `probability`
+        costs in `expected_disruption`: its cheapest allowed move, one day away.
+        Solvers that cannot plan fallbacks price a colliding day with this."""
+        cheapest = min(KIND_COST[kind] for kind in self.policy.fallback_kinds)
+        return probability * (cheapest + DAY_COST)
 
     def co_triggerable(self, a: tuple[str, ...], b: tuple[str, ...]) -> bool:
         """Whether one scenario can fire a trigger of `a` and one of `b`:
@@ -322,20 +330,19 @@ class ContingencyPlanner:
         scenario = {
             team: self._scenario(team, nodes) for team, nodes in per_team.items()
         }
-        opponents = [t for t in (match.home_team, match.away_team) if t not in per_team]
-
-        backup: tuple[date, FallbackKind] | None = None
-        for kind, day in self._candidates(match):
-            if not self._valid(match, day, kind, trigger_ids, scenario, competition, state):
-                continue
-            if self._opponent_risk(opponents, day) == 0.0:
-                backup = (day, kind)
-                break
-            if backup is None:
-                backup = (day, kind)
-        if backup is None:
+        # Greedy first-valid in date order: an earlier fallback may take the only
+        # slot a later match needs, which then reports as uncovered.
+        chosen = next(
+            (
+                (day, kind)
+                for kind, day in self._candidates(match)
+                if self._valid(match, day, kind, trigger_ids, scenario, competition, state)
+            ),
+            None,
+        )
+        if chosen is None:
             return None
-        day, kind = backup
+        day, kind = chosen
         return Fallback(
             match_key=match.key,
             competition_id=match.competition_id,
@@ -383,10 +390,15 @@ class ContingencyPlanner:
             self._scenarios[key] = cached
         return cached
 
-    def _opponent_risk(self, teams: list[str], day: date) -> float:
-        """Probability that a side not in the trigger set is itself pulled
-        away from `day` by a contingent commitment."""
-        return sum(self.commitments.contingent_weight(team, day) for team in teams)
+    def _any_commitment_days(self, team: str) -> frozenset[int]:
+        """Ordinals blocked if every contingent commitment of `team` is played:
+        a side outside the trigger set is independent of it, so any of its own
+        maybe-rounds can co-occur and its fallback day must clear all of them."""
+        cached = self._any_blocked.get(team)
+        if cached is None:
+            cached = self._hard_days(team) | _blocked_ordinals(self._contingent.get(team, ()))
+            self._any_blocked[team] = cached
+        return cached
 
     def _candidates(self, match) -> Iterator[tuple[FallbackKind, date]]:
         origin = match.date
@@ -436,7 +448,7 @@ class ContingencyPlanner:
         ordinal = day.toordinal()
         rest = competition.min_rest_days
         for team in (match.home_team, match.away_team):
-            if ordinal in scenario.get(team, self._hard_days(team)):
+            if ordinal in scenario.get(team, self._any_commitment_days(team)):
                 return False
             if not state.rest_ok(team, match.date.toordinal(), ordinal, rest, trigger_ids):
                 return False
@@ -610,6 +622,7 @@ def _bracket_caps(commitments: CommitmentSet) -> dict[tuple[str, str], int]:
     for c in commitments:
         if c.source != "cup":
             continue
+        # Cup node ids are `cup/<competition>/<round>`; a `/` in a competition id breaks this.
         _, competition, round_id = c.node_id.split("/")
         rounds.setdefault((competition, round_id), {})[c.team_id] = (c.date, c.reached_probability)
 

@@ -394,7 +394,7 @@ class CommitmentConflict:
     than a span, so a normal Thu-Sun-Thu week stays legal.
 
     Only commitments the season's `contingency_policy` makes hard count;
-    `ContingentCommitmentConflict` scores the rest.
+    `ExpectedDisruption` scores the rest.
     """
 
     commitments: CommitmentSet
@@ -500,7 +500,11 @@ class ContingencyCoverage:
 @dataclass
 class ContingencyCollision:
     """Two fallbacks share a team, venue or club date only if their triggers
-    can never both fire (#9)."""
+    can never both fire (#9).
+
+    Guards externally supplied plans: the planner already avoids these clashes
+    for its own output. Rest gaps between fallbacks are not checked here.
+    """
 
     planner: ContingencyPlanner
     id: str = "contingency_collision"

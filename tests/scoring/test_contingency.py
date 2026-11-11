@@ -153,6 +153,23 @@ def test_alternatives_exclusive_with_the_trigger_do_not_constrain_the_fallback()
     assert fallback.date == date(2026, 8, 7)
 
 
+def test_a_fallback_day_must_clear_the_opponents_maybe_rounds():
+    commitments = f.commitment_set(
+        _contingent("a", _TUESDAY), _contingent("b", date(2026, 8, 10))
+    )
+    match = _match("a", "b", _SUNDAY)
+
+    _, _, only_risky = _planner(
+        commitments, kinds=["reserve_date"], reserve=[date(2026, 8, 12)]
+    )
+    assert only_risky.plan([match]).fallbacks == {}
+
+    _, _, with_clear = _planner(
+        commitments, kinds=["reserve_date"], reserve=[date(2026, 8, 12), date(2026, 8, 20)]
+    )
+    assert with_clear.plan([match]).fallbacks[match.key].date == date(2026, 8, 20)
+
+
 def test_a_fallback_keeps_the_teams_rest_and_one_match_per_day():
     commitment = _contingent("a", _TUESDAY)
     _, _, planner = _planner(f.commitment_set(commitment), kinds=["same_slot"])
@@ -283,7 +300,7 @@ def _fallback(key, node):
 
 def _indexed(matches, planner, plan):
     index = ScheduleIndex(matches)
-    index.contingency[id(planner)] = plan
+    index.contingency[planner] = plan
     return index
 
 
