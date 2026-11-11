@@ -82,9 +82,15 @@ gitignored `data/.refdata_cache/`, never to `data/*.yml`. See
     (default 0.25) is the share of the time budget phase two gets; a
     polished candidate only replaces the original when it scores strictly
     better, so this phase can only help. No extra dependencies.
-  - `cpsat.py` (`--solver cpsat`): OR-Tools CP-SAT, assigning dates to a
-    fixed pairing structure. Needs the optional `football-scheduler-cpsat`
-    dependency group.
+  - `cpsat.py` (`--solver cpsat`): OR-Tools CP-SAT as a two-level model
+    (#12). Level 1 puts each league's rounds in the planner's typed slots
+    and orients every pairing home or away (breaks, home/away balance and
+    dual-club home weekends are objective terms); Level 2 picks a match day
+    per fixture inside its slot. Hard rules carry assumption literals, so an
+    infeasible level names the rule families and the frame entries that close
+    slots. `min_rest_days` is never relaxed unless `--relax-min-rest` is
+    passed, and the result notes say so. Needs the optional
+    `football-scheduler-cpsat` dependency group.
 - **`terminliste/report/`** — Jinja2 → one self-contained HTML file. Tabs
   between candidate schedules, a score header, ranked "biggest upsides /
   biggest problems", a full per-rule breakdown table, and a calendar grid
@@ -236,6 +242,16 @@ league has fewer usable slots than rounds. Days a neighbouring round would leave
 `min_rest_days` for the whole league (a Monday before a midweek round) are
 dropped from the slot.
 
+A competition file can also declare (#15): `phases` (regular, optional split)
+and `playoff_rounds`, whose dates are reserved in the frame and never used by
+a regular round (the report's "Play-off weeks" lists them); `fixed_round_dates`
+(1-based round to date, e.g. fixed by TV), which puts that round in the slot
+holding the date with every match on it; and `day_quota` (most matches of one
+round per weekday, e.g. Saturday 2 / Sunday 5 / Monday 1), enforced by the
+greedy placer, local-search `shift_day` and `round_day_quota`. The final round
+and fixed rounds are single-date and exempt from the quota. `format_source`
+cites where the format was confirmed.
+
 ### Day within the slot (Stage 4)
 
 A match's date is always one of its round's slot days (#7); the slot stays
@@ -346,6 +362,15 @@ block the calendar. Over the Eliteserien window that took the clubs' blocked
 team-days from 655 (every cup round and every UEFA leg hard) to 124 — Bodø/Glimt,
 Brann and Tromsø 15 each, Lillestrøm and Viking 12, the other eleven clubs 5.
 
+Two commitments that can never both be played are never both hard: if a low
+threshold would make them so, the likelier one stays hard (ties go to the
+lower node id), the other becomes contingent, and `validate` and the report
+warn. `validate` also prints the active threshold. The former
+`solver_commitments` opt-out is gone: it existed to keep every later cup round
+out of the solver because they were all hard, and with only entry rounds hard
+(Round 4, women's Round 2) the spring-2026 cups bind probabilistically and no
+longer need an exemption.
+
 Everything reads the one `CommitmentSet` held by `SeasonFrame.commitments` and
 `SolveRequest.commitments`: the slot planner (a cup weekend only removes a
 league slot when it is hard for someone), greedy placement and round pinning,
@@ -353,7 +378,8 @@ local search's move filter, CP-SAT's candidate domains, `CommitmentConflict`
 (hard, ids `cup_round_conflict` and `european_commitment_conflict`) and
 `ContingentCommitmentConflict` (soft, weight 3.0 x rest shortfall x
 probability). The soft rule stands in for a planned fallback until contingency
-plans exist (#9).
+plans exist (#9). CP-SAT carries the same penalty in its Level 2 objective, a
+precomputed linear term per candidate day.
 
 ### Main tournaments (Champions/Europa/Conference League)
 
@@ -378,51 +404,18 @@ is a branch of the team's outcome tree (see "Elimination-aware commitments"),
 so a team is only ever blocked for a league phase it is actually on the way
 to, and two league phases it can never both play are marked exclusive.
 
-**A fundamentally tight month (issue #95).** Even with cascade branching
-handled, `cli.py generate --season 2026 --solver cpsat` still came back
-`FAIL: solver produced no candidates` — CP-SAT proved the model
-`INFEASIBLE` almost immediately, not a search-ran-out-of-time result.
-Testing each hard rule's relaxation individually against the real 2026 data
-narrowed it to one: relaxing `min_rest_days` alone (every other hard rule
-still forced) solves `OPTIMAL`; relaxing any other single rule alone stays
-`INFEASIBLE`. The real culprit is Bodø/Glimt's and Viking's Champions
-League qualifying calendar (`champions_league_2026.yml`) — Q3 legs 4/5 and
-11 August, play-off legs 18/19 and 25/26 August — which blocks a ±2-day
-window around each date and leaves Bodø/Glimt open gaps of one or two days
-across most of August, too narrow to also fit weekly Eliteserien play; a
-handful of other clubs pick up knock-on congestion from those two teams'
-matches landing on unusual dates. This is real-world tightness, not a
-modelling bug: a club playing deep into continental qualifying genuinely
-has very little free August.
-
-The chosen fix is to accept partial infeasibility rather than force full
-feasibility: `solvers/cpsat.py`'s `_solve_pass` now retries a pass that
-comes back *proven* infeasible (`cp_model.INFEASIBLE` specifically, not a
-mere `UNKNOWN` timeout — retrying on a timeout could relax a rule a
-perfectly feasible model just needed more time for, and would spend that
-pass's time budget twice over) with `min_rest_days` rebuilt as a penalised
-objective term instead of an `AddAssumption`-pinned hard constraint (see
-`_build_model`'s `relax_rules` parameter). The penalty is a per-window
-indicator weighted well above any real soft weight, not a single global
-switch — an earlier version left the whole rule's literal a free, unpenalised
-boolean, which cost the solver nothing to drop everywhere at once and cut
-short rest by rather more than the crunch actually required; scoping the
-penalty to each window individually keeps the same fix but roughly halves
-the violations on the real 2026 data (6 down to 3-4, depending on the
-option) since the solver now only pays it where a window genuinely has no
-legal alternative. `min_rest_days` is the one hard rule this backend treats
-as negotiable at all — short rest is a real inconvenience, unlike a
-double-booked venue or a return leg played before the first, which stay
-hard requirements no retry relaxes. This mirrors local search, which was
-never all-or-nothing about hard rules to begin with: both backends now
-publish their best-effort schedule with whatever hard-rule violations
-remain called out in the score breakdown, rather than one of them refusing
-to answer at all. Widening a league's `match_window_days` only for teams with
-active European commitments was considered as a more surgical alternative
-but not pursued — the setting is per league, so it would need per-team
-scheduling flexibility the model doesn't have anywhere else, for a conflict
-that's a real, once-in-a-while calendar squeeze rather than a recurring
-modelling gap worth that extra machinery.
+**A tight August (issue #95).** Bodø/Glimt's and Viking's Champions League
+qualifying calendar (`champions_league_2026.yml`: Q3 legs 4/5 and 11 August,
+play-off legs 18/19 and 25/26 August) blocks a ±2-day window around each date
+and leaves open gaps of one or two days across most of August, too narrow for
+weekly Eliteserien play on fixed round dates. `solvers/cpsat.py` handles it by
+letting rounds move between slots (Level 1) so those clubs' qualifying weeks
+fall in slots where they need not play, then picking match days inside each
+slot (Level 2). `min_rest_days` stays a hard rule; `--relax-min-rest` turns
+it into a penalised term for Level 2 only, never the slot spacing between
+rounds. Level 2 reaching a proven dead end cuts that Level 1 choice and
+re-solves (at most 6 times); a Level 2 timeout is reported as a timeout, not
+as infeasibility.
 
 `resolve_main_stages` (`rounds/european_schedule.py`) resolves each main
 tournament's dates once: the league phase as one stage holding every matchday,

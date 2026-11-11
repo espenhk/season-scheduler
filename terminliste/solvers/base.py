@@ -164,6 +164,10 @@ class SolveRequest:
     # solver rebuilds the frame from the cups and commitments above.
     frame: SeasonFrame | None = None
     slot_plans: dict[str, SlotPlan] | None = None
+    # CP-SAT only: when Level 2 (match days) is infeasible, retry with
+    # `min_rest_days` as a penalty and say so in the result's notes. Level 1's
+    # minimum gap between consecutive rounds' slots is never relaxed.
+    relax_min_rest: bool = False
     # Called periodically with a running `SearchStats` snapshot so the CLI can
     # print live progress. `None` means don't bother.
     progress: Callable[[ProgressUpdate], None] | None = None
@@ -174,7 +178,7 @@ def resolve_slot_plans(request: SolveRequest, calendar: SeasonCalendar) -> dict[
     if request.slot_plans is not None:
         return request.slot_plans
     frame = request.frame or SeasonFrame.from_resolved(
-        request.world, request.cup_schedules, request.commitments
+        request.world, request.cup_schedules, request.commitments, request.competitions
     )
     return plan_slots(request.world, request.season, request.competitions, calendar, frame)
 

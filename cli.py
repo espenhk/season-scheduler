@@ -121,6 +121,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
             print(f"FAIL: {exc}", file=sys.stderr)
             return 1
         if season.cup_competitions or season.european_competitions:
+            print(
+                f"     Commitments: hard from reach probability >= "
+                f"{season.contingency_policy.hard_threshold:g} (contingency_policy.hard_threshold)"
+            )
             for schedule in frame.cup_schedules:
                 print(f"     {schedule.competition_name} resolves cleanly:")
                 for placement in schedule.rounds:
@@ -222,6 +226,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         seed=args.seed,
         top_n=args.top_n,
         time_budget_s=args.time_budget,
+        relax_min_rest=args.relax_min_rest,
         progress=_print_progress if live else None,
     )
 
@@ -542,6 +547,14 @@ def build_parser() -> argparse.ArgumentParser:
             "commitments need real search headroom over a Europe-free season "
             "to reliably reach a feasible schedule; see README's 'Suggested "
             "next steps')"
+        ),
+    )
+    p_generate.add_argument(
+        "--relax-min-rest",
+        action="store_true",
+        help=(
+            "cpsat only: if match-day rest (min_rest_days) makes the season infeasible, "
+            "retry with it as a penalty; slot spacing between rounds is never relaxed"
         ),
     )
     p_generate.add_argument("--out", default=str(SCHEDULES_ROOT))

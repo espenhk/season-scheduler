@@ -42,7 +42,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 
 from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
-from ..model.schema import Match
+from ..model.schema import WEEKDAYS, Match
 from ..model.slots import RoundSlot
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import (
@@ -674,6 +674,29 @@ class _MoveSet:
             return False
         return not (self._commitments.blocked(home, day) or self._commitments.blocked(away, day))
 
+    def _quota_allows(self, index: int, day: date) -> bool:
+        """Whether `day`'s weekday still has room in the match's round."""
+        match = self._matches[index]
+        limit = self._competitions[match.competition_id].day_quota.get(WEEKDAYS[day.weekday()])
+        if limit is None:
+            return True
+        taken = sum(
+            1
+            for i in self._indexes_by_round[(match.competition_id, match.round_index)]
+            if i != index and self._matches[i].date.weekday() == day.weekday()
+        )
+        return taken < limit
+
+    def _round_within_quota(self, competition_id: str, round_index: int) -> bool:
+        quota = self._competitions[competition_id].day_quota
+        if not quota:
+            return True
+        counts: dict[int, int] = {}
+        for i in self._indexes_by_round[(competition_id, round_index)]:
+            weekday = self._matches[i].date.weekday()
+            counts[weekday] = counts.get(weekday, 0) + 1
+        return all(n <= quota.get(WEEKDAYS[w], n) for w, n in counts.items())
+
     def _neighbours_ok(self, index: int, day: date) -> bool:
         """Whether `day` leaves both teams their rest and double-books neither
         the venue nor the club's home day, given every other match as placed."""
@@ -738,6 +761,7 @@ class _MoveSet:
             day
             for day in match.slot.days
             if day != match.date
+            and self._quota_allows(index, day)
             and self._date_ok(
                 match.home_team, match.away_team, match.venue, match.competition_id, day
             )
@@ -783,6 +807,11 @@ class _MoveSet:
                 ):
                     return self._abort(snapshot)
 
+        if not (
+            self._round_within_quota(competition_id, round_a)
+            and self._round_within_quota(competition_id, round_b)
+        ):
+            return self._abort(snapshot)
         return snapshot
 
     def _abort(self, snapshot: list[_Snapshot]) -> None:

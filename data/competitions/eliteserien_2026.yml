@@ -23,6 +23,29 @@ movable: true
 # handles any value.
 rounds_per_pairing: 2
 
+# Format confirmed 2026-11-10: 16 teams, a plain double round-robin of 30
+# rounds with no split, and a play-off for 14th place. The qualifier chain
+# (OBOS-ligaen 5th v 6th on 22 Nov, then 4th and 3rd on 29 Nov and 6 Dec, and
+# the winner against Eliteserien's 14th over two legs) is from NFF's
+# "Slik spilles kvalifiseringskampene" and Wikipedia's qualifier page. They
+# disagree on the last two legs (Wikipedia: 17 and 21 Dec; NFF lists 21 Dec
+# only), so 17 Dec is unconfirmed.
+format_source: "http://www.fotball.no/tema/nff-nyheter/2026/slik-spilles-kvalifiseringskampene/ ; https://www.eliteserien.no/nyheter/playoff-slik-blir-veien-mot-eliteserien-2027 ; https://no.wikipedia.org/wiki/Kvalifisering_til_Eliteserien_i_fotball_for_menn_2027"
+phases:
+  - {kind: regular, rounds: 30, label: "Serierunder"}
+playoff_rounds:
+  - id: obos_qualifier
+    kind: promotion_playoff
+    label: "OBOS-ligaen qualifier (5th v 6th, then 4th, then 3rd)"
+    dates: [2026-11-22, 2026-11-29, 2026-12-06]
+    reserves_league: false
+    source: "http://www.fotball.no/tema/nff-nyheter/2026/slik-spilles-kvalifiseringskampene/"
+  - id: eliteserien_relegation_playoff
+    kind: relegation_playoff
+    label: "Eliteserien 14th v qualifier winner (two legs)"
+    dates: [2026-12-17, 2026-12-21]
+    source: "https://no.wikipedia.org/wiki/Kvalifisering_til_Eliteserien_i_fotball_for_menn_2027"
+
 # 16 teams -> 15 rounds per leg -> 30 rounds, 240 matches.
 team_count: 16
 teams:
@@ -43,13 +66,14 @@ teams:
   - valerenga_m
   - viking_m
 
-# The real 2026 Eliteserien window (verified 2026-08-16 via web search —
-# multiple sources agree on 14 March kickoff and 6 December final round,
-# excluding relegation/European playoffs). Equal to the season's own
-# start/end, so this is redundant in effect — set explicitly anyway so both
-# leagues' windows are spelled out here rather than one being implicit.
+# 14 March kickoff. NFF's board moved the final round from 6 to Sunday 13 December;
+# the round-12 article states it and lists round 30 on 13 December
+# (https://www.fotball.no/turneringer/eliteserien/2026/runde-12-i-eliteserien-flyttes-til-25.-oktober),
+# as does https://www.eliteserien.no/terminliste (#15).
+# Equal to the season's own start/end, set explicitly so both leagues'
+# windows are spelled out here.
 start: 2026-03-14
-end: 2026-12-06
+end: 2026-12-13
 
 # Eliteserien wants the bulk of its matches on Sunday.
 preferred_weekday: sunday

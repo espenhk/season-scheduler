@@ -681,7 +681,7 @@ def test_resolve_european_commitments_ignores_venue_blackout_ranges():
     assert warnings == []
 
 
-def test_cli_report_data_and_solver_commitments_agree_on_excluded_range_dates():
+def test_cli_report_data_and_frame_commitments_agree_on_excluded_range_dates():
     """The report's display path and the solver's commitments must resolve a
     windowed leg to the same date, blackout ranges included — otherwise the
     report shows a leg on a date the scheduler thinks it isn't played on."""

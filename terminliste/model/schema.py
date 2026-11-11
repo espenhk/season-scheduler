@@ -343,6 +343,74 @@ class TvTimeSpread(BaseModel):
         return v
 
 
+class LeaguePhase(BaseModel):
+    """One stretch of a league's rounds: the regular double round-robin, or a
+    split after it. `rounds` counts the rounds in this phase; the regular
+    phases must add up to the league's double round-robin, and a split's
+    rounds come on top. A league with no declared phases is one regular phase.
+
+    A split phase is recorded, not generated: its pairings depend on the
+    regular-season table, so only the dates it occupies are planned (#15).
+    """
+
+    kind: Literal["regular", "split"] = "regular"
+    rounds: int
+    label: str = ""
+
+    @field_validator("rounds")
+    @classmethod
+    def _positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("a phase needs at least one round")
+        return v
+
+
+PlayoffKind = Literal["relegation_playoff", "promotion_playoff", "championship_playoff"]
+
+
+class PlayoffRound(BaseModel):
+    """Dates reserved for a play-off after (or between) the league rounds.
+
+    `reserves_league` is False when the dates belong to another division's
+    teams and are listed for the frame only. A reserved date is never used by
+    a regular-season round, wherever it falls (#15).
+    """
+
+    id: str
+    kind: PlayoffKind = "relegation_playoff"
+    label: str
+    dates: list[date]
+    reserves_league: bool = True
+    # Where the date was confirmed, e.g. an NFF page.
+    source: str = ""
+
+    @field_validator("dates")
+    @classmethod
+    def _has_dates(cls, v: list[date]) -> list[date]:
+        if not v:
+            raise ValueError("a play-off round needs at least one date")
+        return sorted(set(v))
+
+
+class FixedRoundDate(BaseModel):
+    """A round whose date is fixed from outside, typically by the broadcaster.
+
+    `round` is 1-based. The round sits in the slot holding `date` and every
+    match of it is played that day (#15).
+    """
+
+    round: int
+    date: date
+    reason: str = ""
+
+    @field_validator("round")
+    @classmethod
+    def _round_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("round is 1-based")
+        return v
+
+
 class Competition(BaseModel):
     """A league or a cup. `format` discriminates the two.
 
@@ -426,6 +494,30 @@ class Competition(BaseModel):
             _validate_hh_mm(slot)
         return v
 
+    # Regular season plus an optional split; empty means one regular phase.
+    phases: list[LeaguePhase] = Field(default_factory=list)
+
+    # Play-off dates that stay clear of regular-season rounds (#15).
+    playoff_rounds: list[PlayoffRound] = Field(default_factory=list)
+
+    # Rounds whose date is fixed from outside, e.g. by TV (#15).
+    fixed_round_dates: list[FixedRoundDate] = Field(default_factory=list)
+
+    # Most matches of one round on a weekday, e.g. {saturday: 2, sunday: 5,
+    # monday: 1}. A weekday not listed is unlimited. The final round and fixed
+    # rounds are played on one date and exempt (#15).
+    day_quota: dict[Weekday, int] = Field(default_factory=dict)
+
+    # Where the format (phases, play-offs) was confirmed.
+    format_source: str = ""
+
+    @field_validator("day_quota")
+    @classmethod
+    def _quota_not_negative(cls, v: dict[str, int]) -> dict[str, int]:
+        if any(n < 0 for n in v.values()):
+            raise ValueError("day_quota entries must not be negative")
+        return v
+
     # Opt-in TV-broadcast kickoff pattern (#76); `None` leaves kickoff
     # assignment to `kickoff_slots`.
     tv_time_spread: TvTimeSpread | None = None
@@ -456,6 +548,12 @@ class Competition(BaseModel):
     # does not set its own (#8). 0.5 suits a bracket of equals; early rounds
     # against lower divisions override it.
     advance_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    @property
+    def day_quota_exempt_rounds(self) -> frozenset[int]:
+        """Round indexes played on a single date, which `day_quota` cannot
+        split: the final round and any round with a fixed date."""
+        return frozenset({self.rounds - 1, *(f.round - 1 for f in self.fixed_round_dates)})
 
     @property
     def min_gap_days(self) -> int:
@@ -640,7 +738,10 @@ class ContingencyPolicy(BaseModel):
 
     A commitment is a hard reservation only when the team reaches it with at
     least `hard_threshold` probability. 1.0 plans for elimination: only entry
-    rounds and rounds already reached block the league calendar.
+    rounds and rounds already reached block the league calendar. Commitments
+    that can never both be played (a team's Europa League and Conference
+    League league phases) are never both hard: at a low threshold the likelier
+    one stays hard, the other becomes contingent, and a warning is raised.
     """
 
     hard_threshold: float = Field(default=1.0, ge=0.0, le=1.0)

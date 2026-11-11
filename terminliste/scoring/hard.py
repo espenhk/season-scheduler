@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import ClassVar
 
-from ..model.schema import Competition, FixedRequirement, FullRoundRequirement
+from ..model.schema import WEEKDAYS, Competition, FixedRequirement, FullRoundRequirement
 from ..rounds.commitments import CommitmentSet, CommitmentSource
 from .base import Constraint, ConstraintResult, EvalContext, Event, ScheduleIndex
 
@@ -593,6 +593,95 @@ def _day_after(day: date) -> date:
     return day + timedelta(days=1)
 
 
+@dataclass
+class FixedRoundDates:
+    """Every match of a round fixed from outside (TV) is played on its date."""
+
+    competitions: list[Competition]
+    id: str = "fixed_round_dates"
+    kind: str = "hard"
+    weight: float = 1.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        count = 0
+        penalty = 0.0
+        events: list[Event] = []
+
+        for competition in self.competitions:
+            for fixed in competition.fixed_round_dates:
+                matches = [
+                    m
+                    for m in index.by_competition.get(competition.id, ())
+                    if m.round_index == fixed.round - 1
+                ]
+                off = [m for m in matches if m.date != fixed.date]
+                if not off:
+                    continue
+                count += len(off)
+                penalty -= self.weight * len(off)
+                if ctx.detail:
+                    events.append(
+                        Event(
+                            delta=-self.weight * len(off),
+                            detail=(
+                                f"{competition.name}: round {fixed.round} is fixed on "
+                                f"{fixed.date}, but {len(off)} match(es) are elsewhere"
+                            ),
+                            match_keys=tuple(m.key for m in off),
+                        )
+                    )
+
+        return ConstraintResult(self.id, "hard", penalty, count, events)
+
+
+@dataclass
+class RoundDayQuota:
+    """No weekday hosts more matches of one round than the league's
+    `day_quota` allows. Rounds played on one date are exempt."""
+
+    competitions: list[Competition]
+    id: str = "round_day_quota"
+    kind: str = "hard"
+    weight: float = 1.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        count = 0
+        penalty = 0.0
+        events: list[Event] = []
+
+        for competition in self.competitions:
+            if not competition.day_quota:
+                continue
+            per_day: dict[tuple[int, str], list] = {}
+            for match in index.by_competition.get(competition.id, ()):
+                weekday = WEEKDAYS[match.date.weekday()]
+                if (
+                    weekday in competition.day_quota
+                    and match.round_index not in competition.day_quota_exempt_rounds
+                ):
+                    per_day.setdefault((match.round_index, weekday), []).append(match)
+            for (round_index, weekday), matches in sorted(per_day.items()):
+                excess = len(matches) - competition.day_quota[weekday]
+                if excess <= 0:
+                    continue
+                count += excess
+                penalty -= self.weight * excess
+                if ctx.detail:
+                    events.append(
+                        Event(
+                            delta=-self.weight * excess,
+                            detail=(
+                                f"{competition.name}: round {round_index + 1} has "
+                                f"{len(matches)} matches on {weekday}, quota "
+                                f"{competition.day_quota[weekday]}"
+                            ),
+                            match_keys=tuple(m.key for m in matches),
+                        )
+                    )
+
+        return ConstraintResult(self.id, "hard", penalty, count, events)
+
+
 __all__: list[str] = [
     "BlackoutDates",
     "ClubHomeClash",
@@ -600,9 +689,11 @@ __all__: list[str] = [
     "CommitmentConflict",
     "FinalRoundSameSlot",
     "FixedDateRequirement",
+    "FixedRoundDates",
     "FullRoundOnDate",
     "LegOrdering",
     "MinRestDays",
     "OneMatchPerTeamPerDay",
+    "RoundDayQuota",
     "VenueDoubleBooking",
 ]
