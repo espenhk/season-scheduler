@@ -27,6 +27,15 @@ split equally, `n` of them), so per rule the deltas over `f` and `q` add up to
 the rule's total minus any events pinned to no fixture. `f` flags are drawn;
 `q` flags (`[rule, delta]`) are rewards for the common case that stay quiet
 (`preferred_weekday` on its day), kept so those sums still hold.
+
+Rule lens (#30). An `f` flag may end with `group`, an index into the option's
+`groups` (the team or club the event is about, shown as the group header when
+a rule's fixtures are listed; 0 is none), so a flag carrying one always spells
+out `note` and `n` before it. The option's `totals` are `[rule, total]` for
+each rule that has drawn flags: the full rule total, which fixtures alone
+cannot give (unpinned events, and the quiet rewards of an inverse rule). A rule
+in the rule table marked `inv` is shown inversely, its drawn flags being the
+fixtures that missed the reward.
 """
 
 from __future__ import annotations
@@ -123,7 +132,9 @@ def team_table(world: World) -> dict[str, dict]:
     }
 
 
-def rule_table(rule_ids: list[str], hard_ids: set[str]) -> list[dict]:
+def rule_table(
+    rule_ids: list[str], hard_ids: set[str], inverse_ids: frozenset[str] = frozenset()
+) -> list[dict]:
     """The rules fixture flags refer to, by position."""
     return [
         {
@@ -131,6 +142,7 @@ def rule_table(rule_ids: list[str], hard_ids: set[str]) -> list[dict]:
             "label": badge_label(rule_id),
             "desc": describe(rule_id),
             **({"hard": 1} if rule_id in hard_ids else {}),
+            **({"inv": 1} if rule_id in inverse_ids else {}),
         }
         for rule_id in rule_ids
     ]
@@ -181,17 +193,26 @@ class NoteTable:
         return self._index[text]
 
 
-def _flag_wire(flag: dict, rule_index: dict[str, int], notes: NoteTable) -> list:
+def _flag_wire(
+    flag: dict, rule_index: dict[str, int], notes: NoteTable, groups: NoteTable
+) -> list:
     wire: list[Any] = [rule_index[flag["rule_id"]], round(flag["delta"], 2)]
-    if flag["detail"] or flag["shared_by"] > 1:
+    group = groups.index(flag.get("group", ""))
+    if flag["detail"] or flag["shared_by"] > 1 or group:
         wire.append(notes.index(flag["detail"]))
-    if flag["shared_by"] > 1:
+    if flag["shared_by"] > 1 or group:
         wire.append(flag["shared_by"])
+    if group:
+        wire.append(group)
     return wire
 
 
 def league_entry_wire(
-    entry: dict, teams: dict[str, dict], rule_index: dict[str, int], notes: NoteTable
+    entry: dict,
+    teams: dict[str, dict],
+    rule_index: dict[str, int],
+    notes: NoteTable,
+    groups: NoteTable,
 ) -> dict:
     wire: dict[str, Any] = {
         "d": entry["date"].isoformat(),
@@ -203,8 +224,12 @@ def league_entry_wire(
         wire["t"] = entry["kickoff_time"]
     if entry["venue_id"] != teams[entry["home_team"]]["venue"]:
         wire["v"] = entry["venue_id"]
-    shown = [_flag_wire(flag, rule_index, notes) for flag in entry["flags"] if not flag["quiet"]]
-    quiet = [_flag_wire(flag, rule_index, notes)[:2] for flag in entry["flags"] if flag["quiet"]]
+    shown = [
+        _flag_wire(flag, rule_index, notes, groups) for flag in entry["flags"] if not flag["quiet"]
+    ]
+    quiet = [
+        _flag_wire(flag, rule_index, notes, groups)[:2] for flag in entry["flags"] if flag["quiet"]
+    ]
     if shown:
         wire["f"] = shown
     if quiet:
@@ -252,14 +277,23 @@ def option_wire(
     combined_list: list[dict],
     month_calendar: list[dict],
     month_calendar_details: list[dict],
+    rule_totals: dict[str, float],
 ) -> dict:
     """Everything one option's views need on top of the shared tables and
     shared entries."""
     notes = NoteTable()
-    matches = [league_entry_wire(entry, teams, rule_index, notes) for entry in entries]
+    groups = NoteTable()
+    matches = [league_entry_wire(entry, teams, rule_index, notes, groups) for entry in entries]
+    drawn = {rule_index[flag["rule_id"]] for entry in entries for flag in entry["flags"] if not flag["quiet"]}
     return {
         "matches": matches,
         "notes": notes.notes,
+        "groups": groups.notes,
+        "totals": [
+            [rule_index[rule_id], round(total, 2)]
+            for rule_id, total in rule_totals.items()
+            if rule_index[rule_id] in drawn
+        ],
         "headlines": headlines,
         "clubHeadlines": club_headlines,
         "byCompetition": by_competition_wire(league_views),
