@@ -49,9 +49,11 @@
   // Every wire entry (league match, cup round, European leg) is turned into one
   // shape, so each representation below handles all three without branching on
   // kind:
-  //   uid, kind, date, time, comp, clubs[], venue, paired,
+  //   uid, kind, date, time, comp, clubs[], venue,
   //   home / away: {name, full, cls, shape}  (away is null for cup/European)
   //   versus: text after "v" when there is no away side, round: round name
+  //   flags[]: scoring badges, one per rule {rule, delta, items[{delta, detail, n}]};
+  //   rules: their rule ids; delta: their net; tint: 'good' | 'cost' | ''
 
   var SHAPE_BY_VENUE_TYPE = { home: 'square', away: 'diamond', neutral: 'circle' };
 
@@ -60,14 +62,45 @@
     return { name: team.short, full: team.label, club: team.club, cls: DATA.clubs[team.club], shape: shape };
   }
 
-  function leagueFixture(uid, m) {
+  // Net points a fixture needs to tint its card edge (set in render.py).
+  var TINT_GOOD = DATA.tint.good;
+  var TINT_COST = DATA.tint.cost;
+
+  // The wire's flags (see payload.py) grouped into one badge per rule, in
+  // rule-table order.
+  function decodeFlags(wireFlags, notes) {
+    var byRule = {};
+    var flags = [];
+    (wireFlags || []).forEach(function (w) {
+      var rule = DATA.rules[w[0]];
+      var flag = byRule[rule.id];
+      if (!flag) {
+        flag = byRule[rule.id] = { rule: rule, delta: 0, items: [] };
+        flags.push(flag);
+      }
+      flag.delta += w[1];
+      flag.items.push({ delta: w[1], detail: notes[w[2] || 0], n: w[3] || 1 });
+    });
+    return flags;
+  }
+
+  function withFlags(fx, wireFlags, notes) {
+    fx.flags = decodeFlags(wireFlags, notes);
+    fx.rules = fx.flags.map(function (flag) { return flag.rule.id; });
+    fx.delta = fx.flags.reduce(function (sum, flag) { return sum + flag.delta; }, 0);
+    fx.broken = fx.flags.some(function (flag) { return flag.rule.hard; });
+    fx.tint = fx.delta >= TINT_GOOD ? 'good' : fx.delta <= TINT_COST ? 'cost' : '';
+    return fx;
+  }
+
+  function leagueFixture(uid, m, notes) {
     var home = side(m.h, 'square');
     var away = side(m.a, 'diamond');
-    return {
+    return withFlags({
       uid: uid, kind: 'league', date: m.d, time: m.t || '', comp: m.c,
       clubs: [home.club, away.club], home: home, away: away, versus: '', round: '',
-      venue: DATA.venues[m.v || DATA.teams[m.h].venue], paired: !!m.p
-    };
+      venue: DATA.venues[m.v || DATA.teams[m.h].venue]
+    }, m.f, notes);
   }
 
   function sharedFixture(uid, e) {
@@ -76,11 +109,11 @@
     // round is always one of the three.
     var shape = SHAPE_BY_VENUE_TYPE[e.vt] || (european ? 'square-dim' : 'circle');
     var home = side(e.t, shape);
-    return {
+    return withFlags({
       uid: uid, kind: european ? 'european' : 'cup', date: e.d, time: '', comp: e.c,
       clubs: [home.club], home: home, away: null, versus: european ? e.o : 'TBD', round: e.n,
-      venue: e.vl, paired: false
-    };
+      venue: e.vl
+    }, null, null);
   }
 
   var sharedFixtures = null;
@@ -93,7 +126,7 @@
     }
     var offset = sharedFixtures.length;
     return sharedFixtures.concat(optionData.matches.map(function (m, i) {
-      return leagueFixture(offset + i, m);
+      return leagueFixture(offset + i, m, optionData.notes);
     }));
   }
 
@@ -102,6 +135,10 @@
   // One function per way a fixture is drawn. A new per-fixture element (a
   // badge, a data attribute) is added to the fixture model above and then to
   // these three, nowhere else.
+  //
+  // Every representation carries data-uid, data-clubs and data-rules /
+  // data-delta: the space-separated ids of the rules badged on the fixture and
+  // their net points ("" and "0" when none), for filters and summaries (#29).
 
   var SHAPE_CLASS = {
     square: 'swatch', 'square-dim': 'swatch swatch-dim', diamond: 'swatch-diamond', circle: 'swatch-neutral'
@@ -130,39 +167,89 @@
     return 'v ' + fx.versus;
   }
 
+  function tag(node, fx) {
+    node.setAttribute('data-uid', fx.uid);
+    node.setAttribute('data-clubs', fx.clubs.join(' '));
+    node.setAttribute('data-rules', fx.rules.join(' '));
+    node.setAttribute('data-delta', String(Math.round(fx.delta * 100) / 100));
+    return node;
+  }
+
+  // The card edge, by what the fixture's rules net out to.
+  function edgeClass(fx) {
+    return fx.broken ? ' edge-broken' : fx.tint ? ' edge-' + fx.tint : '';
+  }
+
+  // -- scoring badges
+  //
+  // One badge per rule. Its tooltip (the rule-description tooltip's style and
+  // positioning) is built on first use, so a page full of badges stays light.
+
+  var flagOf = new WeakMap();
+  var tooltipCount = 0;
+
+  function signed(delta) {
+    var text = (Math.round(delta * 10) / 10).toFixed(1);
+    return delta > 0 ? '+' + text : text.replace('-', '\u2212');
+  }
+
+  function flagBadge(flag) {
+    var polarity = flag.rule.hard ? 'broken' : flag.delta > 0 ? 'good' : 'cost';
+    var badge = el('button', 'info-wrap flag flag-' + polarity, flag.rule.label);
+    badge.type = 'button';
+    badge.setAttribute('data-rule', flag.rule.id);
+    // Keeps the tooltip child out of the button's accessible name.
+    badge.setAttribute('aria-label', flag.rule.label);
+    flagOf.set(badge, flag);
+    return badge;
+  }
+
+  function flagTooltip(badge) {
+    var flag = flagOf.get(badge);
+    var tip = el('span', 'tooltip');
+    tip.id = 'flag-tt-' + (++tooltipCount);
+    tip.setAttribute('role', 'tooltip');
+    badge.setAttribute('aria-describedby', tip.id);
+    var points = flag.rule.hard ? 'broken rule' : flag.delta === 0 ? 'reward forgone' : signed(flag.delta) + ' pts';
+    append(tip, el('b', 'tt-head', flag.rule.label + ' · ' + points));
+    flag.items.forEach(function (item) {
+      var text = item.detail;
+      if (item.n > 1) text += ' (this fixture’s share of ' + signed(item.delta * item.n) + ', split over ' + item.n + ' fixtures)';
+      if (text) tip.appendChild(el('span', 'tt-detail', text));
+    });
+    badge.appendChild(tip);
+  }
+
+  function flagBox(fx) {
+    if (!fx.flags.length) return null;
+    var box = el('span', 'flags');
+    fx.flags.forEach(function (flag) { box.appendChild(flagBadge(flag)); });
+    return box;
+  }
+
   // The pill used in "By competition" and "Combined · calendar".
   function fixtureCard(fx, showCompetition) {
-    var card = el('span', fx.paired ? 'fx paired' : 'fx');
+    var card = tag(el('span', 'fx' + edgeClass(fx)), fx);
     card.title = fx.venue;
-    card.setAttribute('data-uid', fx.uid);
-    card.setAttribute('data-clubs', fx.clubs.join(' '));
     card.setAttribute('data-competition', fx.comp);
-    append(
-      card,
+    var main = append(
+      el('span', 'fx-main'),
       el('span', 'd', shortDate(fx.date) + (fx.time ? ' ' + fx.time : '')),
       showCompetition ? competitionTag(fx) : null,
       marker(fx.home),
       named(fx.home, 'h')
     );
     if (fx.away) {
-      append(card, el('span', 'vs', 'v'), marker(fx.away), named(fx.away, ''));
+      append(main, el('span', 'vs', 'v'), marker(fx.away), named(fx.away, ''));
     } else {
-      append(card, el('span', 'vs', versusText(fx)));
+      append(main, el('span', 'vs', versusText(fx)));
     }
-    if (fx.paired) {
-      var badge = el('span', 'pair-badge');
-      badge.setAttribute('role', 'img');
-      badge.setAttribute('aria-label', "back-to-back home day with the club's other team");
-      card.appendChild(badge);
-    }
-    return card;
+    return append(card, main, flagBox(fx));
   }
 
   // A row of "Combined · list".
   function fixtureRow(fx) {
-    var row = el('tr', 'fx-row');
-    row.setAttribute('data-uid', fx.uid);
-    row.setAttribute('data-clubs', fx.clubs.join(' '));
+    var row = tag(el('tr', 'fx-row' + edgeClass(fx)), fx);
     row.setAttribute('data-competition', fx.comp);
     // The text-node space after a marker is part of the cell's inline layout.
     var space = function () { return document.createTextNode(' '); };
@@ -181,15 +268,14 @@
       homeCell,
       el('td', 'muted', 'v'),
       awayCell,
-      el('td', '', fx.venue)
+      el('td', '', fx.venue),
+      append(el('td'), flagBox(fx))
     );
   }
 
   // A line of the month calendar's day detail.
   function dayRow(fx) {
-    var row = el('div', 'day-row');
-    row.setAttribute('data-uid', fx.uid);
-    row.setAttribute('data-clubs', fx.clubs.join(' '));
+    var row = tag(el('div', 'day-row' + edgeClass(fx)), fx);
     append(row, competitionTag(fx), marker(fx.home), el('span', '', fx.home.name));
     if (fx.away) {
       append(row, el('span', 'vs', 'v'), marker(fx.away), el('span', '', fx.away.name));
@@ -197,7 +283,7 @@
       append(row, el('span', 'vs', versusText(fx)));
     }
     if (fx.time) row.appendChild(el('span', 'd', fx.time));
-    return row;
+    return append(row, flagBox(fx));
   }
 
   // ------------------------------------------------------------------ views
@@ -255,7 +341,7 @@
 
   function combinedListView(ctx) {
     var head = el('tr');
-    ['Date', 'Competition', 'Home', '', 'Away', 'Venue'].forEach(function (name) {
+    ['Date', 'Competition', 'Home', '', 'Away', 'Venue', 'Rules'].forEach(function (name) {
       head.appendChild(el('th', '', name));
     });
     var body = el('tbody');
@@ -477,7 +563,9 @@
   // so an ancestor's overflow can't clip it, and keeps it inside the viewport
   // and attached to its icon while the page scrolls.
   function positionTooltip(wrap) {
-    var icon = wrap.querySelector('.info-icon');
+    // A fixture badge is its own anchor and builds its tooltip on first use.
+    if (flagOf.has(wrap) && !wrap.querySelector('.tooltip')) flagTooltip(wrap);
+    var icon = wrap.matches('.flag') ? wrap : wrap.querySelector('.info-icon');
     var tooltip = wrap.querySelector('.tooltip');
     if (!icon || !tooltip) return;
     var iconRect = icon.getBoundingClientRect();
@@ -509,7 +597,7 @@
     });
   });
   document.addEventListener('click', function (e) {
-    var icon = e.target.closest ? e.target.closest('.info-icon') : null;
+    var icon = e.target.closest ? e.target.closest('.info-icon, .flag') : null;
     if (!icon) {
       closeTooltips();
       return;

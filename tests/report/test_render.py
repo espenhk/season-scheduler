@@ -28,7 +28,13 @@ from terminliste.report.render import (
     render_report,
 )
 from terminliste.scoring.base import ConstraintResult, EvalContext, Event, evaluate
-from terminliste.scoring.soft import ConsecutiveHomeDays
+from terminliste.scoring.hard import MinRestDays
+from terminliste.scoring.soft import (
+    ConsecutiveHomeDays,
+    HomeAwayBreaks,
+    PreferredWeekday,
+    RestComfort,
+)
 from terminliste.solvers.base import Candidate, SearchStats, SolverResult
 
 
@@ -343,7 +349,7 @@ def test_match_entries_carry_team_ids_venue_and_competition_for_the_payload():
     assert entry["away_team"] == "opp_m"
     assert entry["venue_id"] == "va"
     assert entry["home"] == world.team_label("a_m")
-    assert entry["paired"] is False
+    assert entry["flags"] == []
     assert entry["competition_short"] == comp_m.short_name
 
 
@@ -822,19 +828,151 @@ def test_league_match_wire_is_compact_and_omits_the_defaults():
     assert data["teams"]["a_m"]["short"] == world.team_short_label("a_m")
 
 
-def test_paired_home_days_are_flagged_in_the_payload():
+def _flags_by_home_team(data, option=0):
+    """`{home team: [(rule id, delta)]}` for the drawn badges of one option."""
+    rules = data["rules"]
+    return {
+        m["h"]: [(rules[flag[0]]["id"], flag[1]) for flag in m.get("f", [])]
+        for m in data["options"][option]["matches"]
+    }
+
+
+def test_paired_home_days_carry_a_home_pair_flag_each():
     world, season, comp_m, comp_w = _two_dual_clubs_world()
     matches = [
         f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va"),
         f.match("topp", "a_w", "opp_w", date(2026, 6, 7), "va"),
         f.match("elite", "b_m", "opp_m", date(2026, 7, 4), "vb", round_index=1),
     ]
-    candidate = _candidate(world, season, matches, [])
+    constraint = ConsecutiveHomeDays(competitions=[comp_m, comp_w])
+    candidate = _candidate(world, season, matches, [constraint])
 
     data = _report_data(_render(world, season, [candidate]))
 
-    flags = {m["h"]: m.get("p", 0) for m in data["options"][0]["matches"]}
-    assert flags == {"a_m": 1, "a_w": 1, "b_m": 0}
+    # The pair's reward is split between its two fixtures.
+    share = constraint.weight / 2
+    assert _flags_by_home_team(data) == {
+        "a_m": [("consecutive_home_days", share)],
+        "a_w": [("consecutive_home_days", share)],
+        "b_m": [],
+    }
+    flag = data["options"][0]["matches"][0]["f"][0]
+    assert flag[3] == 2  # fixtures sharing the event
+    assert "home" in data["options"][0]["notes"][flag[2]]
+    assert data["rules"][flag[0]]["label"] == "home pair"
+
+
+def test_preferred_weekday_badges_the_off_day_minority_and_keeps_the_reward_quiet():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    sunday = date(2026, 6, 7)
+    matches = [
+        f.match("elite", "a_m", "opp_m", sunday, "va"),
+        f.match("elite", "b_m", "opp_m", date(2026, 6, 9), "vb", round_index=1),
+    ]
+    candidate = _candidate(world, season, matches, [PreferredWeekday(competitions=[comp_m, comp_w])])
+
+    data = _report_data(_render(world, season, [candidate]))
+    on_day, off_day = data["options"][0]["matches"]
+
+    assert "f" not in on_day
+    (rule, delta) = on_day["q"][0]
+    assert data["rules"][rule]["id"] == "preferred_weekday" and delta > 0
+    ((rule, delta, note),) = off_day["f"]
+    assert data["rules"][rule]["label"] == "off-day" and delta == 0
+    assert "Tuesday" in data["options"][0]["notes"][note]
+    assert "(misses +" in data["options"][0]["notes"][note]
+    assert data["tint"] == {"good": 5.0, "cost": -3.0}
+    assert "q" not in off_day
+
+
+def test_hard_rule_events_are_flagged_on_their_fixtures_and_marked_hard():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va"),
+        f.match("elite", "b_m", "a_m", date(2026, 6, 7), "vb", round_index=1),
+    ]
+    candidate = _candidate(world, season, matches, [MinRestDays(competitions=[comp_m])])
+
+    data = _report_data(_render(world, season, [candidate]))
+
+    first, second = data["options"][0]["matches"]
+    assert "f" not in first
+    rule = data["rules"][second["f"][0][0]]
+    assert rule["id"] == "min_rest_days" and rule["hard"] == 1
+
+
+def test_every_scoring_rule_has_a_badge_label_and_a_description():
+    from terminliste.scoring.registry import BADGE_LABELS, CONSTRAINT_DESCRIPTIONS
+
+    assert set(BADGE_LABELS) == set(CONSTRAINT_DESCRIPTIONS)
+
+
+def _check_flags_sum_to_rule_totals(world, season, candidate):
+    """The acceptance rule of #29: a rule's per-fixture deltas, as shipped on
+    the wire, add up to its total in the score breakdown. Events pinned to no
+    fixture are the only thing left out, and are added back explicitly."""
+    data = _report_data(_render(world, season, [candidate]))
+    option = data["options"][0]
+    sums, counts = Counter(), Counter()
+    for m in option["matches"]:
+        for flag in m.get("f", []) + m.get("q", []):
+            rule_id = data["rules"][flag[0]]["id"]
+            sums[rule_id] += flag[1]
+            counts[rule_id] += 1
+
+    unpinned = Counter()
+    for result in candidate.score.results:
+        unpinned[result.constraint_id] += sum(e.delta for e in result.events if not e.match_keys)
+
+    for result in candidate.score.results:
+        expected = result.total - unpinned[result.constraint_id]
+        tolerance = 0.005 * counts[result.constraint_id] + 1e-6  # deltas are sent to 2 decimals
+        assert sums[result.constraint_id] == pytest.approx(expected, abs=tolerance), result.constraint_id
+    return unpinned
+
+
+def test_per_fixture_flag_deltas_add_up_to_each_rules_total():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va"),
+        f.match("topp", "a_w", "opp_w", date(2026, 6, 7), "va"),
+        f.match("elite", "a_m", "b_m", date(2026, 6, 9), "va", round_index=1),
+        f.match("elite", "opp_m", "a_m", date(2026, 6, 20), "vc", round_index=2),
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 24), "va", round_index=3),
+        f.match("elite", "b_m", "opp_m", date(2026, 6, 14), "vb", round_index=1),
+    ]
+    comps = [comp_m, comp_w]
+    constraints = [
+        PreferredWeekday(competitions=comps),
+        ConsecutiveHomeDays(competitions=comps),
+        RestComfort(competitions=comps),
+        HomeAwayBreaks(competitions=comps),
+        MinRestDays(competitions=comps),
+    ]
+    candidate = _candidate(world, season, matches, constraints)
+    totals = {r.constraint_id: r.total for r in candidate.score.results}
+    assert totals["rest_comfort"] < 0 and totals["consecutive_home_days"] > 0  # the test bites
+
+    _check_flags_sum_to_rule_totals(world, season, candidate)
+
+
+def test_flag_deltas_add_up_on_the_real_2026_world(world, season, competitions, travel):
+    from terminliste.scoring.registry import build_constraints
+    from terminliste.solvers.greedy import build_initial_schedule
+
+    matches, _, _ = build_initial_schedule(world, season, competitions, seed=42)
+    ctx = EvalContext(world=world, season=season, travel=travel, detail=True)
+    score = evaluate(matches, build_constraints(world, season, competitions), ctx)
+    candidate = Candidate(matches=matches, score=score, label="Option 1")
+
+    unpinned = _check_flags_sum_to_rule_totals(world, season, candidate)
+
+    # Only these rules have events that are about no fixture in particular.
+    assert {rule for rule, delta in unpinned.items() if delta} <= {
+        "home_away_balance",  # half-season drift, no culprit fixture
+        "fixed_requirement",  # the required home fixture is missing
+        "full_round_on_date",  # teams with no match that day
+    }
 
 
 def test_club_filter_headlines_are_embedded_per_option_for_the_page_to_swap():

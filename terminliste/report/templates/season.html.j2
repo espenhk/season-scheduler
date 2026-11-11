@@ -205,14 +205,41 @@
      breathing room here, so this replaced a set of per-element margins that
      made the card read as one cramped run of text. */
   .fx {
-    display: inline-flex; align-items: center; gap: 5px;
-    border: 1px solid var(--line); border-radius: 7px; padding: 7px 12px;
-    font-size: 13px; background: #fcfcfb; white-space: nowrap;
+    display: inline-flex; flex-direction: column; align-items: flex-start; gap: 5px;
+    border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 7px;
+    padding: 7px 12px 7px 10px; font-size: 13px; background: #fcfcfb; white-space: nowrap;
   }
+  .fx-main { display: inline-flex; align-items: center; gap: 5px; }
   .fx .d { color: var(--muted); font-variant-numeric: tabular-nums; }
   .fx .h { font-weight: 600; }
   .fx .vs { color: var(--muted); }
-  .fx.paired { border-color: var(--good); background: #f1f9f4; }
+  /* Card edge by net points: green gains, amber costs, red a broken hard rule. */
+  .edge-good { border-left-color: var(--good); }
+  .edge-cost { border-left-color: var(--warn); }
+  .edge-broken { border-left-color: var(--bad); }
+  .fx.edge-good { background: #f1f9f4; }
+  .fx.edge-cost { background: #fdf8ee; }
+  .fx.edge-broken { background: #fdf0ee; }
+  .fx-row td:first-child, .day-row { border-left: 4px solid transparent; }
+  .fx-row.edge-good td:first-child, .day-row.edge-good { border-left-color: var(--good); }
+  .fx-row.edge-cost td:first-child, .day-row.edge-cost { border-left-color: var(--warn); }
+  .fx-row.edge-broken td:first-child, .day-row.edge-broken { border-left-color: var(--bad); }
+
+  /* Scoring badges: one per rule a fixture triggers. Also the tooltip anchor. */
+  .flags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .flag {
+    font: 600 10.5px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0.01em;
+    padding: 0 7px; border-radius: 9px; border: 1px solid transparent; cursor: pointer;
+    white-space: nowrap; text-align: left; text-transform: none;
+  }
+  .flag-good { background: #e4f3ea; color: var(--good); border-color: #bfe0cc; }
+  .flag-cost { background: #fbefd5; color: #8a5a06; border-color: #ecd199; }
+  .flag-broken { background: var(--bad); color: #fff; }
+  .flag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .tooltip { white-space: normal; text-align: left; }
+  .tooltip .tt-head { display: block; font-weight: 700; }
+  .tooltip .tt-detail { display: block; margin-top: 3px; }
+  .fx-row .flags { flex-wrap: wrap; min-width: 120px; }
   .comp-tag {
     /* Short names (e.g. "NM(m)") carry their own deliberate case, so no
        text-transform here — unlike a full competition name, which would
@@ -238,16 +265,19 @@
   /* Cup final only: neutral ground, so neither the square (home) nor the
      diamond (away) marker applies. */
   .swatch-neutral { border-radius: 50%; }
-  .pair-badge {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 13px; height: 13px; border-radius: 50%; vertical-align: middle;
-    background: var(--good); flex: none;
-  }
-  .fx-demo {
+  .edge-demo {
     display: inline-block; width: 22px; height: 14px; margin-right: 5px;
-    border: 1px solid var(--good); background: #f1f9f4; border-radius: 4px;
+    border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 4px;
     vertical-align: middle;
   }
+  .edge-demo.edge-good { background: #f1f9f4; border-left-color: var(--good); }
+  .edge-demo.edge-cost { background: #fdf8ee; border-left-color: var(--warn); }
+  .edge-demo.edge-broken { background: #fdf0ee; border-left-color: var(--bad); }
+  .flag-legend { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
+  .flag-legend summary { font-size: 12.5px; font-weight: 600; padding: 0; }
+  .flag-legend ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px 24px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .flag-legend li { display: flex; gap: 8px; align-items: baseline; }
+  .flag-legend .flag { cursor: default; flex: none; }
   .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin: 14px 0 0; align-items: center; }
   footer { margin-top: 40px; color: var(--muted); font-size: 12.5px; }
 
@@ -276,14 +306,38 @@
   .day-detail .rlabel { margin-bottom: 8px; }
   .day-detail .rlabel b { display: block; color: var(--ink); font-size: 14px; }
   .day-detail .fixtures { display: flex; flex-direction: column; }
-  .day-row { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .day-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; padding: 5px 0 5px 8px; border-bottom: 1px solid var(--line); }
   .day-row:last-child { border-bottom: none; }
   .day-row .vs { color: var(--muted); margin: 0 1px; }
+  .day-row .flags { flex-basis: 100%; }
   .day-row .d { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
   @media (max-width: 480px) {
     .round { grid-template-columns: 1fr; gap: 4px; }
-    .fx { white-space: normal; }
+    .fx { white-space: normal; max-width: 100%; }
+    .fx-main { flex-wrap: wrap; }
+    /* The list's seven columns do not fit; each row becomes a small card so the
+       Rules badges are not scrolled out of sight. */
+    .view-pane[data-view="combined-list"] table, .view-pane[data-view="combined-list"] tbody { display: block; }
+    .view-pane[data-view="combined-list"] thead { display: none; }
+    .fx-row {
+      display: grid; grid-template-columns: 1fr auto 1fr; gap: 2px 8px; align-items: center;
+      grid-template-areas: "date date comp" "home vs away" "venue venue venue" "rules rules rules";
+      padding: 8px 0 8px 8px; border-bottom: 1px solid var(--line); border-left: 4px solid transparent;
+    }
+    .fx-row td { padding: 0; border: none; }
+    .fx-row td:nth-child(1) { grid-area: date; }
+    .fx-row td:nth-child(2) { grid-area: comp; justify-self: end; }
+    .fx-row td:nth-child(3) { grid-area: home; }
+    .fx-row td:nth-child(4) { grid-area: vs; }
+    .fx-row td:nth-child(5) { grid-area: away; }
+    .fx-row td:nth-child(6) { grid-area: venue; color: var(--muted); font-size: 12px; }
+    .fx-row td:nth-child(7) { grid-area: rules; }
+    .fx-row td:nth-child(7):empty { display: none; }
+    .fx-row td:first-child { border-left: none; }
+    .fx-row.edge-good { border-left-color: var(--good); }
+    .fx-row.edge-cost { border-left-color: var(--warn); }
+    .fx-row.edge-broken { border-left-color: var(--bad); }
     .fairness-bar { grid-template-columns: 110px 1fr 24px; }
     .month-grid { min-width: 0; }
     .cal-day { min-height: 40px; padding: 4px 1px; }
@@ -610,12 +664,27 @@
   </div>
 
   <div class="legend">
-    <span><span class="fx-demo" aria-hidden="true"></span>green = back-to-back home day for a dual club</span>
-    <span><span class="pair-badge" style="margin-right:5px" aria-hidden="true"></span>dot = this fixture is one of that back-to-back pair</span>
+    <span><span class="edge-demo edge-good" aria-hidden="true"></span>green edge: nets +{{ '%g' % tint_good }} or more</span>
+    <span><span class="edge-demo edge-cost" aria-hidden="true"></span>amber edge: costs {{ '%g' % tint_cost }} or more</span>
+    <span><span class="edge-demo edge-broken" aria-hidden="true"></span>red edge: breaks a hard rule</span>
     <span><span class="swatch" style="margin-right:5px" aria-hidden="true"></span>square = home club colour</span>
     <span><span class="swatch-diamond" style="margin-right:5px" aria-hidden="true"></span>diamond = away club colour</span>
     <span><span class="swatch-neutral" style="margin-right:5px" aria-hidden="true"></span>circle = cup final, neutral ground</span>
   </div>
+
+  {% if flag_legend %}
+  <details class="flag-legend">
+    <summary>What the badges mean (tap any badge on a fixture for details)</summary>
+    <ul>
+      {% for rule in flag_legend %}
+      <li>
+        <span>{% for polarity in rule.polarities %}<span class="flag flag-{{ polarity }}" style="margin-right:4px">{{ rule.label }}</span>{% endfor %}</span>
+        <span>{{ rule.description }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
 
   {# Fixtures are drawn into each `.pane-body` by report.js from #report-data. #}
   <div class="cal-wrap view-pane" data-view="by-competition" hidden>

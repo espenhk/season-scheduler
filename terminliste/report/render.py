@@ -15,7 +15,7 @@ from __future__ import annotations
 import calendar
 import json
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -26,7 +26,8 @@ from ..model.schema import WEEKDAYS, Competition, Match, Season
 from ..rounds.cup_schedule import NEUTRAL_CUP_VENUE, CupRoundPlacement, CupSchedule
 from ..rounds.european_schedule import ResolvedLegs
 from ..scoring.base import ConstraintResult, Event, Score
-from ..scoring.registry import describe
+from ..scoring.registry import BADGE_LABELS, badge_label, describe
+from ..scoring.soft import PreferredWeekday
 from ..slot_planner import search_space_log10
 from ..solvers.base import Candidate, SearchStats, SolverResult
 from . import payload
@@ -101,6 +102,9 @@ def render_report(
     )
     calendar_legend = _calendar_legend(world, competition_colors)
     teams = payload.team_table(world)
+    rule_ids = _rule_ids(result.candidates)
+    rule_index = {rule_id: i for i, rule_id in enumerate(rule_ids)}
+    hard_ids = {r.constraint_id for c in result.candidates for r in c.score.hard_results()}
 
     options = [
         _build_option(
@@ -110,6 +114,7 @@ def render_report(
             shared_entries,
             competition_colors,
             teams,
+            rule_index,
             full_diagnostics,
         )
         for candidate in result.candidates
@@ -120,7 +125,10 @@ def render_report(
         extra=calendar_legend,
     )
     report_data = {
-        **payload.shared_tables(world, club_colors, competitions),
+        **payload.shared_tables(
+            world, club_colors, competitions, payload.rule_table(rule_ids, hard_ids)
+        ),
+        "tint": {"good": TINT_GOOD, "cost": TINT_COST},
         "shared": [payload.shared_entry_wire(entry) for entry in shared_entries],
         "sharedByCompetition": payload.by_competition_wire(shared_views),
         "options": [option["client"] for option in options],
@@ -136,6 +144,9 @@ def render_report(
         warnings=warnings or [],
         season_exclusions=_season_exclusions(world, season),
         slot_views=_slot_views(world, season, result),
+        flag_legend=_flag_legend(options, hard_ids),
+        tint_good=TINT_GOOD,
+        tint_cost=-TINT_COST,
         calendar_legend=[
             {**row, "cls": payload.competition_class(row["id"])} for row in calendar_legend
         ],
@@ -155,6 +166,7 @@ def _build_option(
     shared_entries: list[dict],
     competition_colors: dict[str, dict],
     teams: dict[str, dict],
+    rule_index: dict[str, int],
     full_diagnostics: bool = False,
 ) -> dict:
     score = candidate.score
@@ -188,6 +200,7 @@ def _build_option(
         "client": payload.option_wire(
             entries=entries,
             teams=teams,
+            rule_index=rule_index,
             headlines=headlines,
             club_headlines=club_headlines,
             league_views=_competition_views(world, entries),
@@ -516,25 +529,14 @@ def _match_entries(
     with everything the per-competition and combined views need.
 
     Built once per option so the views agree by construction, with no second
-    pass that could compute `paired` differently.
+    pass that could disagree with the score.
     """
     matches = candidate.matches
     competition_colors = competition_colors or {}
-
-    # Dates on which a dual club has a home match, so the calendar can flag the
-    # back-to-back pairs that justify scheduling the leagues together.
-    home_by_club: dict[str, set[date]] = defaultdict(set)
-    for match in matches:
-        club_id = world.team(match.home_team).club_id
-        if club_id in dual_club_ids:
-            home_by_club[club_id].add(match.date)
+    flags = _match_flags(world, candidate)
 
     entries: list[dict] = []
     for match in sorted(matches, key=lambda m: (m.date, m.competition_id, m.home_team)):
-        home_club = world.team(match.home_team).club_id
-        paired = home_club in dual_club_ids and _has_adjacent_home(
-            home_by_club[home_club], match.date
-        )
         competition = world.competition(match.competition_id)
         comp_color = competition_colors.get(match.competition_id, _DEFAULT_COMP_COLOR)
         entries.append(
@@ -545,7 +547,7 @@ def _match_entries(
                 "away_team": match.away_team,
                 "venue_id": match.venue,
                 "home": world.team_label(match.home_team),
-                "paired": paired,
+                "flags": flags.get(match.key, []),
                 "leg": match.leg,
                 "round_index": match.round_index,
                 "competition_id": match.competition_id,
@@ -556,6 +558,103 @@ def _match_entries(
             }
         )
     return entries
+
+
+# Net points a fixture needs for its card edge to turn green / amber.
+TINT_GOOD = 5.0
+TINT_COST = -3.0
+
+# Rules whose reward is the common case: their fixtures stay quiet and the
+# report badges the exceptions instead (#29).
+_INVERSE_RULES = {"preferred_weekday"}
+
+
+def _rule_ids(candidates: list[Candidate]) -> list[str]:
+    """Every rule scored in any candidate, registry order first."""
+    seen = {r.constraint_id for c in candidates for r in c.score.results}
+    known = [rule_id for rule_id in BADGE_LABELS if rule_id in seen]
+    return known + sorted(seen - set(known))
+
+
+def _match_flags(world: World, candidate: Candidate) -> dict[str, list[dict]]:
+    """Each match's scoring flags, from the score's events.
+
+    An event pinned to several matches is split equally between them, so a
+    rule's flags add up to its total less its unpinned events. Rules in
+    `_INVERSE_RULES` mark their rewarded matches `quiet` and flag the others,
+    at no points, instead.
+    """
+    flags: dict[str, list[dict]] = defaultdict(list)
+    for result in candidate.score.results:
+        inverse = result.constraint_id in _INVERSE_RULES
+        for event in result.events:
+            for key in event.match_keys:
+                flags[key].append(
+                    {
+                        "rule_id": result.constraint_id,
+                        "delta": event.delta / len(event.match_keys),
+                        "detail": "" if inverse else event.detail,
+                        "shared_by": 1 if inverse else len(event.match_keys),
+                        "quiet": inverse,
+                    }
+                )
+
+    by_key = {m.key: m for m in candidate.matches}
+    for rule_id in _INVERSE_RULES:
+        result = candidate.score.result(rule_id)
+        if result is None or not result.events:
+            continue
+        # What an on-day match of each competition earned, so an off-day
+        # fixture can say what it misses.
+        reward: dict[str, float] = {}
+        for event in result.events:
+            for key in event.match_keys:
+                reward[by_key[key].competition_id] = event.delta / len(event.match_keys)
+        for match in candidate.matches:
+            competition = world.competition(match.competition_id)
+            preferred = getattr(competition, "preferred_weekday", None)
+            if preferred is None or match.date.weekday() == WEEKDAYS.index(preferred):
+                continue
+            missed = reward.get(
+                match.competition_id, competition.weights.get(rule_id, PreferredWeekday.weight)
+            )
+            flags[match.key].append(
+                {
+                    "rule_id": rule_id,
+                    "delta": 0.0,
+                    "detail": (
+                        f"{match.date.strftime('%A')}; {competition.name} prefers "
+                        f"{preferred.capitalize()}" + (f" (misses +{missed:g})" if missed else "")
+                    ),
+                    "shared_by": 1,
+                    "quiet": False,
+                }
+            )
+    return flags
+
+
+def _flag_legend(options: list[dict], hard_ids: set[str]) -> list[dict]:
+    """The badges that appear in at least one option, once each per polarity."""
+    shown: dict[str, set[str]] = defaultdict(set)
+    for option in options:
+        for entry in option["league_entries"]:
+            for flag in entry["flags"]:
+                if flag["quiet"]:
+                    continue
+                if flag["rule_id"] in hard_ids:
+                    shown[flag["rule_id"]].add("broken")
+                else:
+                    shown[flag["rule_id"]].add("good" if flag["delta"] > 0 else "cost")
+    order = {rule_id: i for i, rule_id in enumerate(BADGE_LABELS)}
+    return [
+        {
+            "id": rule_id,
+            "label": badge_label(rule_id),
+            "description": describe(rule_id),
+            "polarities": sorted(polarities),
+        }
+        for rule_id, polarities in sorted(shown.items(), key=lambda kv: order.get(kv[0], 99))
+    ]
 
 
 def _competition_views(world: World, entries: list[dict]) -> list[dict]:
@@ -1002,10 +1101,6 @@ def _fairness_row(constraint_id: str, entries: list[tuple[str, int]]) -> dict:
         # doesn't trip it (#23).
         "flagged": hi > 0 and (hi - lo) >= max(2, round(mean)),
     }
-
-
-def _has_adjacent_home(days: set[date], day: date) -> bool:
-    return (day - timedelta(days=1)) in days or (day + timedelta(days=1)) in days
 
 
 def _round_date_label(entries: list[dict]) -> str:

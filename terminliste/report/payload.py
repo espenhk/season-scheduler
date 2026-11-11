@@ -10,13 +10,23 @@ view refers to fixtures by `uid` only.
 
 Wire shapes, one per fixture kind (short keys: league matches dominate the size):
 
-    league    {d, t?, c, h, a, v?, p?}   date, kickoff, competition, home/away team,
+    league    {d, t?, c, h, a, v?, f?, q?}  date, kickoff, competition, home/away team,
                                          venue if not the home team's own ground,
-                                         p=1 for a back-to-back-home-day fixture
+                                         f=badges, q=quiet rewards (below)
     cup       {k: "cup", d, c, n, t, vt, vl}
     european  {k: "eu",  d, c, n, t, vt, vl, o}
               round name, team, venue type (home/away/neutral/unknown), venue label,
               opponent
+
+Scoring flags (#29). `rules` is a table of {id, label, desc, hard?}; a flag is
+`[rule, delta, note?, n?]` with `rule` an index into it and `note` one into the
+option's `notes` (the event's detail text, stored once however many fixtures
+share it; 0 is the empty text). `delta` is this
+fixture's share of the scoring event (events pinned to several fixtures are
+split equally, `n` of them), so per rule the deltas over `f` and `q` add up to
+the rule's total minus any events pinned to no fixture. `f` flags are drawn;
+`q` flags (`[rule, delta]`) are rewards for the common case that stay quiet
+(`preferred_weekday` on its day), kept so those sums still hold.
 """
 
 from __future__ import annotations
@@ -26,6 +36,7 @@ import re
 from typing import Any
 
 from ..model.loader import World
+from ..scoring.registry import badge_label, describe
 
 
 def css_id(raw: str) -> str:
@@ -112,8 +123,24 @@ def team_table(world: World) -> dict[str, dict]:
     }
 
 
-def shared_tables(world: World, club_colors: dict[str, str], competitions: dict[str, dict]) -> dict:
+def rule_table(rule_ids: list[str], hard_ids: set[str]) -> list[dict]:
+    """The rules fixture flags refer to, by position."""
+    return [
+        {
+            "id": rule_id,
+            "label": badge_label(rule_id),
+            "desc": describe(rule_id),
+            **({"hard": 1} if rule_id in hard_ids else {}),
+        }
+        for rule_id in rule_ids
+    ]
+
+
+def shared_tables(
+    world: World, club_colors: dict[str, str], competitions: dict[str, dict], rules: list[dict]
+) -> dict:
     return {
+        "rules": rules,
         "clubs": {club_id: club_class(club_id) for club_id in club_colors},
         "competitions": {
             cid: {"name": c["name"], "short": c["short"], "cls": competition_class(cid)}
@@ -140,7 +167,32 @@ def shared_entry_wire(entry: dict) -> dict:
     return wire
 
 
-def league_entry_wire(entry: dict, teams: dict[str, dict]) -> dict:
+class NoteTable:
+    """Strings stored once and referred to by position; index 0 is ""."""
+
+    def __init__(self) -> None:
+        self.notes: list[str] = [""]
+        self._index: dict[str, int] = {"": 0}
+
+    def index(self, text: str) -> int:
+        if text not in self._index:
+            self._index[text] = len(self.notes)
+            self.notes.append(text)
+        return self._index[text]
+
+
+def _flag_wire(flag: dict, rule_index: dict[str, int], notes: NoteTable) -> list:
+    wire: list[Any] = [rule_index[flag["rule_id"]], round(flag["delta"], 2)]
+    if flag["detail"] or flag["shared_by"] > 1:
+        wire.append(notes.index(flag["detail"]))
+    if flag["shared_by"] > 1:
+        wire.append(flag["shared_by"])
+    return wire
+
+
+def league_entry_wire(
+    entry: dict, teams: dict[str, dict], rule_index: dict[str, int], notes: NoteTable
+) -> dict:
     wire: dict[str, Any] = {
         "d": entry["date"].isoformat(),
         "c": entry["competition_id"],
@@ -151,8 +203,12 @@ def league_entry_wire(entry: dict, teams: dict[str, dict]) -> dict:
         wire["t"] = entry["kickoff_time"]
     if entry["venue_id"] != teams[entry["home_team"]]["venue"]:
         wire["v"] = entry["venue_id"]
-    if entry["paired"]:
-        wire["p"] = 1
+    shown = [_flag_wire(flag, rule_index, notes) for flag in entry["flags"] if not flag["quiet"]]
+    quiet = [_flag_wire(flag, rule_index, notes)[:2] for flag in entry["flags"] if flag["quiet"]]
+    if shown:
+        wire["f"] = shown
+    if quiet:
+        wire["q"] = quiet
     return wire
 
 
@@ -188,6 +244,7 @@ def option_wire(
     *,
     entries: list[dict],
     teams: dict[str, dict],
+    rule_index: dict[str, int],
     headlines: list[dict],
     club_headlines: dict[str, list[dict]],
     league_views: list[dict],
@@ -198,8 +255,11 @@ def option_wire(
 ) -> dict:
     """Everything one option's views need on top of the shared tables and
     shared entries."""
+    notes = NoteTable()
+    matches = [league_entry_wire(entry, teams, rule_index, notes) for entry in entries]
     return {
-        "matches": [league_entry_wire(entry, teams) for entry in entries],
+        "matches": matches,
+        "notes": notes.notes,
         "headlines": headlines,
         "clubHeadlines": club_headlines,
         "byCompetition": by_competition_wire(league_views),
