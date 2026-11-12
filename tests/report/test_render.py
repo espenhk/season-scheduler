@@ -902,6 +902,8 @@ def test_competition_colours_form_four_families_that_read_apart_in_the_real_data
         for a in families[fa]
         for b in families[fb]
     ]
+    # A readability floor, not a target: the shipped minimum sits just above it, so rebalance
+    # the colours rather than lowering it.
     assert min(cross) >= 25
 
     for members in families.values():
