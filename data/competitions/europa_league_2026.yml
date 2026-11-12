@@ -40,7 +40,7 @@ movable: false
 
 # Season report colour (issue #77) — see champions_league_2026.yml's
 # comment: same blue family, middle shade.
-color: "#1f618d"
+color: "#0369a1"
 
 team_count: 2
 teams:

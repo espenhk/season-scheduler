@@ -226,9 +226,29 @@ def test_combined_views_tag_each_fixture_with_its_competition(page):
     assert any(f"{OPPONENT} (q3)" in r for r in rows)
 
 
+def _under_week_of(scope, iso):
+    """The open day detail sits directly after the week row holding `iso`."""
+    return scope.locator(".day-details").evaluate(
+        """(block, iso) => {
+            const row = block.previousElementSibling;
+            return !!row && !!row.querySelector(`.cal-day[data-date="${iso}"]`);
+        }""",
+        iso,
+    )
+
+
+def _in_view(page, locator):
+    """Waits for the element to be inside the viewport, after any scroll it triggers.
+    A pixel of subpixel rounding at the bottom edge is allowed."""
+    page.wait_for_function(
+        "el => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= window.innerHeight + 1; }",
+        arg=locator.element_handle(),
+    )
+
+
 def test_tapping_a_day_lists_its_games_with_short_competition_tags(page, world):
     body = _view(page, "month-calendar")
-    assert "Tap a day above" in body.locator(".day-detail-empty").inner_text()
+    assert body.locator(".day-details").count() == 0
     assert body.locator(f'.cal-day[data-date="{DAY}"] .cal-dot').count() == 3
 
     body.locator(f'.cal-day[data-date="{DAY}"]').click()
@@ -241,6 +261,60 @@ def test_tapping_a_day_lists_its_games_with_short_competition_tags(page, world):
     league_tag = rows.locator(".comp-tag", has_text=world.competition("elite").short_name).first
     assert league_tag.get_attribute("title") == world.competition("elite").name
     assert body.locator(".day-detail .rlabel").inner_text().strip() == "Saturday 06 June 2026"
+    assert _under_week_of(body, DAY)
+
+
+def test_the_day_detail_opens_under_its_week_and_a_tap_on_it_closes_it(page):
+    body = _view(page, "month-calendar")
+    day = body.locator(f'.cal-day[data-date="{DAY}"]')
+    assert day.get_attribute("aria-expanded") == "false"
+
+    day.click()
+    assert _under_week_of(body, DAY)
+    assert day.get_attribute("aria-expanded") == "true"
+    assert day.get_attribute("aria-controls") == "cal-day-detail"
+    _in_view(page, body.locator(".day-details"))
+
+    day.click()
+    assert body.locator(".day-details").count() == 0
+    assert day.get_attribute("aria-expanded") == "false"
+    assert day.get_attribute("aria-controls") is None
+
+
+def test_tapping_another_day_moves_the_detail_to_its_week(page):
+    body = _view(page, "month-calendar")
+    body.locator(f'.cal-day[data-date="{DAY}"]').click()
+    body.locator('.cal-day[data-date="2026-06-13"]').click()
+
+    assert body.locator(".day-details").count() == 1
+    assert _under_week_of(body, "2026-06-13")
+    assert not _under_week_of(body, DAY)
+    assert body.locator(f'.cal-day[data-date="{DAY}"]').get_attribute("aria-expanded") == "false"
+    assert body.locator(".day-details .rlabel").inner_text().strip() == "Saturday 13 June 2026"
+
+
+def test_enter_and_space_open_and_close_a_day_from_the_keyboard(page):
+    body = _view(page, "month-calendar")
+    day = body.locator(f'.cal-day[data-date="{DAY}"]')
+    day.focus()
+
+    page.keyboard.press("Enter")
+    assert day.get_attribute("aria-expanded") == "true"
+    assert _under_week_of(body, DAY)
+
+    page.keyboard.press("Space")
+    assert day.get_attribute("aria-expanded") == "false"
+    assert body.locator(".day-details").count() == 0
+
+
+def test_neighbouring_month_padding_is_empty_and_each_date_is_one_button(page):
+    body = _view(page, "month-calendar")
+    pads = body.locator(".cal-pad")
+    assert pads.count() > 0
+    assert pads.first.evaluate("e => e.tagName") == "SPAN"
+    assert body.locator(".cal-pad .cal-dot, .cal-pad button").count() == 0
+    dates = body.locator(".cal-day[data-date]").evaluate_all("els => els.map(e => e.dataset.date)")
+    assert dates and len(dates) == len(set(dates))
 
 
 def test_club_filter_hides_other_clubs_fixtures_and_empty_rounds(page):
@@ -543,7 +617,9 @@ def test_an_occurrence_row_jumps_to_and_flashes_its_fixture(page):
     flashed = month.locator(".flash")
     flashed.wait_for()
     assert flashed.get_attribute("data-uid") == uid
+    assert flashed.evaluate("e => !!e.closest('.day-details')")
     assert month.locator(".cal-day.selected").get_attribute("data-date") == "2026-06-07"
+    assert _under_week_of(month, "2026-06-07")
 
 
 def test_clicking_a_badge_selects_its_rule_while_hover_still_shows_its_tooltip(page):
@@ -718,6 +794,24 @@ def test_scroll_targets_clear_the_sticky_bar(short_page):
     page.wait_for_timeout(700)
     bar, target = _rect(page, "#panel-1 .controls"), flashed.bounding_box()
     assert target["y"] >= bar["bottom"] and target["y"] + target["height"] <= 420
+
+
+def test_a_phone_opens_the_day_inline_without_horizontal_overflow(browser, report_url):
+    context = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
+    page = context.new_page()
+    problems = []
+    page.on("console", lambda m: problems.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: problems.append(str(e)))
+    page.goto(report_url)
+    body = _view(page, "month-calendar")
+
+    body.locator(f'.cal-day[data-date="{DAY}"]').tap()
+
+    assert _under_week_of(body, DAY)
+    _in_view(page, body.locator(".day-details"))
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert problems == []
+    context.close()
 
 
 def test_the_legend_is_a_popover_that_hides_card_entries_in_the_month_view(page):

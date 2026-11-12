@@ -3,6 +3,7 @@ HTML page's new controls (issues #21-25, #39)."""
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import tempfile
@@ -687,9 +688,13 @@ def test_month_calendar_view_spans_multiple_months_and_pads_out_month_days():
 
     assert [m["label"] for m in months] == ["March 2026", "April 2026"]
     assert len(day_details) == 2
-    # 1 April also shows up as an out-of-month padding cell at the tail of
-    # March's grid, but only one day_details entry exists for it.
-    assert "2026-04-01" in [iso for week in months[0]["weeks"] for iso in week]
+    # 1 April is padding at the tail of March's grid, but it is an empty cell
+    # there: the date is only listed in its own month.
+    march = [iso for week in months[0]["weeks"] for iso in week]
+    assert march.count("2026-04-01") == 0
+    assert march.count(None) == len(march) - 31  # March has 31 days; the rest pad
+    april = [iso for week in months[1]["weeks"] for iso in week]
+    assert april.count("2026-04-01") == 1
 
 
 def test_month_calendar_view_is_empty_for_no_entries():
@@ -744,6 +749,20 @@ def test_render_report_month_calendar_has_a_pane_and_carries_days_comps_and_mont
     assert [_fixtures(data)[uid]["h"] for uid in day["ids"]] == ["a_m"]
 
 
+def test_each_options_month_legend_names_only_the_competitions_it_shows():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    candidate = _candidate(world, season, matches, [])
+
+    rendered = _render(world, season, [candidate])
+
+    calendar_pane = rendered.split('class="cal-wrap view-pane" data-view="month-calendar"')[1].split(
+        '<div class="pane-body">'
+    )[0]
+    assert f"<b>{comp_m.short_name}</b>" in calendar_pane
+    assert f"<b>{comp_w.short_name}</b>" not in calendar_pane  # no women's date in this option
+
+
 def test_render_report_month_calendar_legend_and_colours_come_from_css_classes():
     """Colours are custom properties on per-club and per-competition classes,
     not inline styles repeated per element; the legend names each competition
@@ -767,6 +786,54 @@ def test_render_report_month_calendar_legend_and_colours_come_from_css_classes()
     assert data["competitions"]["elite"]["cls"] == "c-elite"
     assert data["competitions"]["elite"]["short"] == comp_m.short_name
     assert data["competitions"]["elite"]["name"] == comp_m.name
+
+
+def _srgb_channel(value: int) -> float:
+    c = value / 255
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _relative_luminance(hex_colour: str) -> float:
+    r, g, b = (_srgb_channel(int(hex_colour[i : i + 2], 16)) for i in (1, 3, 5))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a: str, b: str) -> float:
+    light, dark = sorted((_relative_luminance(a), _relative_luminance(b)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def _cie_lab(hex_colour: str) -> tuple[float, float, float]:
+    r, g, b = (_srgb_channel(int(hex_colour[i : i + 2], 16)) for i in (1, 3, 5))
+    x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
+    y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+
+    def f(t: float) -> float:
+        return t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+
+    fx, fy, fz = f(x), f(y), f(z)
+    return 116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)
+
+
+def _delta_e(a: str, b: str) -> float:
+    """CIE76 colour difference: about 2.3 is a just-noticeable step."""
+    return sum((p - q) ** 2 for p, q in zip(_cie_lab(a), _cie_lab(b), strict=True)) ** 0.5
+
+
+def test_every_competition_colour_is_distinct_and_readable_in_the_real_data(world):
+    """The month calendar tells competitions apart by dot colour alone, so the
+    shipped colours must differ clearly from each other (CIE76 delta E 15 or
+    more, where near-identical oranges and teals used to sit at 10 and 15) and
+    the dot and its tag text must read on the page (dot 3:1 on white, tag text
+    4.5:1 on its tint)."""
+    colours = {competition.id: competition.color for competition in world.competitions.values()}
+    assert len(colours) >= 2
+    for left, right in itertools.combinations(sorted(colours), 2):
+        assert _delta_e(colours[left], colours[right]) >= 15, (left, right)
+    for competition_id, colour in colours.items():
+        assert _contrast(colour, "#ffffff") >= 3, competition_id
+        assert _contrast(colour, _tint(colour)) >= 4.5, competition_id
 
 
 # -- embedded fixture payload (#42) ------------------------------------------

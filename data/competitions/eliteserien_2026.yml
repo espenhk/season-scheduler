@@ -9,7 +9,7 @@ format: league
 # the calendar and combined views, kept distinct from every other
 # competition (terminliste/model/loader.py::_validate_competition_colors
 # enforces that).
-color: "#ca6f1e"
+color: "#1d4ed8"
 
 # This project generates and dates Eliteserien's fixtures — issue #31's
 # "scheduler-controlled" case, as opposed to a cup or European competition,

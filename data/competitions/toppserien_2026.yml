@@ -6,7 +6,7 @@ gender: women
 format: league
 
 # Season report colour (issue #77) — see eliteserien_2026.yml's comment.
-color: "#8e44ad"
+color: "#7e22ce"
 
 # Scheduler-controlled, same as eliteserien_2026.yml — see its comment and
 # issue #31.

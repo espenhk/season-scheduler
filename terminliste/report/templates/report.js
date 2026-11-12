@@ -507,6 +507,8 @@
     return append(el('table'), append(el('thead'), head), body);
   }
 
+  // The month calendar. One button per date, in its own month's grid; the day
+  // detail opens as a block directly under the week row that holds the day.
   function monthCalendarView(ctx) {
     var data = ctx.opt.data;
     var state = ctx.opt.state;
@@ -523,6 +525,10 @@
       });
     }
 
+    var details = el('div', 'day-details');
+    details.id = 'cal-day-detail';
+    details.setAttribute('role', 'region');
+
     data.months.forEach(function (month) {
       var grid = el('div', 'month-grid');
       var head = el('div', 'month-grid-row month-grid-head');
@@ -531,16 +537,22 @@
       month.weeks.forEach(function (week) {
         var row = el('div', 'month-grid-row');
         week.forEach(function (iso) {
+          // A neighbouring month's day: empty space, so the date is not listed twice.
+          if (!iso) {
+            var pad = el('span', 'cal-day cal-pad');
+            pad.setAttribute('aria-hidden', 'true');
+            row.appendChild(pad);
+            return;
+          }
           var dots = dotsOf(days[iso]);
-          var button = el('button', 'cal-day' + (iso.slice(0, 7) === month.key ? '' : ' out-month'));
+          var button = el('button', 'cal-day');
           button.type = 'button';
           button.setAttribute('data-date', iso);
-          var selected = iso === state.date;
-          if (selected) button.classList.add('selected');
-          button.setAttribute('aria-pressed', String(selected));
+          button.setAttribute('aria-expanded', 'false');
           var shownToday = days[iso] ? ctx.visible(days[iso].ids) : [];
           var sum = shownToday.length ? totals(ctx.fx, shownToday) : null;
-          var label = iso + (dots.length ? ': ' + dots.map(function (c) { return DATA.competitions[c].name; }).join(', ') : '') +
+          var label = longDate(iso) +
+            (dots.length ? ': ' + dots.map(function (c) { return DATA.competitions[c].name; }).join(', ') : '') +
             (sum ? '; ' + plural(sum.games, 'game', 'games') + (sum.badged ? '; net ' + netText(sum.net) + ' pts' : '') : '');
           button.setAttribute('aria-label', label);
           button.setAttribute('data-label', label);
@@ -560,43 +572,45 @@
       append(root, append(el('div', 'month'), el('h4', '', month.label), grid));
     });
 
-    var details = el('div', 'day-details');
-    root.appendChild(details);
-
-    // Tapping a day only redraws the detail block, not the grid.
-    function showDay() {
+    // Redraws the detail for `iso` (or closes it when `iso` is ''), under the
+    // week row holding that date. Returns the block, or null when none is open.
+    function placeDetails(iso) {
       details.textContent = '';
-      var day = state.date && days[state.date];
+      details.remove();
+      root.querySelectorAll('.cal-day[data-date]').forEach(function (button) {
+        var open = button.dataset.date === iso;
+        button.classList.toggle('selected', open);
+        button.setAttribute('aria-expanded', String(open));
+        if (open) button.setAttribute('aria-controls', details.id);
+        else button.removeAttribute('aria-controls');
+      });
+      var anchor = iso && root.querySelector('.cal-day[data-date="' + iso + '"]');
+      if (!anchor) return null;
+      var day = days[iso];
       var ids = day ? ctx.visible(day.ids) : [];
+      var head = append(el('div', 'rlabel'), el('b', '', day ? day.label : longDate(iso)));
       if (ids.length) {
         var box = el('div', 'fixtures');
         ids.forEach(function (uid) { box.appendChild(dayRow(ctx.fx[uid])); });
-        var head = append(el('div', 'rlabel'), el('b', '', day.label));
         append(details, append(el('div', 'day-detail'), head, summaryNode(totals(ctx.fx, ids), false), box));
       } else {
-        details.appendChild(el('div', 'day-detail-empty', state.date ? 'No games on this day.' : 'Tap a day above to see its games here.'));
+        append(details, append(el('div', 'day-detail'), head, el('div', 'day-detail-empty', 'No games on this day.')));
       }
-      return details.firstChild;
+      anchor.parentNode.insertAdjacentElement('afterend', details);
+      return details;
     }
 
     root.addEventListener('click', function (event) {
-      var button = event.target.closest('.cal-day');
+      var button = event.target.closest('.cal-day[data-date]');
       if (!button) return;
-      state.date = button.dataset.date;
-      root.querySelectorAll('.cal-day').forEach(function (other) {
-        // A date can appear twice: in its month and as the next month's padding.
-        var isSelected = other.dataset.date === state.date;
-        other.classList.toggle('selected', isSelected);
-        other.setAttribute('aria-pressed', String(isSelected));
-      });
-      // The calendar can span well over a year (cup rounds run into next
-      // spring), so the detail block sits far below a day tapped in an early
-      // month; bring it into view.
-      var shown = showDay();
-      ctx.opt.markLens(details);
-      shown.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      var iso = button.dataset.date;
+      state.date = state.date === iso ? '' : iso;
+      var shown = placeDetails(state.date);
+      if (!shown) return;
+      ctx.opt.markLens(shown);
+      shown.scrollIntoView({ block: 'nearest', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
     });
-    showDay();
+    placeDetails(state.date);
     return root;
   }
 
@@ -1326,7 +1340,7 @@
     var ctx = this.context();
     var days = this.dayIndex();
     var name = rule ? ruleName(DATA.rules.filter(function (r) { return r.id === rule; })[0]) : '';
-    root.querySelectorAll('.cal-day').forEach(function (button) {
+    root.querySelectorAll('.cal-day[data-date]').forEach(function (button) {
       var day = days[button.dataset.date];
       var n = rule && day ? ctx.visible(day.ids).filter(function (uid) { return ctx.matches(ctx.fx[uid]); }).length : 0;
       button.classList.toggle('lens-hit', n > 0);

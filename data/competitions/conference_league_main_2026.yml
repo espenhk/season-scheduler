@@ -28,7 +28,7 @@ is_main_tournament: true
 
 # Season report colour (issue #77) — same teal family as
 # champions_league_main_2026.yml, lightest shade.
-color: "#48c9b0"
+color: "#b93a0a"
 
 team_count: 0
 teams: []

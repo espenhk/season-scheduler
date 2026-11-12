@@ -53,7 +53,7 @@ movable: false
 # #154360 sat too close to europa_league_2026's #1f618d to tell apart as a
 # 7px calendar dot) so all three stay individually identifiable at that size,
 # not just as a family.
-color: "#0b2c40"
+color: "#155e75"
 
 team_count: 2
 teams:
