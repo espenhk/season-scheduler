@@ -28,7 +28,7 @@ from terminliste.report.render import (
     render_report,
 )
 from terminliste.scoring.base import ConstraintResult, EvalContext, Event, Score, evaluate
-from terminliste.scoring.hard import MinRestDays
+from terminliste.scoring.hard import MinRestDays, OneMatchPerTeamPerDay
 from terminliste.scoring.soft import (
     ConsecutiveHomeDays,
     HomeAwayBreaks,
@@ -1447,3 +1447,70 @@ def test_rendered_score_explanation_states_the_scores_own_numbers():
     assert "How is this scored?" in rendered
     assert f"{score.soft_total:.1f} raw soft points over 1 match, {score.soft_per_match:.2f} per match" in rendered
     assert f"the score is {score.points:.1f}, shown as {score.points:.0f}" in rendered
+
+
+def _sunday_and_saturday_candidate(world, season, comp_m, comp_w):
+    """One Sunday match (on the preferred day) and one Saturday match (off it)."""
+    matches = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 7), "va"),
+        f.match("elite", "b_m", "opp_m", date(2026, 6, 6), "vb"),
+    ]
+    constraints = [
+        PreferredWeekday(competitions=[comp_m, comp_w]),
+        ConsecutiveHomeDays(competitions=[comp_m, comp_w]),
+        RestComfort(competitions=[comp_m, comp_w]),
+        OneMatchPerTeamPerDay(),
+    ]
+    return _candidate(world, season, matches, constraints)
+
+
+def test_rendered_rule_rows_show_achieved_of_possible_under_the_name():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    rendered = _render(world, season, [_sunday_and_saturday_candidate(world, season, comp_m, comp_w)])
+
+    # Sunday's match is the one on the preferred day: 1 of the 2 league matches.
+    assert "1 of 2 matches (50%)" in rendered
+    assert 'class="coverage"' in rendered
+
+
+def test_all_soft_rules_are_grouped_as_helping_hurting_and_neutral_with_a_net_line():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    candidate = _sunday_and_saturday_candidate(world, season, comp_m, comp_w)
+    score = candidate.score
+    soft = score.soft_results()
+    helped = sum(r.total for r in soft if r.total > 0)
+    hurt = sum(r.total for r in soft if r.total < 0)
+
+    rendered = _render(world, season, [candidate])
+
+    assert f"Show all {len(soft)} soft rules: helping, hurting, neutral" in rendered
+    assert f'Helped by <b class="gain-text">+{helped:.1f}</b>, hurt by <b class="cost-text">+{hurt:.1f}</b>' in rendered
+    assert f"net <b>+{score.soft_total:.1f}</b>." in rendered
+    neutral = [r for r in soft if r.total == 0]
+    assert "Helping (1)" in rendered and "Hurting (0)" in rendered
+    assert f"Neutral, zero or did not apply ({len(neutral)})" in rendered
+
+
+def test_satisfied_hard_rules_collapse_into_one_expandable_line():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    rendered = _render(world, season, [_sunday_and_saturday_candidate(world, season, comp_m, comp_w)])
+
+    # Only one hard rule is in play, and it is satisfied.
+    assert "1 hard rule satisfied ✓" in rendered
+
+
+def test_score_explanation_gives_worked_examples_from_the_real_curve():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    rendered = _render(world, season, [_sunday_and_saturday_candidate(world, season, comp_m, comp_w)])
+
+    assert "Per match, 0 gives 60; about 5.5 gives 89" in rendered
+    assert "a red − takes them away" in rendered
+
+
+def test_the_page_receives_the_season_movement_that_club_shares_are_built_on():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    candidate = _sunday_and_saturday_candidate(world, season, comp_m, comp_w)
+    data = _report_data(_render(world, season, [candidate]))
+
+    soft = candidate.score.soft_results()
+    assert data["options"][0]["gross"] == round(sum(abs(r.total) for r in soft), 2)

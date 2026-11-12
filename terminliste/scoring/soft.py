@@ -45,6 +45,7 @@ class PreferredWeekday:
     def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
         total = 0.0
         count = 0
+        opportunities = 0
         events: list[Event] = []
 
         for competition_id, matches in index.by_competition.items():
@@ -56,6 +57,7 @@ class PreferredWeekday:
             on_day = len(on_day_matches)
             total += weight * on_day
             count += on_day
+            opportunities += len(matches)
             if ctx.detail and matches:
                 competition = ctx.world.competition(competition_id)
                 share = 100.0 * on_day / len(matches)
@@ -71,7 +73,9 @@ class PreferredWeekday:
                     )
                 )
 
-        return ConstraintResult(self.id, "soft", total, count, events)
+        return ConstraintResult(
+            self.id, "soft", total, count, events, achieved=count, opportunities=opportunities
+        )
 
 
 @dataclass
@@ -97,11 +101,16 @@ class ConsecutiveHomeDays:
         total = 0.0
         count = 0
         events: list[Event] = []
+        # Home matches in a back-to-back pair, as (team, date), against every
+        # home match the dual clubs' teams have.
+        paired_home: set[tuple[str, date]] = set()
+        opportunities = 0
 
         for club in ctx.world.dual_clubs():
             for first, second in _team_pairs(club):
                 first_days = index.home_dates_by_team.get(first, set())
                 second_days = index.home_dates_by_team.get(second, set())
+                opportunities += len(first_days) + len(second_days)
                 if not first_days or not second_days:
                     continue
                 weight = max(
@@ -120,8 +129,10 @@ class ConsecutiveHomeDays:
                             continue
                         total += weight
                         count += 1
+                        first_day = min(day, other_day)
+                        paired_home.add((earlier, first_day))
+                        paired_home.add((later, first_day + _ONE_DAY))
                         if ctx.detail:
-                            first_day = min(day, other_day)
                             pair = (
                                 index.match_on(earlier, first_day, home=True),
                                 index.match_on(later, first_day + _ONE_DAY, home=True),
@@ -139,7 +150,10 @@ class ConsecutiveHomeDays:
                                 )
                             )
 
-        return ConstraintResult(self.id, "soft", total, count, events)
+        return ConstraintResult(
+            self.id, "soft", total, count, events,
+            achieved=len(paired_home), opportunities=opportunities,
+        )
 
 
 @dataclass
@@ -326,6 +340,8 @@ class HomeAwayBalance:
     def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
         total = 0.0
         count = 0
+        balanced = 0
+        opportunities = 0
         events: list[Event] = []
 
         for team_id, matches in index.by_team.items():
@@ -336,9 +352,11 @@ class HomeAwayBalance:
             for label, half in (("first", matches[:midpoint]), ("second", matches[midpoint:])):
                 if not half:
                     continue
+                opportunities += 1
                 home = sum(1 for m in half if m.home_team == team_id)
                 drift = abs(home - (len(half) - home))
                 if drift <= self.tolerance:
+                    balanced += 1
                     continue
                 excess = drift - self.tolerance
                 total -= weight * excess
@@ -356,7 +374,9 @@ class HomeAwayBalance:
                         )
                     )
 
-        return ConstraintResult(self.id, "soft", total, count, events)
+        return ConstraintResult(
+            self.id, "soft", total, count, events, achieved=balanced, opportunities=opportunities
+        )
 
 
 @dataclass
@@ -384,6 +404,8 @@ class RestComfort:
     def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
         total = 0.0
         count = 0
+        comfortable_gaps = 0
+        opportunities = 0
         events: list[Event] = []
 
         for team_id, matches in index.by_team.items():
@@ -393,6 +415,9 @@ class RestComfort:
             minimum, comfortable, weight = config
             for earlier, later in zip(matches, matches[1:], strict=False):
                 rest_days = (later.date - earlier.date).days - 1
+                opportunities += 1
+                if rest_days >= comfortable:
+                    comfortable_gaps += 1
                 # Below the minimum is min_rest_days' business, not ours.
                 if rest_days < minimum or rest_days >= comfortable:
                     continue
@@ -412,7 +437,10 @@ class RestComfort:
                         )
                     )
 
-        return ConstraintResult(self.id, "soft", total, count, events)
+        return ConstraintResult(
+            self.id, "soft", total, count, events,
+            achieved=comfortable_gaps, opportunities=opportunities,
+        )
 
 
 @dataclass

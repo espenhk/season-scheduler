@@ -51,6 +51,12 @@ def _sigmoid(x: float) -> float:
     return z / (1.0 + z)
 
 
+def points_for_soft_per_match(per_match: float) -> float:
+    """The 0-100 score of a feasible schedule with this soft reward per match."""
+    saturation = max(_sigmoid(per_match / SOFT_SCALE), _MIN_SATURATION)
+    return INFEASIBLE_CEILING + (100.0 - INFEASIBLE_CEILING) * saturation
+
+
 @dataclass(frozen=True)
 class Event:
     """One thing a constraint noticed: a violation to fix or a reward earned.
@@ -77,6 +83,10 @@ class ConstraintResult:
     total: float
     count: int
     events: list[Event] = field(default_factory=list)
+    # Metadata only, never scored: how many of the rule's opportunities it
+    # used, for rules that can say (#34). None when no natural count exists.
+    achieved: int | None = None
+    opportunities: int | None = None
 
 
 class ScheduleIndex:
@@ -196,7 +206,7 @@ class Score:
         """
         if self.hard_violations:
             return INFEASIBLE_CEILING * math.exp(-INFEASIBLE_DECAY * self.hard_violations)
-        return INFEASIBLE_CEILING + (100.0 - INFEASIBLE_CEILING) * self.soft_saturation
+        return points_for_soft_per_match(self.soft_per_match)
 
     @property
     def search_cost(self) -> float:

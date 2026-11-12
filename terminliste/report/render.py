@@ -27,8 +27,21 @@ from ..model.loader import World
 from ..model.schema import WEEKDAYS, Competition, Match, Season
 from ..rounds.cup_schedule import NEUTRAL_CUP_VENUE, CupRoundPlacement, CupSchedule
 from ..rounds.european_schedule import ResolvedLegs
-from ..scoring.base import INFEASIBLE_CEILING, SOFT_SCALE, ConstraintResult, Event, Score
-from ..scoring.registry import BADGE_LABELS, badge_label, describe, rule_name
+from ..scoring.base import (
+    INFEASIBLE_CEILING,
+    SOFT_SCALE,
+    ConstraintResult,
+    Event,
+    Score,
+    points_for_soft_per_match,
+)
+from ..scoring.registry import (
+    BADGE_LABELS,
+    COVERAGE_UNITS,
+    badge_label,
+    describe,
+    rule_name,
+)
 from ..scoring.soft import PreferredWeekday
 from ..slot_planner import search_space_log10
 from ..solvers.base import Candidate, SearchStats, SolverResult
@@ -213,6 +226,7 @@ def _build_option(
             for r in score.biggest_upsides(limit=limit)
         ],
         "breakdown": [_result_row(r, world, pinned, full=True, gross=gross) for r in _ordered_results(score)],
+        "soft": _soft_summary(score, gross, world, pinned),
         "fairness": fairness,
         "league_entries": entries,
         "client": payload.option_wire(
@@ -415,6 +429,41 @@ def _scoring_view(score: Score, gross: float) -> dict:
         "ceiling": INFEASIBLE_CEILING,
         "points": score.points,
         "gross": gross,
+        # Worked examples for the explanation, from the same curve as `points`.
+        "example_zero": points_for_soft_per_match(0.0),
+        "example_per_match": 5.5,
+        "example_points": points_for_soft_per_match(5.5),
+    }
+
+
+def _coverage(result: ConstraintResult) -> dict | None:
+    """How many of a rule's opportunities it used, when the rule reports them (#34)."""
+    if result.achieved is None or not result.opportunities:
+        return None
+    return {
+        "achieved": result.achieved,
+        "opportunities": result.opportunities,
+        "unit": COVERAGE_UNITS.get(result.constraint_id, "opportunities"),
+        "pct": 100.0 * result.achieved / result.opportunities,
+    }
+
+
+def _soft_summary(score: Score, gross: float, world: World, pinned: dict[str, int]) -> dict:
+    """Every soft rule grouped by effect, and how the gains and costs net out."""
+    soft = score.soft_results()
+    rows = [_result_row(r, world, pinned, full=True, gross=gross) for r in soft]
+    helped = sum(r.total for r in soft if r.total > 0)
+    hurt = sum(r.total for r in soft if r.total < 0)
+    moved = helped - hurt
+    return {
+        "count": len(soft),
+        "helping": sorted((row for row in rows if row["total"] > 0), key=lambda row: -row["total"]),
+        "hurting": sorted((row for row in rows if row["total"] < 0), key=lambda row: row["total"]),
+        "neutral": [row["name"] for row in rows if row["total"] == 0],
+        "helped": helped,
+        "hurt": hurt,
+        "net": score.soft_total,
+        "gain_pct": 100.0 * helped / moved if moved else 0.0,
     }
 
 
@@ -449,6 +498,7 @@ def _result_row(
         # (#61).
         "occurrences": _entity_counts(world, result),
         "pinned": pinned.get(result.constraint_id, 0),
+        "coverage": _coverage(result),
     }
 
 

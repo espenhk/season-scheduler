@@ -1054,9 +1054,19 @@ def _club_fixture_count(data, club):
 
 
 def _share_text(total, gross):
-    """A rule's share of the season's movement, rounded half up as the page does."""
+    """A club rule's share of the club's own movement, as the page writes it: rounded half
+    up, the sign kept, and a non-zero share that rounds to nothing reads "<1%"."""
+    if not total:
+        return "0%"
+    sign = "+" if total > 0 else "−"
     share = int(100 * abs(total) / gross + 0.5) if gross else 0
-    return ("+" if total > 0 else "−" if total < 0 else "") + f"{share}%"
+    return f"{sign}{share}%" if share else f"{sign}<1%"
+
+
+def _club_gross(data, expected):
+    """The club's movement: the magnitudes of its soft rules' totals."""
+    hard = {r["id"] for r in data["rules"] if r.get("hard")}
+    return sum(abs(round(total, 2)) for rule, total in expected.items() if rule not in hard)
 
 
 def _raw_text(total):
@@ -1067,12 +1077,22 @@ def test_selecting_a_club_restates_the_breakdown_as_its_own_share(page):
     data = _wire(page)
     option = data["options"][0]
     expected = _club_expected(data, option, "club_a")
+    gross = _club_gross(data, expected)
     page.select_option("#panel-1 .club-select", "club_a")
     page.locator("#panel-1 .scope-breakdown > summary").click()
 
+    # Satisfied hard rules sit in one collapsed line above the table, not as rows.
+    satisfied = [i for i in option["order"] if data["rules"][i].get("hard") and round(expected[data["rules"][i]["id"]], 1) == 0]
     rows = page.locator("#panel-1 .scope-breakdown tbody tr")
-    assert rows.count() == len(option["order"])
-    for i, index in enumerate(option["order"]):
+    assert rows.count() == len(option["order"]) - len(satisfied)
+    collapsed = page.locator("#panel-1 .scope-breakdown .hard-ok > summary")
+    if satisfied:
+        noun = "rule" if len(satisfied) == 1 else "rules"
+        assert collapsed.inner_text() == f"{len(satisfied)} hard {noun} satisfied ✓"
+    else:
+        assert collapsed.count() == 0
+    visible = [i for i in option["order"] if i not in satisfied]
+    for i, index in enumerate(visible):
         rule = data["rules"][index]
         row = rows.nth(i)
         assert row.locator(".name").inner_text() == rule_name(rule["id"])
@@ -1081,7 +1101,7 @@ def test_selecting_a_club_restates_the_breakdown_as_its_own_share(page):
         if rule.get("hard"):
             assert cell.inner_text() == (_signed(total) if round(total, 1) else "—"), rule["id"]
         else:
-            assert cell.locator(".share-text").inner_text() == _share_text(total, option["gross"]), rule["id"]
+            assert cell.locator(".share-text").inner_text() == _share_text(total, gross), rule["id"]
             assert cell.locator(".raw").inner_text() == _raw_text(total), rule["id"]
 
 
@@ -1089,14 +1109,15 @@ def test_the_club_scorecard_lists_its_biggest_upsides_and_problems_from_its_shar
     data = _wire(page)
     option = data["options"][0]
     expected = _club_expected(data, option, "club_a")
+    gross = _club_gross(data, expected)
     page.select_option("#panel-1 .club-select", "club_a")
 
     ups = page.locator("#panel-1 .scope-card .col").nth(0).locator("details.item")
     downs = page.locator("#panel-1 .scope-card .col").nth(1).locator("details.item")
     got_ups = {(ups.nth(i).locator(".name").inner_text(), ups.nth(i).locator(".share-text").inner_text()) for i in range(ups.count())}
     got_downs = {(downs.nth(i).locator(".name").inner_text(), downs.nth(i).locator(".share-text").inner_text()) for i in range(downs.count())}
-    want_ups = {(rule_name(rule), _share_text(total, option["gross"])) for rule, total in expected.items() if total > 0}
-    want_downs = {(rule_name(rule), _share_text(total, option["gross"])) for rule, total in expected.items() if total < 0}
+    want_ups = {(rule_name(rule), _share_text(total, gross)) for rule, total in expected.items() if total > 0}
+    want_downs = {(rule_name(rule), _share_text(total, gross)) for rule, total in expected.items() if total < 0}
     assert got_ups == want_ups
     assert got_downs == want_downs
 
@@ -1342,7 +1363,8 @@ def test_how_is_this_scored_explains_the_score_in_words(page):
     text = " ".join(page.locator("#panel-1 .how-body").inner_text().split())
     assert "20 + 80 × s" in text
     assert "per match" in text
-    assert "Zero soft points would sit at 60" in text
+    assert "Per match, 0 gives 60" in text
+    assert "a red − takes them away" in text
 
 
 def test_the_score_explanation_and_club_breakdown_fit_a_phone_without_overflow(browser, report_url):
@@ -1360,3 +1382,41 @@ def test_the_score_explanation_and_club_breakdown_fit_a_phone_without_overflow(b
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     assert problems == []
     context.close()
+
+
+_COVERAGE_TEXT = re.compile(r"^\d+ of \d+ (matches|home matches|gaps|team half-seasons) \(\d+%\)$")
+
+
+def test_coverage_counts_sit_under_the_rule_names_in_the_scorecard(page):
+    texts = _texts(page.locator("#panel-1 .cols .coverage"))
+    assert texts, "the scorecard shows at least one counted rule"
+    assert all(_COVERAGE_TEXT.match(t) for t in texts), texts
+
+
+def test_all_rules_list_groups_every_soft_rule_and_states_the_net(page):
+    summary = page.locator("#panel-1 .all-soft > summary")
+    page.click("#panel-1 .all-soft > summary")
+    heads = page.locator("#panel-1 .all-soft .group-head").evaluate_all("els => els.map(e => e.textContent.trim())")
+    assert [h.split(" (")[0] for h in heads] == ["Helping", "Hurting", "Neutral, zero or did not apply"]
+    listed = page.locator("#panel-1 .all-soft .item.compact").count()
+    neutral_list = page.locator("#panel-1 .all-soft .neutral-list")
+    neutral = neutral_list.inner_text() if neutral_list.count() else ""
+    neutral_count = len(neutral.split(", ")) if neutral else 0
+    assert summary.inner_text() == f"Show all {listed + neutral_count} soft rules: helping, hurting, neutral"
+    net = " ".join(page.locator("#panel-1 .all-soft .soft-sum").inner_text().split())
+    assert re.match(r"^Helped by [+−]\d+\.\d, hurt by [+−]\d+\.\d, net [+−]\d+\.\d\.$", net), net
+
+
+def test_the_club_breakdown_hides_rank_and_fixtures_on_a_phone(browser, report_url):
+    context = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
+    page = context.new_page()
+    page.goto(report_url)
+    _open_filters(page)
+    page.select_option("#panel-1 .club-select", "club_a")
+    page.locator("#panel-1 .scope-breakdown > summary").click()
+    assert page.locator("#panel-1 .scope-breakdown .col-extra").first.is_hidden()
+    assert page.locator("#panel-1 .scope-breakdown .col-type").first.is_hidden()
+    assert page.locator("#panel-1 .scope-breakdown th", has_text="Events").is_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    context.close()
+

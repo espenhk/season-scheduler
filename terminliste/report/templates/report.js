@@ -953,8 +953,7 @@
     var loose = {};
     (this.data.clubUnpinned[club] || []).forEach(function (row) { loose[row[0]] = row; });
     var ranks = this.data.clubRanks[club] || [];
-    var self = this;
-    return this.data.order.map(function (index) {
+    var rows = this.data.order.map(function (index) {
       var rule = DATA.rules[index];
       var total = 0;
       var count = 0;
@@ -974,12 +973,18 @@
         rule: rule,
         ranks: ranks.filter(function (row) { return row.id === rule.id; }),
         total: total,
-        share: rule.hard ? null : (self.data.gross ? 100 * Math.abs(total) / self.data.gross : 0),
+        share: null,
         count: Math.round(count),
         fixtures: Object.keys(fixtures).length,
         loose: extra ? extra[2] : 0
       };
     });
+    // A club's share is of its own movement: the sum of its soft totals' magnitudes.
+    var gross = rows.reduce(function (sum, row) { return row.rule.hard ? sum : sum + Math.abs(row.total); }, 0);
+    rows.forEach(function (row) {
+      if (!row.rule.hard) row.share = gross ? 100 * Math.abs(row.total) / gross : 0;
+    });
+    return rows;
   };
 
   function ordinal(n) {
@@ -1048,8 +1053,9 @@
     var fill = el('span', 'share-fill');
     fill.style.width = (Math.round(share * 10) / 10) + '%';
     append(track, fill);
-    var sign = Math.round(share) === 0 ? '' : total > 0 ? '+' : '\u2212';
-    return append(el('span', 'contrib ' + polarity), track, el('span', 'share-text', sign + Math.round(share) + '%'));
+    var sign = total > 0 ? '+' : total < 0 ? '\u2212' : '';
+    var text = Math.round(share) === 0 && total !== 0 ? sign + '<1%' : (Math.round(share) === 0 ? '' : sign) + Math.round(share) + '%';
+    return append(el('span', 'contrib ' + polarity), track, el('span', 'share-text', text));
   }
 
   function scopeItem(score, kind) {
@@ -1088,24 +1094,33 @@
     details.appendChild(el('summary', '', 'Full score breakdown — ' + DATA.clubNames[club] + '’s share'));
     var head = el('tr');
     ['Rule', 'Type', 'Contribution', 'Events', 'Rank', 'Fixtures'].forEach(function (name, i) {
-      head.appendChild(el('th', i === 2 || i === 3 ? 'num' : '', name));
+      var cls = i === 2 || i === 3 ? 'num' : i === 1 ? 'col-type' : i >= 4 ? 'col-extra' : '';
+      head.appendChild(el('th', cls, name));
     });
+    var satisfied = scores.filter(function (score) { return score.rule.hard && !score.count; });
+    if (satisfied.length) {
+      var collapsed = el('details', 'hard-ok');
+      collapsed.appendChild(el('summary', '', satisfied.length + ' hard rule' + (satisfied.length === 1 ? '' : 's') + ' satisfied ✓'));
+      collapsed.appendChild(el('p', 'desc', satisfied.map(function (score) { return ruleName(score.rule); }).join(', ')));
+      details.appendChild(collapsed);
+    }
     var body = el('tbody');
     scores.forEach(function (score) {
       var rule = score.rule;
+      if (rule.hard && !score.count) return;
       var row = el('tr');
       if (rule.hard && score.count) row.className = 'violated';
-      var last = el('td');
+      var last = el('td', 'col-extra');
       if (rule.inv) last.appendChild(el('span', 'desc', 'Scored per competition, not per team.'));
       else if (score.fixtures) append(last, ruleActions(score), ruleFixturesList(score));
       else last.appendChild(document.createTextNode('—'));
       append(
         row,
         append(el('td'), ruleNameRow(rule)),
-        append(el('td'), el('span', 'kind ' + (rule.hard ? 'hard' : 'soft'), rule.hard ? 'hard' : 'soft')),
+        append(el('td', 'col-type'), el('span', 'kind ' + (rule.hard ? 'hard' : 'soft'), rule.hard ? 'hard' : 'soft')),
         contributionCell(score),
         el('td', 'num', String(score.count)),
-        el('td', '', score.ranks.length ? rankText(score.ranks) : '—'),
+        el('td', 'col-extra', score.ranks.length ? rankText(score.ranks) : '—'),
         last
       );
       body.appendChild(row);
@@ -1152,7 +1167,7 @@
       append(
         this.scopeText,
         el('b', '', DATA.clubNames[club] + ' — ' + (matches ? plural(+matches.value, 'match', 'matches') : 'no matches')),
-        document.createTextNode('. Upsides, problems and the breakdown below count only this club’s share of each rule. ' +
+        document.createTextNode('. Upsides, problems and the breakdown below count only this club’s share of each rule, as a share of this club’s own movement. ' +
           'Preferred weekday is scored per competition and left out. The score, the hard-rule list and fairness stay season-wide.')
       );
       if (team) {

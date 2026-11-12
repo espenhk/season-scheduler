@@ -224,5 +224,15 @@ def describe(constraint_id: str) -> str:
     return CONSTRAINT_DESCRIPTIONS.get(constraint_id, "")
 
 
+# What a rule's achieved-of-opportunities count is counting, for rules that
+# report one (#34).
+COVERAGE_UNITS: dict[str, str] = {
+    "preferred_weekday": "matches",
+    "consecutive_home_days": "home matches",
+    "rest_comfort": "gaps",
+    "home_away_balance": "team half-seasons",
+}
+
+
 def rule_name(constraint_id: str) -> str:
     return RULE_NAMES.get(constraint_id, constraint_id.replace("_", " "))
