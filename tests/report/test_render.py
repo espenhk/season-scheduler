@@ -27,8 +27,8 @@ from terminliste.report.render import (
     _tint,
     render_report,
 )
-from terminliste.scoring.base import ConstraintResult, EvalContext, Event, evaluate
-from terminliste.scoring.hard import MinRestDays
+from terminliste.scoring.base import ConstraintResult, EvalContext, Event, Score, evaluate
+from terminliste.scoring.hard import MinRestDays, OneMatchPerTeamPerDay
 from terminliste.scoring.soft import (
     ConsecutiveHomeDays,
     HomeAwayBreaks,
@@ -901,6 +901,58 @@ def test_every_scoring_rule_has_a_badge_label_and_a_description():
     assert set(BADGE_LABELS) == set(CONSTRAINT_DESCRIPTIONS)
 
 
+def test_every_scoring_rule_has_a_human_name_that_is_not_its_id():
+    from terminliste.scoring.registry import CONSTRAINT_DESCRIPTIONS, RULE_NAMES, rule_name
+
+    assert set(RULE_NAMES) == set(CONSTRAINT_DESCRIPTIONS)
+    for rule_id, name in RULE_NAMES.items():
+        assert name and "_" not in name, rule_id
+    assert rule_name("rest_comfort") == "Comfortable rest"
+    assert rule_name("not_a_rule") == "not a rule"
+
+
+def test_result_rows_carry_human_names_and_each_soft_rules_share_of_the_movement():
+    from terminliste.report.render import _gross_movement, _result_row, _scoring_view
+
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    results = [
+        ConstraintResult(constraint_id="consecutive_home_days", kind="soft", total=30.0, count=2),
+        ConstraintResult(constraint_id="rest_comfort", kind="soft", total=-10.0, count=1),
+        ConstraintResult(constraint_id="min_rest_days", kind="hard", total=0.0, count=0),
+    ]
+    score = Score(hard_violations=0, soft_total=20.0, results=results, num_matches=4)
+    gross = _gross_movement(score)
+    assert gross == 40.0
+
+    rows = [_result_row(r, world, {}, gross=gross) for r in results]
+    assert [row["name"] for row in rows] == ["Back-to-back home days", "Comfortable rest", "Minimum rest between matches"]
+    assert rows[0]["share"] == pytest.approx(75.0) and rows[1]["share"] == pytest.approx(25.0)
+    assert rows[2]["share"] is None  # hard rules are counted, not weighed
+    assert sum(row["share"] for row in rows if row["share"] is not None) == pytest.approx(100.0)
+
+    view = _scoring_view(score, gross)
+    assert view["points"] == pytest.approx(score.points)
+    assert view["soft_per_match"] == pytest.approx(5.0)
+    assert view["saturation"] == pytest.approx(score.soft_saturation)
+    assert view["gross"] == gross
+
+
+def test_the_score_explanation_numbers_come_from_the_same_score_the_page_shows():
+    from terminliste.report.render import _gross_movement, _scoring_view
+    from terminliste.scoring.base import INFEASIBLE_CEILING, SOFT_SCALE
+
+    feasible = Score(hard_violations=0, soft_total=799.5, results=[], num_matches=96)
+    view = _scoring_view(feasible, _gross_movement(feasible))
+    assert view["raw_soft"] == 799.5 and view["num_matches"] == 96
+    assert view["soft_scale"] == SOFT_SCALE and view["ceiling"] == INFEASIBLE_CEILING
+    assert view["points"] == pytest.approx(INFEASIBLE_CEILING + 80 * view["saturation"])
+    # Zero soft points sits at the midpoint of the feasible range.
+    assert Score(hard_violations=0, soft_total=0.0, num_matches=96).points == pytest.approx(60.0)
+
+    broken = Score(hard_violations=3, soft_total=500.0, results=[], num_matches=96)
+    assert broken.points == pytest.approx(INFEASIBLE_CEILING * 2.718281828459045 ** (-0.25 * 3), rel=1e-6)
+
+
 def _check_flags_sum_to_rule_totals(world, season, candidate):
     """The acceptance rule of #29: a rule's per-fixture deltas, as shipped on
     the wire, add up to its total in the score breakdown. Events pinned to no
@@ -1026,7 +1078,8 @@ def test_render_report_shows_search_difficulty_section_when_stats_present():
 
     assert "How hard was this to schedule?" in rendered
     assert "difficulty-hard" in rendered
-    assert "min rest days" in rendered
+    assert "Minimum rest between matches" in rendered
+    assert "min_rest_days" not in rendered.split("<script")[0]
 
 
 def test_render_report_omits_search_difficulty_section_when_no_stats():
@@ -1381,3 +1434,83 @@ def test_render_report_shows_the_playoff_weeks():
     assert "Relegation play-off" in rendered
     assert "Thu 17 Dec 2026 (week 51)" in rendered
     assert "Mon 21 Dec 2026 (week 52)" in rendered
+
+
+def test_rendered_score_explanation_states_the_scores_own_numbers():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    candidate = _candidate(world, season, matches, [PreferredWeekday(competitions=[comp_m, comp_w])])
+    score = candidate.score
+
+    rendered = _render(world, season, [candidate])
+
+    assert "How is this scored?" in rendered
+    assert f"{score.soft_total:.1f} raw soft points over 1 match, {score.soft_per_match:.2f} per match" in rendered
+    assert f"the score is {score.points:.1f}, shown as {score.points:.0f}" in rendered
+
+
+def _sunday_and_saturday_candidate(world, season, comp_m, comp_w):
+    """One Sunday match (on the preferred day) and one Saturday match (off it)."""
+    matches = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 7), "va"),
+        f.match("elite", "b_m", "opp_m", date(2026, 6, 6), "vb"),
+    ]
+    constraints = [
+        PreferredWeekday(competitions=[comp_m, comp_w]),
+        ConsecutiveHomeDays(competitions=[comp_m, comp_w]),
+        RestComfort(competitions=[comp_m, comp_w]),
+        OneMatchPerTeamPerDay(),
+    ]
+    return _candidate(world, season, matches, constraints)
+
+
+def test_rendered_rule_rows_show_achieved_of_possible_under_the_name():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    rendered = _render(world, season, [_sunday_and_saturday_candidate(world, season, comp_m, comp_w)])
+
+    # Sunday's match is the one on the preferred day: 1 of the 2 league matches.
+    assert "1 of 2 matches (50%)" in rendered
+    assert 'class="coverage"' in rendered
+
+
+def test_all_soft_rules_are_grouped_as_helping_hurting_and_neutral_with_a_net_line():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    candidate = _sunday_and_saturday_candidate(world, season, comp_m, comp_w)
+    score = candidate.score
+    soft = score.soft_results()
+    helped = sum(r.total for r in soft if r.total > 0)
+    hurt = sum(r.total for r in soft if r.total < 0)
+
+    rendered = _render(world, season, [candidate])
+
+    assert f"Show all {len(soft)} soft rules: helping, hurting, neutral" in rendered
+    assert f'Helped by <b class="gain-text">+{helped:.1f}</b>, hurt by <b class="cost-text">+{hurt:.1f}</b>' in rendered
+    assert f"net <b>+{score.soft_total:.1f}</b>." in rendered
+    neutral = [r for r in soft if r.total == 0]
+    assert "Helping (1)" in rendered and "Hurting (0)" in rendered
+    assert f"Neutral, zero or did not apply ({len(neutral)})" in rendered
+
+
+def test_satisfied_hard_rules_collapse_into_one_expandable_line():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    rendered = _render(world, season, [_sunday_and_saturday_candidate(world, season, comp_m, comp_w)])
+
+    # Only one hard rule is in play, and it is satisfied.
+    assert "1 hard rule satisfied ✓" in rendered
+
+
+def test_score_explanation_gives_worked_examples_from_the_real_curve():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    rendered = _render(world, season, [_sunday_and_saturday_candidate(world, season, comp_m, comp_w)])
+
+    assert "Per match, 0 gives 60; about 5.5 gives 89" in rendered
+    assert "a red − takes them away" in rendered
+
+
+def test_the_page_receives_the_season_movement_that_club_shares_are_built_on():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    candidate = _sunday_and_saturday_candidate(world, season, comp_m, comp_w)
+    data = _report_data(_render(world, season, [candidate]))
+
+    soft = candidate.score.soft_results()
+    assert data["options"][0]["gross"] == round(sum(abs(r.total) for r in soft), 2)

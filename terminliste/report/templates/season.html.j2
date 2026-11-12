@@ -105,7 +105,23 @@
     font-size: 10px; transition: transform 0.12s ease;
   }
   details.item[open] > summary.top::before { transform: rotate(90deg); }
-  details.item > summary.top .name-row { margin-right: auto; }
+  details.item > summary.top .name-block { margin-right: auto; min-width: 0; display: flex; flex-direction: column; }
+  .rule-desc { color: var(--muted); font-size: 12.5px; line-height: 1.35; margin-top: 2px; }
+  .coverage { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; margin-top: 1px; }
+  .gain-text { color: var(--good); }
+  .cost-text { color: var(--bad); }
+  .split-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: #eeeee9; margin: 10px 0 6px; max-width: 480px; }
+  .split-gain { display: block; height: 100%; background: var(--good); }
+  .split-cost { display: block; height: 100%; background: var(--bad); }
+  .all-soft { margin-top: 22px; }
+  .all-soft > summary { cursor: pointer; color: var(--accent); font-size: 13.5px; font-weight: 600; }
+  .all-soft .soft-sum { font-size: 13.5px; margin: 10px 0 0; }
+  .all-soft .group-head { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 18px 0 8px; }
+  .item.compact .name-block { margin-right: auto; min-width: 0; display: flex; flex-direction: column; }
+  .all-soft .neutral-list { font-size: 13px; color: var(--muted); margin: 0; }
+  .hard-ok { margin: 8px 0 10px; font-size: 13px; }
+  .hard-ok > summary { cursor: pointer; color: var(--good); font-weight: 600; }
+  @media (max-width: 480px) { .col-extra, .col-type { display: none; } }
   .item-body { padding: 0 8px 10px 16px; }
   .item .name { font-weight: 600; font-size: 14px; }
   .item .delta { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; white-space: nowrap; }
@@ -171,6 +187,26 @@
   .difficulty-moderate { background: #fdf6ea; color: var(--warn); }
   .difficulty-hard { background: #fdf0ee; color: var(--bad); }
   .search-stats .desc { margin-top: 6px; }
+
+  /* -- rule contributions as a share of the season's movement (#34) -- */
+  .contrib { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .contrib .share-track { display: block; width: 64px; height: 8px; background: #eeeee9; border-radius: 4px; overflow: hidden; }
+  .contrib .share-fill { display: block; height: 100%; border-radius: 4px; background: var(--muted); }
+  .contrib .share-text { font-weight: 700; font-size: 14px; min-width: 3.2em; text-align: right; }
+  .contrib.gain .share-fill { background: var(--good); }
+  .contrib.gain .share-text { color: var(--good); }
+  .contrib.cost .share-fill { background: var(--bad); }
+  .contrib.cost .share-text { color: var(--bad); }
+  .raw { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  @media (max-width: 480px) {
+    .contrib { gap: 6px; }
+    .contrib .share-track { width: 36px; }
+    .contrib .share-text { min-width: 0; font-size: 13px; }
+  }
+  .how-scored { margin-top: 14px; }
+  .how-scored > summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+  .how-body { margin-top: 8px; font-size: 13.5px; max-width: 720px; }
+  .how-body p { margin: 0 0 8px; }
 
   /* -- fairness across teams -- */
   .fairness-row { margin: 14px 0 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; }
@@ -632,6 +668,71 @@
 <body>
 {% set ns = namespace(tooltip_id=0) %}
 {# A rule's fixtures are listed by report.js from the fixture flags, so only a rule with some (`row.pinned`) gets a mount and a calendar link. #}
+{# Share as signed text; a non-zero share that rounds to 0 reads "<1%", never a bare "0%" (#34). #}
+{% macro share_text(row) %}
+  {%- set pct = '%.0f'|format(row.share) -%}
+  {%- if pct == '0' and row.total -%}
+    {{ '+' if row.total > 0 else '−' }}&lt;1%
+  {%- else -%}
+    {%- if pct != '0' %}{{ '+' if row.total > 0 else '−' }}{% endif -%}
+    {{ pct }}%
+  {%- endif -%}
+{% endmacro %}
+{% macro contribution(row) %}
+{% if row.share is not none %}
+<span class="contrib {{ 'gain' if row.total > 0 else ('cost' if row.total < 0 else 'neutral') }}">
+  <span class="share-track" aria-hidden="true"><span class="share-fill" style="width:{{ '%.1f'|format(row.share) }}%"></span></span>
+  <span class="share-text">{{ share_text(row) }}</span>
+</span>
+{% else %}
+<span class="delta">{{ row.count }} violation{{ '' if row.count == 1 else 's' }}</span>
+{% endif %}
+{% endmacro %}
+{# One scorecard row: name with its one-line description and coverage, and the share (#34).
+   Full rows open onto the detail; compact rows (the all-rules list) only repeat the summary,
+   so each rule keeps one set of fixture hooks. #}
+{% macro rule_row(row, kind, ns, compact=false) %}
+{% if compact %}
+<div class="item {{ kind }} compact">
+  <div class="top">
+{% else %}
+<details class="item {{ kind }}"{% if row.pinned %} data-rule="{{ row.id }}"{% endif %}>
+  <summary class="top">
+{% endif %}
+    <span class="name-block">
+      <span class="name-row">
+        <span class="name">{{ row.name }}</span>
+        {% set ns.tooltip_id = ns.tooltip_id + 1 %}
+        <span class="info-wrap">
+          <button type="button" class="info-icon" aria-label="{{ row.name }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
+          <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
+        </span>
+      </span>
+      <span class="rule-desc">{{ row.description }}</span>
+      {% if row.coverage %}<span class="coverage">{{ row.coverage.achieved }} of {{ row.coverage.opportunities }} {{ row.coverage.unit }} ({{ '%.0f'|format(row.coverage.pct) }}%)</span>{% endif %}
+    </span>
+    {{ contribution(row) }}
+{% if compact %}
+  </div>
+</div>
+{% else %}
+  </summary>
+  <div class="item-body">
+    {% if row.share is not none %}<div class="desc">Raw score change <span class="raw">{{ '%+.1f'|format(row.total) }}</span></div>{% endif %}
+    <div class="rule-actions">{{ lens_link(row) }}</div>
+    {% if row.pinned %}<div class="rule-fixtures"></div>{% endif %}
+    {% if row.occurrences %}
+    {% if row.pinned %}<div class="desc">Other events, not tied to one fixture:</div>{% endif %}
+    <ul class="occurrences">
+      {% for occ in row.occurrences %}<li>{{ occ.label }} <span class="occ-count">×{{ occ.count }}</span></li>{% endfor %}
+    </ul>
+    {% elif not row.pinned %}
+    <div class="desc">×{{ row.count }}</div>
+    {% endif %}
+  </div>
+</details>
+{% endif %}
+{% endmacro %}
 {% macro lens_link(row) %}{% if row.pinned %}<button type="button" class="lens-link" data-rule="{{ row.id }}">Show in calendar</button>{% else %}<span class="desc">Not tied to one fixture, so nothing to show in the calendar.</span>{% endif %}{% endmacro %}
 {% macro fixture_list(row) %}{% if row.pinned %}<details class="fx-list" data-rule="{{ row.id }}"><summary>{{ row.pinned }} fixture{{ '' if row.pinned == 1 else 's' }}, by team</summary><div class="rule-fixtures"></div></details>{% endif %}{% endmacro %}
 <div class="wrap">
@@ -749,7 +850,7 @@
     <div class="fairness-bars">
       {% for row in search_stats.breakdown %}
       <div class="fairness-bar" title="{{ row.description }}">
-        <span class="flabel">{{ row.id.replace('_', ' ') }}</span>
+        <span class="flabel">{{ row.name }}</span>
         <span class="ftrack"><span class="ffill" style="width:{{ row.pct }}%"></span></span>
         <span class="fcount">{{ '{:,}'.format(row.count) }}</span>
       </div>
@@ -775,7 +876,7 @@
 {% if not loop.first %}<template>{% endif %}
 
   <div class="scoreline">
-    <div class="total">{{ '%.0f'|format(option.points) }}<small>/ 100 · raw soft score {{ '%.1f'|format(option.soft_total) }}</small></div>
+    <div class="total">{{ '%.0f'|format(option.points) }}<small>/ 100</small></div>
     {% if option.feasible %}
       <span class="badge ok">feasible · 0 hard violations</span>
     {% else %}
@@ -783,6 +884,20 @@
     {% endif %}
     <button type="button" class="bar-btn jump-cal">Jump to calendar ↓</button>
   </div>
+
+  <details class="how-scored">
+    <summary>How is this scored?</summary>
+    <div class="how-body">
+      {% set sc = option.scoring %}
+      {% if sc.feasible %}
+      <p>With no hard-rule violations the score is 20 + 80 × s, where s = 1 ÷ (1 + e^−(soft per match ÷ {{ '%g'|format(sc.soft_scale) }})). This schedule has {{ '%.1f'|format(sc.raw_soft) }} raw soft points over {{ sc.num_matches }} match{{ '' if sc.num_matches == 1 else 'es' }}, {{ '%.2f'|format(sc.soft_per_match) }} per match, so s = {{ '%.3f'|format(sc.saturation) }} and the score is {{ '%.1f'|format(sc.points) }}, shown as {{ '%.0f'|format(option.points) }}.</p>
+      <p>Soft points are scored per match, so seasons of different sizes compare fairly. Per match, 0 gives {{ '%.0f'|format(sc.example_zero) }}; about {{ '%g'|format(sc.example_per_match) }} gives {{ '%.0f'|format(sc.example_points) }}; more keeps helping, with diminishing returns.</p>
+      {% else %}
+      <p>{{ sc.hard_violations }} hard-rule violation{{ '' if sc.hard_violations == 1 else 's' }} cap the score at 20 and shrink it with each one: 20 × e^(−0.25 × {{ sc.hard_violations }}) = {{ '%.1f'|format(sc.points) }}, shown as {{ '%.0f'|format(option.points) }}. Fix the broken rules below before comparing the soft rules.</p>
+      {% endif %}
+      <p>Each rule's bar is its share of the season's total soft movement: the absolute totals of all soft rules add up to {{ '%.1f'|format(sc.gross) }} points here. A green + adds points and a red − takes them away. Shares compare rules with each other; they are not points on the 0–100 scale.</p>
+    </div>
+  </details>
 
   <div class="headlines">
     {% for headline in option.headlines %}
@@ -800,10 +915,10 @@
     <div class="item down">
       <div class="top">
         <span class="name-row">
-          <span class="name">{{ row.id.replace('_', ' ') }}</span>
+          <span class="name">{{ row.name }}</span>
           {% set ns.tooltip_id = ns.tooltip_id + 1 %}
           <span class="info-wrap">
-            <button type="button" class="info-icon" aria-label="{{ row.id.replace('_', ' ') }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
+            <button type="button" class="info-icon" aria-label="{{ row.name }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
             <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
           </span>
         </span>
@@ -829,32 +944,7 @@
   <div class="cols season-part">
     <div class="col">
       <h3>{{ 'Every upside' if option.full else 'Biggest upsides' }}</h3>
-      {% for row in option.upsides %}
-      <details class="item up"{% if row.pinned %} data-rule="{{ row.id }}"{% endif %}>
-        <summary class="top">
-          <span class="name-row">
-            <span class="name">{{ row.id.replace('_', ' ') }}</span>
-            {% set ns.tooltip_id = ns.tooltip_id + 1 %}
-            <span class="info-wrap">
-              <button type="button" class="info-icon" aria-label="{{ row.id.replace('_', ' ') }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
-              <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
-            </span>
-          </span>
-          <span class="delta">+{{ '%.0f'|format(row.total) }}</span>
-        </summary>
-        <div class="item-body">
-          <div class="rule-actions">{{ lens_link(row) }}</div>
-          {% if row.pinned %}<div class="rule-fixtures"></div>{% endif %}
-          {% if row.occurrences %}
-          {% if row.pinned %}<div class="desc">Other events, not tied to one fixture:</div>{% endif %}
-          <ul class="occurrences">
-            {% for occ in row.occurrences %}<li>{{ occ.label }} <span class="occ-count">×{{ occ.count }}</span></li>{% endfor %}
-          </ul>
-          {% elif not row.pinned %}
-          <div class="desc">×{{ row.count }}</div>
-          {% endif %}
-        </div>
-      </details>
+      {% for row in option.upsides %}{{ rule_row(row, 'up', ns) }}
       {% else %}
       <div class="desc">Nothing scored positively.</div>
       {% endfor %}
@@ -862,37 +952,26 @@
 
     <div class="col">
       <h3>{{ 'Every problem (including the hard rules above)' if option.full else 'Biggest problems' }}</h3>
-      {% for row in option.problems %}
-      <details class="item down"{% if row.pinned %} data-rule="{{ row.id }}"{% endif %}>
-        <summary class="top">
-          <span class="name-row">
-            <span class="name">{{ row.id.replace('_', ' ') }}</span>
-            {% set ns.tooltip_id = ns.tooltip_id + 1 %}
-            <span class="info-wrap">
-              <button type="button" class="info-icon" aria-label="{{ row.id.replace('_', ' ') }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
-              <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
-            </span>
-          </span>
-          <span class="delta">{{ '%.0f'|format(row.total) }}</span>
-        </summary>
-        <div class="item-body">
-          <div class="rule-actions">{{ lens_link(row) }}</div>
-          {% if row.pinned %}<div class="rule-fixtures"></div>{% endif %}
-          {% if row.occurrences %}
-          {% if row.pinned %}<div class="desc">Other events, not tied to one fixture:</div>{% endif %}
-          <ul class="occurrences">
-            {% for occ in row.occurrences %}<li>{{ occ.label }} <span class="occ-count">×{{ occ.count }}</span></li>{% endfor %}
-          </ul>
-          {% elif not row.pinned %}
-          <div class="desc">×{{ row.count }}</div>
-          {% endif %}
-        </div>
-      </details>
+      {% for row in option.problems %}{{ rule_row(row, 'down', ns) }}
       {% else %}
       <div class="desc">Nothing scored negatively.</div>
       {% endfor %}
     </div>
   </div>
+
+  {% set soft = option.soft %}
+  <details class="season-part all-soft">
+    <summary>Show all {{ soft.count }} soft rules: helping, hurting, neutral</summary>
+    <p class="soft-sum">Helped by <b class="gain-text">{{ '%+.1f'|format(soft.helped)|replace('-', '−') }}</b>, hurt by <b class="cost-text">{{ '%+.1f'|format(soft.hurt)|replace('-', '−') }}</b>, net <b>{{ '%+.1f'|format(soft.net)|replace('-', '−') }}</b>.</p>
+    <div class="split-bar" aria-hidden="true"><span class="split-gain" style="width:{{ '%.1f'|format(soft.gain_pct) }}%"></span><span class="split-cost" style="width:{{ '%.1f'|format(100 - soft.gain_pct) }}%"></span></div>
+    <p class="desc">The gains and costs together are the rules’ gross movement of {{ '%.1f'|format(soft.helped - soft.hurt) }} points; the net is the raw soft score in the explanation above.</p>
+    <h4 class="group-head">Helping ({{ soft.helping|length }})</h4>
+    {% for row in soft.helping %}{{ rule_row(row, 'up', ns, true) }}{% else %}<div class="desc">None.</div>{% endfor %}
+    <h4 class="group-head">Hurting ({{ soft.hurting|length }})</h4>
+    {% for row in soft.hurting %}{{ rule_row(row, 'down', ns, true) }}{% else %}<div class="desc">None.</div>{% endfor %}
+    <h4 class="group-head">Neutral, zero or did not apply ({{ soft.neutral|length }})</h4>
+    {% if soft.neutral %}<p class="neutral-list">{{ soft.neutral|join(', ') }}</p>{% else %}<div class="desc">None.</div>{% endif %}
+  </details>
 
   {# With a club selected, report.js draws the club's upsides, problems and breakdown here. #}
   <div class="scope-card"></div>
@@ -900,27 +979,35 @@
   <details class="season-part">
     <summary>Full score breakdown — every rule</summary>
     <div class="cal-wrap">
+    {% set satisfied = option.breakdown|selectattr('kind', 'equalto', 'hard')|rejectattr('count')|list %}
+    {% if satisfied %}
+    <details class="hard-ok">
+      <summary>{{ satisfied|length }} hard rule{{ '' if satisfied|length == 1 else 's' }} satisfied ✓</summary>
+      <p class="desc">{{ satisfied|map(attribute='name')|join(', ') }}</p>
+    </details>
+    {% endif %}
     <table>
       <thead>
-        <tr><th>Rule</th><th>Type</th><th class="num">Contribution</th><th class="num">Events</th><th>Examples</th></tr>
+        <tr><th>Rule</th><th>Type</th><th class="num">Contribution</th><th class="num">Events</th><th class="col-extra">Examples</th></tr>
       </thead>
       <tbody>
-      {% for row in option.breakdown %}
+      {% for row in option.breakdown if row.kind == 'soft' or row.count %}
         <tr {% if row.kind == 'hard' and row.count %}class="violated"{% endif %}>
           <td>
             <span class="name-row">
-              <b>{{ row.id.replace('_', ' ') }}</b>
+              <b>{{ row.name }}</b>
               {% set ns.tooltip_id = ns.tooltip_id + 1 %}
               <span class="info-wrap">
-                <button type="button" class="info-icon" aria-label="{{ row.id.replace('_', ' ') }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
+                <button type="button" class="info-icon" aria-label="{{ row.name }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
                 <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
               </span>
             </span>
+            {% if row.coverage %}<div class="coverage">{{ row.coverage.achieved }} of {{ row.coverage.opportunities }} {{ row.coverage.unit }} ({{ '%.0f'|format(row.coverage.pct) }}%)</div>{% endif %}
           </td>
           <td><span class="kind {{ row.kind }}">{{ row.kind }}</span></td>
-          <td class="num">{{ '%+.1f'|format(row.total) if row.total else '—' }}</td>
+          <td class="num">{% if row.share is not none %}{{ contribution(row) }}<div class="raw">{{ '%+.1f'|format(row.total) }}</div>{% else %}{{ '%+.1f'|format(row.total) if row.total else '—' }}{% endif %}</td>
           <td class="num">{{ row.count }}</td>
-          <td>
+          <td class="col-extra">
             {% if row.pinned %}<div class="rule-actions">{{ lens_link(row) }}</div>{{ fixture_list(row) }}{% endif %}
             {% if row.examples %}
             <ul class="examples" style="margin:0;padding-left:16px">
@@ -948,7 +1035,7 @@
     {% for row in option.fairness %}
     <div class="fairness-row {{ 'flagged' if row.flagged }}">
       <div class="head">
-        <span class="fname">{{ row.id.replace('_', ' ') }}</span>
+        <span class="fname">{{ row.name }}</span>
         {% if row.flagged %}<span class="flag">⚠ uneven — {{ row.min }}–{{ row.max }} across entries</span>{% endif %}
       </div>
       <div class="desc">{{ row.description }}</div>

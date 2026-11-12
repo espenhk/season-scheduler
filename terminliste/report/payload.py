@@ -54,7 +54,7 @@ import re
 from typing import Any
 
 from ..model.loader import World
-from ..scoring.registry import badge_label, describe
+from ..scoring.registry import badge_label, describe, rule_name
 
 
 def css_id(raw: str) -> str:
@@ -149,6 +149,7 @@ def rule_table(
     return [
         {
             "id": rule_id,
+            "name": rule_name(rule_id),
             "label": badge_label(rule_id),
             "desc": describe(rule_id),
             **({"hard": 1} if rule_id in hard_ids else {}),
@@ -294,6 +295,7 @@ def option_wire(
     month_calendar: list[dict],
     month_calendar_details: list[dict],
     rule_totals: dict[str, float],
+    gross: float,
     score_order: list[int],
     club_unpinned: dict[str, list[list]],
     club_ranks: dict[str, list[dict]],
@@ -317,6 +319,7 @@ def option_wire(
         ],
         "headlines": headlines,
         "clubHeadlines": club_headlines,
+        "gross": round(gross, 2),
         # Rules in breakdown order, the scorecard's per-club figures, and how
         # many entries each club's lists show.
         "order": score_order,
