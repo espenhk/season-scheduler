@@ -33,10 +33,10 @@ from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_compet
 from ..model.loader import World
 from ..model.schema import WEEKDAYS, Fixture, Match
 from ..model.slots import RoundSlot, max_compatible_slots, slots_compatible
-from ..rounds.cup_schedule import cup_conflict, resolved_cup_windows
-from ..rounds.european_schedule import european_conflict
+from ..rounds.commitments import CommitmentSet
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import evaluate
+from ..scoring.soft import ContingentCommitmentConflict
 from ..slot_planner import SlotPlan
 from .base import (
     Candidate,
@@ -62,6 +62,8 @@ _EXTRA_SLOT_WEIGHT = 2.0
 # Share of rounds a later pass may leave in an earlier pass's slot.
 _SLOT_REUSE_SHARE = 0.8
 _MAX_LEVEL_TWO_RETRIES = 6
+# Share of a pass's remaining time one conflict shrink may spend.
+_SHRINK_BUDGET_SHARE = 0.25
 _LEVEL_ONE_BUDGET_SHARE = 0.3
 _MAX_LISTED = 12
 
@@ -99,6 +101,9 @@ class _League:
         return self.plan.competition.min_gap_days
 
 
+_CONFLICT_RULES = {"cup": "cup_round_conflict", "uefa": "european_commitment_conflict"}
+
+
 class _Problem:
     """Everything both levels read, resolved once per solve."""
 
@@ -106,10 +111,9 @@ class _Problem:
         self.request = request
         self.world: World = request.world
         self.season = request.season
-        self.cup_windows = resolved_cup_windows(request.cup_schedules)
-        self.european = request.european_commitments
+        self.commitments = request.commitments
         self.frame = request.frame or SeasonFrame.from_resolved(
-            request.world, request.cup_schedules, request.european_commitments
+            request.world, request.cup_schedules, request.commitments
         )
         self.slot_plans = slot_plans
         by_competition = calendars_by_competition(calendar, request.competitions)
@@ -131,26 +135,18 @@ class _Problem:
     def clear(self, team_id: str, day: date) -> bool:
         key = (team_id, day)
         if key not in self._clear:
-            self._clear[key] = not (
-                cup_conflict(self.cup_windows, team_id, day)
-                or european_conflict(self.european, team_id, day)
-            )
+            self._clear[key] = not self.commitments.blocked(team_id, day)
         return self._clear[key]
 
     def blockers(self, team_id: str, day: date) -> list[tuple[str, str]]:
         """Why `team_id` cannot play on `day`: (rule family, frame entry)."""
         found: list[tuple[str, str]] = []
-        for cup in self.frame.cup_days_of(team_id=team_id):
-            if abs((day - cup.date).days) - 1 < cup.min_rest_days:
+        for commitment in self.commitments.hard_for(team_id):
+            if commitment.clashes(day):
                 found.append(
-                    ("cup_round_conflict",
-                     f"{cup.label} on {cup.date} (needs {cup.min_rest_days} rest days)")
-                )
-        for commitment in self.european.get(team_id, ()):
-            if commitment.binding and abs((day - commitment.date).days) - 1 < commitment.min_rest_days:
-                found.append(
-                    ("european_commitment_conflict",
-                     f"{commitment.label} on {commitment.date} (needs {commitment.min_rest_days} rest days)")
+                    (_CONFLICT_RULES[commitment.source],
+                     f"{commitment.label} on {commitment.date} "
+                     f"(needs {commitment.min_rest_days} rest days)")
                 )
         return found
 
@@ -160,12 +156,7 @@ class _Problem:
         if key not in self._days:
             venue = self.world.team(home).home_venue
             days = [d for d in slot.days if league.calendar.is_allowed(d, venue)]
-            sides = _Sides(home, away)
-            days = _european_clear(
-                _cup_clear(days, sides, {t: w for t, w in self.cup_windows.items()}),
-                sides,
-                self.european,
-            )
+            days = _commitment_clear(days, _Sides(home, away), self.commitments)
             self._days[key] = tuple(days)
         return self._days[key]
 
@@ -283,15 +274,22 @@ class CpSatScheduler:
         previous_dates: list[dict[str, date]] = []
         season_deadline = started + request.time_budget_s
 
+        learned: list[tuple[_LevelOneSolution, list | None]] = []
         for pass_index in range(request.top_n):
             # Time an earlier pass left over goes to the later ones.
             now = time.perf_counter()
             deadline = now + (season_deadline - now) / (request.top_n - pass_index)
+            known_conflicts = len(learned)
             outcome = _run_pass(
-                cp_model, problem, previous, previous_dates, pass_index, deadline, stats, notes
+                cp_model, problem, previous, previous_dates, pass_index, deadline, stats, notes,
+                learned,
             )
             if outcome is None:
-                break
+                # With nothing found yet, a later pass resumes from the conflicts this
+                # one learned instead of giving up on the rest of the budget.
+                if candidates or len(learned) == known_conflicts:
+                    break
+                continue
             level_one, matches, plans = outcome
             matches.sort(key=lambda m: (m.date, m.competition_id, m.home_team))
             matches = assign_kickoff_times(
@@ -342,16 +340,20 @@ class CpSatScheduler:
 # -- one pass ----------------------------------------------------------------
 
 
-def _run_pass(cp_model, problem, previous, previous_dates, pass_index, deadline, stats, notes):
+def _run_pass(
+    cp_model, problem, previous, previous_dates, pass_index, deadline, stats, notes, learned
+):
     """Level 1, then Level 2, re-solving Level 1 when Level 2 is proven infeasible.
 
     Returns `(level_one_solution, matches, slot_plans)`, or `None` when the
     pass found nothing (the reason is appended to `notes`). Retry diagnostics
-    reach `stats` only when the pass ends without a schedule.
+    reach `stats` only when the pass ends without a schedule. Level 1 choices
+    Level 2 rejected go into `learned`, shared by every pass, since a conflict
+    stays a conflict whatever the diversity cuts.
     """
     request = problem.request
     cuts: list[_LevelOneSolution] = list(previous)
-    tried: list[_LevelOneSolution] = []
+    tried = learned
     failed_culprits: list[list[str]] = []
 
     def give_up_on_level_two() -> None:
@@ -402,7 +404,7 @@ def _run_pass(cp_model, problem, previous, previous_dates, pass_index, deadline,
         remaining = deadline - time.perf_counter()
         placed, domain_error = _place(problem, solution)
         if domain_error:
-            tried.append(solution)
+            tried.append((solution, None))
             failed_culprits.append(["no_day_for_fixture"])
             continue
 
@@ -424,14 +426,13 @@ def _run_pass(cp_model, problem, previous, previous_dates, pass_index, deadline,
             two.parameters.num_search_workers = 8
             two.parameters.random_seed = request.seed + pass_index + attempt
             relaxed_status = two.Solve(relaxed.model)
+            # Failure analysis below must describe the model that was last tried.
+            status2, built = relaxed_status, relaxed
             if relaxed_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-                status2, built = relaxed_status, relaxed
                 notes.append(
                     f"pass {pass_index}: min_rest_days RELAXED on request — some matches "
                     "fall on short rest; see the min_rest_days row in the score breakdown."
                 )
-            elif relaxed_status == cp_model.UNKNOWN:
-                status2 = relaxed_status
 
         if status2 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             if failed_culprits:
@@ -452,7 +453,17 @@ def _run_pass(cp_model, problem, previous, previous_dates, pass_index, deadline,
         failed_culprits.append(
             _culprits(two, status2, built.assumptions, cp_model) or [two.StatusName(status2)]
         )
-        tried.append(solution)
+        shrink_deadline = time.perf_counter() + _SHRINK_BUDGET_SHARE * (
+            deadline - time.perf_counter()
+        )
+        tried.append(
+            (
+                solution,
+                _conflicting_rounds(
+                    cp_model, problem, placed, shrink_deadline, relax=request.relax_min_rest
+                ),
+            )
+        )
 
     if failed_culprits:
         give_up_on_level_two()
@@ -527,11 +538,15 @@ def _build_level_one(cp_model, problem: _Problem, cuts, tried) -> _LevelOne:
     for lg in problem.leagues:
         pin_ids = {q.date: q.id for q in hard_full_rounds if q.competition == lg.id}
         pinned = set(pin_ids)
+        fixed = _fixed_round_dates(lg)
         for r in range(lg.rounds):
             for s in domain[(lg.id, r)]:
                 slot = lg.slots[s]
                 var = x[(lg.id, r, s)]
-                day_pin = next((d for d in pinned if slot.contains(d) and d in slot.days), None)
+                if r in fixed:
+                    day_pin = fixed[r] if fixed[r] in slot.days else None
+                else:
+                    day_pin = next((d for d in pinned if slot.contains(d) and d in slot.days), None)
                 if r == lg.rounds - 1 and not _final_days(problem, lg, slot, day_pin):
                     model.AddBoolOr([var.Not()]).OnlyEnforceIf(final_lit)
                     continue
@@ -567,6 +582,17 @@ def _build_level_one(cp_model, problem: _Problem, cuts, tried) -> _LevelOne:
             if (lg.id, r, s) in x
         ]
         model.AddBoolOr(holding or [literal.Not()]).OnlyEnforceIf(literal)
+
+    # -- TV-fixed round dates: the round sits in the slot holding its date (#15) --
+    for lg in problem.leagues:
+        for r, day in _fixed_round_dates(lg).items():
+            literal = assume(f"fixed_round_date:{lg.id}:{r + 1}")
+            holding = [
+                x[(lg.id, r, s)]
+                for s, slot in enumerate(lg.slots)
+                if day in slot.days and (lg.id, r, s) in x
+            ]
+            model.AddBoolOr(holding or [literal.Not()]).OnlyEnforceIf(literal)
 
     # -- hard fixed requirements: the team hosts in the round at its slot ------
     home_at_cache: dict[tuple[str, str, int], object] = {}
@@ -706,8 +732,25 @@ def _build_level_one(cp_model, problem: _Problem, cuts, tried) -> _LevelOne:
             x[(c, r, s)] for (c, r), s in earlier.slot_of.items() if (c, r, s) in x
         ]
         model.Add(sum(same) <= int(total_rounds * _SLOT_REUSE_SHARE))
-    for failed in tried:
-        same = [x[(c, r, s)] for (c, r), s in failed.slot_of.items() if (c, r, s) in x]
+    for failed, rounds in tried:
+        if rounds is None:
+            same = [x[(c, r, s)] for (c, r), s in failed.slot_of.items() if (c, r, s) in x]
+        else:
+            # Only the rounds Level 2 could not fit together, with their home/away
+            # choices, so the next Level 1 solution can't repeat the same conflict.
+            same = [
+                x[(c, r, failed.slot_of[(c, r)])]
+                for c, r in rounds
+                if (c, r, failed.slot_of[(c, r)]) in x
+            ]
+            pairs = {
+                (lg.id, frozenset((fx.home_team, fx.away_team)))
+                for lg in problem.leagues
+                for c, r in rounds
+                if c == lg.id
+                for fx in lg.round_fixtures[r]
+            }
+            same += [orient[key].Not() if failed.flipped[key] else orient[key] for key in pairs]
         model.Add(sum(same) <= len(same) - 1)
 
     model.Maximize(sum(coefficient * var for coefficient, var in terms))
@@ -746,6 +789,32 @@ def _can_be_adjacent(first: RoundSlot, second: RoundSlot) -> bool:
     return any(abs((a - b).days) == 1 for a in first.days for b in second.days)
 
 
+def _conflicting_rounds(cp_model, problem: _Problem, placed, deadline, relax: bool = False):
+    """A small set of `(league, round)` whose placed fixtures Level 2 still
+    cannot fit, found by dropping rounds one at a time.
+
+    Runs without the per-pass diversity cap and with the Level 2 model the pass
+    used (`relax`), so infeasibility is monotone in the rounds kept and the set
+    is a conflict in every pass. If the time runs out, the set so far is
+    returned: it is infeasible, just not minimal.
+    """
+    keep = sorted({(p.fixture.competition_id, p.fixture.round_index) for p in placed})
+    for key in list(keep):
+        if deadline - time.perf_counter() <= 0:
+            break
+        trial = [k for k in keep if k != key]
+        subset = [p for p in placed if (p.fixture.competition_id, p.fixture.round_index) in trial]
+        if not subset:
+            continue
+        built = _build_level_two(cp_model, problem, subset, [], relax=relax)
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = min(0.5, max(0.05, deadline - time.perf_counter()))
+        solver.parameters.num_search_workers = 8
+        if solver.Solve(built.model) == cp_model.INFEASIBLE:
+            keep = trial
+    return keep
+
+
 def _read_level_one(solver, level_one: _LevelOne, problem: _Problem) -> _LevelOneSolution:
     slot_of = {
         (c, r): s for (c, r, s), var in level_one.x.items() if solver.Value(var)
@@ -763,7 +832,7 @@ def _slot_plans(problem: _Problem, solution: _LevelOneSolution) -> dict[str, Slo
             teams = ", ".join(problem.world.team_label(t) for t in slot)
             plan.warnings.append(
                 f"{lg.id}: round {round_index + 1} on {chosen[round_index].default_day} "
-                f"clashes with a binding cup or UEFA date for {teams}"
+                f"clashes with a hard cup or UEFA commitment for {teams}"
             )
         plans[lg.id] = plan
     return plans
@@ -781,6 +850,7 @@ def _place(problem: _Problem, solution: _LevelOneSolution):
     season = problem.season
     for lg in problem.leagues:
         pins = {q.date for q in season.full_round_requirements if q.hard and q.competition == lg.id}
+        fixed = _fixed_round_dates(lg)
         required: dict[tuple[str, int], date] = {}
         for requirement in season.fixed_requirements:
             if requirement.hard and requirement.competition == lg.id:
@@ -794,7 +864,9 @@ def _place(problem: _Problem, solution: _LevelOneSolution):
             oriented = _oriented(fixture, solution, lg)
             slot = lg.slots[solution.slot_of[(lg.id, fixture.round_index)]]
             days = list(problem.fixture_days(lg, oriented.home_team, oriented.away_team, slot))
-            pinned = next((d for d in pins if slot.contains(d) and d in slot.days), None)
+            pinned = fixed.get(fixture.round_index) or next(
+                (d for d in pins if slot.contains(d) and d in slot.days), None
+            )
             forced = required.get((fixture.competition_id, id(fixture)), pinned)
             if forced is not None:
                 days = [d for d in days if d == forced]
@@ -921,6 +993,19 @@ def _build_level_two(cp_model, problem: _Problem, placed: list[_Placed], previou
             if len({owner[id(v)] for v in vars_}) > 1:
                 model.Add(sum(vars_) <= 1).OnlyEnforceIf(club_lit)
 
+    # At most N matches of one round per weekday (#15).
+    quota_vars: dict[tuple[str, int, str], list[object]] = defaultdict(list)
+    for item in placed:
+        competition = item.league.plan.competition
+        if item.fixture.round_index in competition.day_quota_exempt_rounds:
+            continue
+        for d, var in days[item.index].items():
+            weekday = WEEKDAYS[d.weekday()]
+            if weekday in competition.day_quota:
+                quota_vars[(competition.id, item.fixture.round_index, weekday)].append(var)
+    for (competition_id, _, weekday), vars_ in quota_vars.items():
+        model.Add(sum(vars_) <= problem.by_id[competition_id].plan.competition.day_quota[weekday])
+
     # -- objective --------------------------------------------------------------
     terms: list[tuple[int, object]] = []
     competitions = {p.competition.id: p.competition for p in problem.planned}
@@ -935,6 +1020,18 @@ def _build_level_two(cp_model, problem: _Problem, placed: list[_Placed], previou
                 terms.append((_scaled(weekday_weight), var))
             if d in discouraged:
                 terms.append((-_scaled(venue_weight), var))
+
+    # Same price as the scorer's `ContingentCommitmentConflict`, so a day near a
+    # commitment the team only maybe reaches is steered away from (#8).
+    contingent_weight = ContingentCommitmentConflict.weight
+    for item in placed:
+        for team_id in (item.fixture.home_team, item.fixture.away_team):
+            for commitment in problem.commitments.contingent_for(team_id):
+                for d, var in days[item.index].items():
+                    shortfall = commitment.min_rest_days - (abs((d - commitment.date).days) - 1)
+                    if shortfall > 0:
+                        penalty = contingent_weight * shortfall * commitment.reached_probability
+                        terms.append((-_scaled(penalty), var))
 
     for club in world.dual_clubs():
         seniors = [t.id for t in club.teams if t.level == "senior"]
@@ -1078,7 +1175,18 @@ def _describe_culprit(problem: _Problem, name: str) -> list[str]:
         req = next((r for r in problem.season.full_round_requirements if r.id == ident), None)
         if req:
             return [f"  {name}: every {req.competition} team plays on {req.date}"]
+    if family == "fixed_round_date":
+        competition_id, _, round_number = ident.rpartition(":")
+        lg = problem.by_id.get(competition_id)
+        if lg is not None:
+            day = _fixed_round_dates(lg).get(int(round_number) - 1)
+            return [f"  {name}: {competition_id} round {round_number} is fixed to {day}"]
     return []
+
+
+def _fixed_round_dates(lg: _League) -> dict[int, date]:
+    """Round index -> the date a TV pick fixes that round to (#15)."""
+    return {f.round - 1: f.date for f in lg.plan.competition.fixed_round_dates}
 
 
 def _culprits(solver, status, assumptions, cp_model) -> list[str]:
@@ -1107,25 +1215,14 @@ def _with_detail(ctx):
     )
 
 
-def _cup_clear(window: list[date], fixture, cup_windows: dict[str, list[tuple[date, int]]]) -> list[date]:
-    """Drop candidate dates that conflict with either side's cup commitment."""
+def _commitment_clear(window: list[date], fixture, commitments: CommitmentSet) -> list[date]:
+    """Drop candidate dates within rest of either side's hard commitment;
+    contingent ones stay in the domain and are scored instead."""
     return [
         day
         for day in window
-        if not cup_conflict(cup_windows, fixture.home_team, day)
-        and not cup_conflict(cup_windows, fixture.away_team, day)
-    ]
-
-
-def _european_clear(window: list[date], fixture, european_commitments) -> list[date]:
-    """`_cup_clear`'s counterpart for European dates. Only binding ones narrow
-    the domain (#93, #112); `EuropeanCommitmentSoftConflict` discourages the
-    rest instead of this excluding them outright."""
-    return [
-        day
-        for day in window
-        if not european_conflict(european_commitments, fixture.home_team, day)
-        and not european_conflict(european_commitments, fixture.away_team, day)
+        if not commitments.blocked(fixture.home_team, day)
+        and not commitments.blocked(fixture.away_team, day)
     ]
 
 

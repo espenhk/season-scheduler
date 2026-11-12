@@ -102,19 +102,36 @@ def plan_league_slots(
     frame: SeasonFrame,
 ) -> SlotPlan:
     rounds = competition.rounds
+    fixed_rounds = {f.round - 1: f.date for f in competition.fixed_round_dates}
     pins = frozenset(
-        r.date
-        for r in season.full_round_requirements
-        if r.hard and r.competition == competition.id
+        {
+            r.date
+            for r in season.full_round_requirements
+            if r.hard and r.competition == competition.id
+        }
+        | set(fixed_rounds.values())
     )
+    playoff_dates = frame.playoff_dates(competition.id) | {
+        day for p in competition.playoff_rounds if p.reserves_league for day in p.dates
+    }
+    clashing_pins = sorted(pins & playoff_dates)
+    if clashing_pins:
+        raise SlotPlanningError(
+            f"{competition.id}: pinned round date {clashing_pins[0]} is a play-off reservation"
+        )
     candidates = candidate_slots(
         season,
         competition,
         calendar,
-        skip_dates=frame.cup_weekend_dates(gender=competition.gender),
+        skip_dates=frame.cup_weekend_dates(gender=competition.gender) | playoff_dates,
         pinned_days=pins,
     )
-    candidates = [_with_clashes(s, competition, frame, pins) for s in candidates]
+    candidates = [
+        _with_clashes(s, competition, frame, pins)
+        for s in candidates
+        # A pinned day hosts a fixed or final-style round, which the quota exempts.
+        if _fits_quota(competition, s) or any(d in pins for d in s.days)
+    ]
 
     if len(candidates) < rounds:
         raise SlotPlanningError(
@@ -138,7 +155,10 @@ def plan_league_slots(
         and r.competition == competition.id
         and window_start <= r.date <= window_end
     )
-    chosen = _choose(candidates, competition, season, calendar, pins, requirements)
+    required_slots = _fixed_round_slots(candidates, competition, fixed_rounds)
+    chosen = _choose(
+        candidates, competition, season, calendar, pins, requirements, required_slots
+    )
     if chosen is None:
         raise SlotPlanningError(
             f"{competition.id}: no way to place {rounds} rounds in the {len(candidates)} "
@@ -150,6 +170,15 @@ def plan_league_slots(
     }
     chosen = _trim_unusable_days(chosen, competition, protected)
 
+    exempt = competition.day_quota_exempt_rounds
+    if not all(
+        _fits_quota(competition, slot) for i, slot in enumerate(chosen) if i not in exempt
+    ):
+        raise SlotPlanningError(
+            f"{competition.id}: trimming days for rest left a round slot that cannot hold "
+            f"its matches under day_quota"
+        )
+
     plan = SlotPlan(
         competition.id, rounds, candidates, chosen, min_gap_days=competition.min_gap_days
     )
@@ -157,9 +186,41 @@ def plan_league_slots(
         teams = ", ".join(world.team_label(t) for t in slot)
         plan.warnings.append(
             f"{competition.id}: round {round_index + 1} on {plan.chosen[round_index].default_day} "
-            f"clashes with a binding cup or UEFA date for {teams}; no clear slot was available"
+            f"clashes with a hard cup or UEFA commitment for {teams}; no clear slot was available"
         )
     return plan
+
+
+def _fixed_round_slots(
+    candidates: list[RoundSlot], competition: Competition, fixed_rounds: dict[int, date]
+) -> dict[int, int]:
+    """The candidate slot index each fixed round must take."""
+    required: dict[int, int] = {}
+    for round_index, day in sorted(fixed_rounds.items()):
+        if round_index >= competition.rounds:
+            raise SlotPlanningError(
+                f"{competition.id}: round {round_index + 1} is fixed on {day}, but the "
+                f"league has {competition.rounds} rounds"
+            )
+        slot_index = next(
+            (i for i, slot in enumerate(candidates) if day in slot.days), None
+        )
+        if slot_index is None:
+            raise SlotPlanningError(
+                f"{competition.id}: round {round_index + 1} is fixed on {day}, which is in "
+                f"no usable round slot (blackout, cup weekend, play-off or outside the window)"
+            )
+        required[round_index] = slot_index
+    return required
+
+
+def _fits_quota(competition: Competition, slot: RoundSlot) -> bool:
+    """Whether a round's matches fit the quota over the slot's weekdays; a
+    weekday without a quota is unbounded."""
+    if not competition.day_quota:
+        return True
+    limits = [competition.day_quota.get(WEEKDAYS[day.weekday()]) for day in slot.days]
+    return None in limits or sum(limits) >= competition.team_count // 2
 
 
 def _with_clashes(
@@ -167,13 +228,13 @@ def _with_clashes(
 ) -> RoundSlot:
     """The slot with its default day moved to the day fewest teams clash on,
     nearest the preferred weekday among equals. A pinned day stays put."""
-    dates = {team_id: _binding_dates(frame, team_id) for team_id in competition.teams}
+    dates = {team_id: _hard_dates(frame, team_id) for team_id in competition.teams}
 
     def clashing(day: date) -> tuple[str, ...]:
         return tuple(
             team_id
-            for team_id, binding in dates.items()
-            if any(abs((day - d).days) - 1 < min_rest for d, min_rest in binding)
+            for team_id, hard in dates.items()
+            if any(abs((day - d).days) - 1 < min_rest for d, min_rest in hard)
         )
 
     preferred = WEEKDAYS.index(competition.preferred_weekday)
@@ -223,12 +284,8 @@ def _trim_unusable_days(
     return result
 
 
-def _binding_dates(frame: SeasonFrame, team_id: str) -> list[tuple[date, int]]:
-    cups = [(d.date, d.min_rest_days) for d in frame.cup_days_of(team_id=team_id)]
-    european = [
-        (w.date, w.min_rest_days) for w in frame.uefa_weeks if team_id in w.binding_teams
-    ]
-    return cups + european
+def _hard_dates(frame: SeasonFrame, team_id: str) -> list[tuple[date, int]]:
+    return [(c.date, c.min_rest_days) for c in frame.commitments.hard_for(team_id)]
 
 
 def _slot_cost(slot: RoundSlot, competition: Competition, calendar: SeasonCalendar) -> float:
@@ -270,6 +327,7 @@ def _choose(
     calendar: SeasonCalendar,
     pins: frozenset[date],
     requirements: list[date],
+    required_slots: dict[int, int],
 ) -> list[RoundSlot] | None:
     n, k = len(slots), competition.rounds
     positions = _positions(slots)
@@ -290,12 +348,20 @@ def _choose(
     # best[c][j]: cheapest plan whose c-th round (1-based) is slot j.
     best = [[inf] * n for _ in range(k + 1)]
     back = [[-1] * n for _ in range(k + 1)]
+
+    def allowed(c: int, j: int) -> bool:
+        return required_slots.get(c - 1, j) == j
+
     for j in range(n):
+        if not allowed(1, j):
+            continue
         best[1][j] = (
             node[j] + (positions[j] - low) ** 2 + uncovered(None, slots[j].start)
         )
     for c in range(2, k + 1):
         for j in range(n):
+            if not allowed(c, j):
+                continue
             for i in range(j):
                 if best[c - 1][i] == inf or not slots_compatible(slots[i], slots[j], gap_days):
                     continue

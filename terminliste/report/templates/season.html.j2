@@ -679,6 +679,26 @@
 </details>
 {% endif %}
 
+{% if playoff_views %}
+<details>
+  <summary>
+    Play-off weeks
+    <span style="font-weight:400;color:var(--muted)">
+      · dates reserved after or between the league rounds
+    </span>
+  </summary>
+  <div class="item-body">
+    {% for view in playoff_views %}
+    <div class="desc">
+      <strong>{{ view.competition }}</strong> · {{ view.label }}
+      {%- if not view.reserves_league %} (other division's teams){% endif %}
+      · {% for d in view.dates %}{{ d.date.strftime('%a %d %b %Y') }} (week {{ d.iso_week }}){{ ', ' if not loop.last }}{% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
+
 {% if slot_views %}
 <details>
   <summary>

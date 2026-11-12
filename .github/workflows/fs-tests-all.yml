@@ -28,3 +28,4 @@ jobs:
     uses: ./.github/workflows/football-scheduler-tests-reusable.yml
     with:
       suites: "."
+      with-cpsat: true

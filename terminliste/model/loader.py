@@ -278,6 +278,7 @@ def validate_world(world: World) -> list[str]:
     errors.extend(_validate_european_cascade(world))
     errors.extend(_validate_main_tournaments(world))
     errors.extend(_validate_competition_colors(world))
+    errors.extend(_validate_league_formats(world))
     errors.extend(_validate_competition_short_names(world))
 
     for season in world.seasons.values():
@@ -565,32 +566,67 @@ def _validate_main_tournament_rounds(competition: Competition) -> list[str]:
 
 
 def _validate_main_tournaments(world: World) -> list[str]:
-    """Every `reachable_from` id (#79) names an existing UEFA *qualifying*
-    competition: reachability is only ever computed from a qualifying
-    entrant, never from one main tournament into another."""
+    """Every `on_win_main` / `on_loss_main` id (#8) names an existing UEFA
+    main tournament: a qualifying round only ever feeds a league phase."""
     errors: list[str] = []
     for competition in world.competitions.values():
-        if competition.format != "european" or not competition.is_main_tournament:
+        if competition.format != "european":
             continue
-        for source_id in competition.reachable_from:
-            source = world.competitions.get(source_id)
-            if source is None:
+        for round_ in competition.european_rounds:
+            for field_name in ("on_win_main", "on_loss_main"):
+                target_id = getattr(round_, field_name)
+                if target_id is None:
+                    continue
+                target = world.competitions.get(target_id)
+                where = f"{competition.id!r} round {round_.id!r} {field_name}"
+                if target is None:
+                    errors.append(f"{where} names unknown competition {target_id!r}")
+                elif target.format != "european" or not target.is_main_tournament:
+                    errors.append(f"{where} names {target_id!r}, which is not a main tournament")
+    return errors
+
+
+def _validate_league_formats(world: World) -> list[str]:
+    """Phases, play-offs and fixed round dates of every league (#15)."""
+    errors: list[str] = []
+    for competition in world.competitions.values():
+        cid = competition.id
+        regular = sum(p.rounds for p in competition.phases if p.kind == "regular")
+        if competition.phases and regular != competition.rounds:
+            errors.append(
+                f"competition {cid!r} declares {regular} regular-phase rounds but plays "
+                f"{competition.rounds}"
+            )
+        playoff_ids = [p.id for p in competition.playoff_rounds]
+        if len(set(playoff_ids)) != len(playoff_ids):
+            errors.append(f"competition {cid!r} has duplicate play-off ids")
+        fixed = competition.fixed_round_dates
+        if not fixed:
+            continue
+        if competition.format != "league":
+            errors.append(f"competition {cid!r} is not a league but fixes round dates")
+            continue
+        rounds = [f.round for f in fixed]
+        if len(set(rounds)) != len(rounds):
+            errors.append(f"competition {cid!r} fixes the same round twice")
+        ordered = sorted(fixed, key=lambda f: f.round)
+        for f in ordered:
+            if f.round > competition.rounds:
                 errors.append(
-                    f"main tournament {competition.id!r} is reachable_from unknown competition "
-                    f"{source_id!r}"
+                    f"competition {cid!r} fixes round {f.round}, beyond its {competition.rounds} rounds"
                 )
-                continue
-            if source.format != "european":
+        for earlier, later in zip(ordered, ordered[1:], strict=False):
+            if later.date <= earlier.date:
                 errors.append(
-                    f"main tournament {competition.id!r} is reachable_from {source_id!r}, which "
-                    f"is a {source.format}, not european"
+                    f"competition {cid!r}: round {later.round} ({later.date}) is not after "
+                    f"round {earlier.round} ({earlier.date})"
                 )
-                continue
-            if source.is_main_tournament:
-                errors.append(
-                    f"main tournament {competition.id!r} is reachable_from {source_id!r}, which "
-                    f"is itself a main tournament, not a qualifying competition"
-                )
+        reserved = {d for p in competition.playoff_rounds if p.reserves_league for d in p.dates}
+        errors.extend(
+            f"competition {cid!r} fixes round {f.round} on {f.date}, a play-off date"
+            for f in fixed
+            if f.date in reserved
+        )
     return errors
 
 

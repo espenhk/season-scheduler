@@ -504,18 +504,11 @@ def test_main_tournament_renders_via_the_display_adapter():
     )
 
     world, season, comp_m, comp_w = _two_dual_clubs_world()
-    qualifying = f.competition(
-        "cl",
-        ["a_m"],
-        format="european",
-        european_rounds=[f.european_round("playoff", entrants=["a_m"], forced_date=date(2026, 8, 18))],
-    )
     main = f.competition(
         "cl_main",
         [],
         format="european",
         is_main_tournament=True,
-        reachable_from=["cl"],
         league_phase_matchdays=[f.european_matchday("md1", forced_date=date(2026, 9, 10))],
         knockout_rounds=[
             f.main_tournament_round(
@@ -527,7 +520,7 @@ def test_main_tournament_renders_via_the_display_adapter():
         ],
     )
 
-    rounds, resolved_legs = build_main_tournament_rounds_for_display(main, [qualifying, main], set())
+    rounds, resolved_legs = build_main_tournament_rounds_for_display(main, ["a_m"], set())
     display_main = main.model_copy(update={"european_rounds": rounds})
 
     entries = _european_entries(world, [display_main], resolved_legs, {})
@@ -1363,3 +1356,28 @@ def test_the_payload_carries_each_teams_gender_and_the_club_ranks_for_the_scorec
     for row in option["clubRanks"]["club_a"]:
         assert row["by"] in {"team", "club"} and row["of"] >= len(row["found"])
         assert all(1 <= rank <= row["of"] for _, _, rank in row["found"])
+
+
+def test_render_report_shows_the_playoff_weeks():
+    import tempfile
+    from pathlib import Path
+
+    from terminliste.model.schema import PlayoffRound
+
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    comp_m.playoff_rounds = [
+        PlayoffRound(id="po", label="Relegation play-off", dates=[date(2026, 12, 17), date(2026, 12, 21)])
+    ]
+    candidate = _candidate(
+        world, season, [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")], []
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rendered = render_report(
+            world, season, SolverResult(candidates=[candidate], solver="test"), Path(tmp) / "out.html"
+        ).read_text(encoding="utf-8")
+
+    assert "Play-off weeks" in rendered
+    assert "Relegation play-off" in rendered
+    assert "Thu 17 Dec 2026 (week 51)" in rendered
+    assert "Mon 21 Dec 2026 (week 52)" in rendered

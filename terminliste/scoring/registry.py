@@ -10,26 +10,26 @@ from __future__ import annotations
 
 from ..model.loader import World
 from ..model.schema import Competition, Season
-from ..rounds.cup_schedule import CupSchedule
-from ..rounds.european_schedule import EuropeanCommitmentDate
+from ..rounds.commitments import CommitmentSet
 from .base import Constraint
 from .hard import (
     BlackoutDates,
     ClubHomeClash,
-    CupRoundConflict,
-    EuropeanCommitmentConflict,
+    CommitmentConflict,
     FinalRoundSameSlot,
     FixedDateRequirement,
+    FixedRoundDates,
     FullRoundOnDate,
     LegOrdering,
     MinRestDays,
     OneMatchPerTeamPerDay,
+    RoundDayQuota,
     VenueDoubleBooking,
 )
 from .soft import (
     ConsecutiveAwayDays,
     ConsecutiveHomeDays,
-    EuropeanCommitmentSoftConflict,
+    ContingentCommitmentConflict,
     GrassAwayRoundOne,
     GrassSeasonEdge,
     HomeAwayBalance,
@@ -47,16 +47,14 @@ def build_constraints(
     world: World,
     season: Season,
     competitions: list[Competition],
-    cup_schedules: list[CupSchedule] | None = None,
-    european_commitments: dict[str, list[EuropeanCommitmentDate]] | None = None,
+    commitments: CommitmentSet | None = None,
 ) -> list[Constraint]:
     """Every rule in force for this season, hard first.
 
-    `competitions` are the league(s) being scheduled. `cup_schedules` and
-    `european_commitments` are already-resolved dates for competitions sharing
-    their teams — never scheduled here, only kept clear of, by
-    `CupRoundConflict` and the two European constraints (the soft one covers
-    the `certain=False`, cascade-fork dates the hard one skips — #93).
+    `competitions` are the league(s) being scheduled. `commitments` are the
+    already-resolved cup and UEFA dates of teams sharing them — never
+    scheduled here, only kept clear of: the hard ones by `CommitmentConflict`,
+    the contingent ones by `ContingentCommitmentConflict` (#8).
     """
     hard_requirements = [r for r in season.fixed_requirements if r.hard]
 
@@ -74,12 +72,14 @@ def build_constraints(
     hard_full_rounds = [r for r in season.full_round_requirements if r.hard]
     if hard_full_rounds:
         constraints.append(FullRoundOnDate(requirements=hard_full_rounds))
-    if cup_schedules:
-        constraints.append(CupRoundConflict(cup_schedules=cup_schedules))
-    if european_commitments:
-        constraints.append(
-            EuropeanCommitmentConflict(commitments_by_team=european_commitments)
-        )
+    if any(c.fixed_round_dates for c in competitions):
+        constraints.append(FixedRoundDates(competitions=competitions))
+    if any(c.day_quota for c in competitions):
+        constraints.append(RoundDayQuota(competitions=competitions))
+    commitments = commitments or CommitmentSet()
+    for source in ("cup", "uefa"):
+        if any(c.source == source for c in commitments):
+            constraints.append(CommitmentConflict(commitments=commitments, source=source))
 
     constraints.extend(
         [
@@ -96,10 +96,8 @@ def build_constraints(
             TvTimeSpread(competitions=competitions),
         ]
     )
-    if european_commitments:
-        constraints.append(
-            EuropeanCommitmentSoftConflict(commitments_by_team=european_commitments)
-        )
+    if any(not c.hard for c in commitments):
+        constraints.append(ContingentCommitmentConflict(commitments=commitments))
 
     # Soft fixed requirements ride on the same constraint as hard ones, scored
     # rather than enforced.
@@ -129,9 +127,9 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
     "club_home_clash": "A club's teams are never both at home on the same day.",
     "leg_ordering": "Every first meeting is played before any second meeting.",
     "fixed_requirement": "A named team must be at home on a named date.",
-    "cup_round_conflict": "A team's league matches stay clear of its cup round dates.",
-    "european_commitment_conflict": "A team's league matches stay clear of its European qualifying leg dates.",
-    "european_commitment_soft_conflict": "A team's league matches prefer to stay clear of a European leg date it only reaches via one of several cascade branches.",
+    "cup_round_conflict": "A team's league matches stay clear of the cup rounds it is certain to play.",
+    "european_commitment_conflict": "A team's league matches stay clear of the European legs it is certain to play.",
+    "contingent_commitment_conflict": "A team's league matches prefer to stay clear of a cup or European date it only reaches with some probability, weighted by that probability.",
     "fixed_requirement_preferred": "A named team should be at home on a named date.",
     "preferred_weekday": "Matches on the league's preferred weekday.",
     "consecutive_home_days": "A club's two teams at home on back-to-back days.",
@@ -141,6 +139,8 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
     "rest_comfort": "Rest gaps at or above the comfortable target, not just the legal minimum.",
     "soft_venue_preference": "Matches avoid dates that are legal but discouraged.",
     "final_round_same_slot": "Every league's final round shares one date and kickoff time.",
+    "fixed_round_dates": "A round whose date is fixed (by TV) is played entirely on that date.",
+    "round_day_quota": "No weekday hosts more matches of one round than the league's quota.",
     "full_round_on_date": "Every team in a competition has a match on a named date.",
     "grass_away_round_one": "Grass-pitch clubs play away in round 1.",
     "grass_season_edge": "Grass-pitch home matches avoid the cold edges of the season, with the window shifted by latitude.",
@@ -162,7 +162,7 @@ BADGE_LABELS: dict[str, str] = {
     "fixed_requirement": "fixed date",
     "cup_round_conflict": "cup clash",
     "european_commitment_conflict": "Europe clash",
-    "european_commitment_soft_conflict": "Europe risk",
+    "contingent_commitment_conflict": "likely clash",
     "fixed_requirement_preferred": "preferred date",
     "preferred_weekday": "off-day",
     "consecutive_home_days": "home pair",
@@ -172,6 +172,8 @@ BADGE_LABELS: dict[str, str] = {
     "rest_comfort": "short rest",
     "soft_venue_preference": "discouraged date",
     "final_round_same_slot": "final-round slot",
+    "fixed_round_dates": "off TV date",
+    "round_day_quota": "day over quota",
     "full_round_on_date": "round date",
     "grass_away_round_one": "grass: away R1",
     "grass_season_edge": "cold grass",

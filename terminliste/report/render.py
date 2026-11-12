@@ -21,6 +21,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from ..frame import build_playoff_weeks
 from ..model.calendar import build_calendar, calendars_by_competition
 from ..model.loader import World
 from ..model.schema import WEEKDAYS, Competition, Match, Season
@@ -158,6 +159,7 @@ def render_report(
         palette_css=payload.palette_css(club_colors, competitions),
         report_data_json=payload.json_for_script(report_data),
         client_js=(TEMPLATE_DIR / "report.js").read_text(encoding="utf-8"),
+        playoff_views=_playoff_views(world, season),
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")
@@ -224,6 +226,29 @@ def _build_option(
             full=full_diagnostics,
         ),
     }
+
+
+def _playoff_views(world: World, season: Season) -> list[dict]:
+    """The frame's play-off reservations, one entry per play-off round, for
+    the "Play-off weeks" overview (#15)."""
+    leagues = [world.competition(c) for c in season.competitions]
+    grouped: dict[tuple[str, str], list] = {}
+    for week in build_playoff_weeks(leagues):
+        grouped.setdefault((week.competition_id, week.play_off_id), []).append(week)
+    views = []
+    for (competition_id, _), weeks in grouped.items():
+        first = weeks[0]
+        views.append(
+            {
+                "competition": world.competition(competition_id).name,
+                "label": first.label,
+                "reserves_league": first.reserves_league,
+                "dates": [
+                    {"date": w.date, "iso_week": w.iso_week[1]} for w in weeks
+                ],
+            }
+        )
+    return sorted(views, key=lambda v: v["dates"][0]["date"])
 
 
 def _slot_views(world: World, season: Season, result: SolverResult) -> list[dict]:

@@ -26,8 +26,8 @@ from ..model.calendar import (
 from ..model.loader import World
 from ..model.schema import WEEKDAYS, Competition, Fixture, Match, Season
 from ..model.slots import RoundSlot
-from ..rounds.cup_schedule import CupSchedule, cup_conflict, resolved_cup_windows
-from ..rounds.european_schedule import EuropeanCommitmentDate, european_conflict
+from ..rounds.commitments import CommitmentSet
+from ..rounds.cup_schedule import CupSchedule
 from ..rounds.round_robin import generate_fixtures
 from ..slot_planner import SlotPlan, plan_slots
 from .base import round_for_date
@@ -38,15 +38,18 @@ _BLOCKED = 1e9
 _REST_VIOLATION = 1e6
 _VENUE_CLASH = 1e6
 _CLUB_HOME_CLASH = 1e6
-_CUP_CONFLICT = 1e6
-_EUROPEAN_CONFLICT = 1e6
-# A non-binding European date is only a soft penalty in scoring, so placement
-# leans away from it without treating it as forbidden.
-_EUROPEAN_SOFT_CONFLICT = 30.0
+_COMMITMENT_CONFLICT = 1e6
+# A contingent commitment is only a soft penalty in scoring, so placement
+# leans away from it, scaled by how likely the team is to get there, without
+# treating it as forbidden.
+_CONTINGENT_CONFLICT = 30.0
 _OFF_PREFERRED_WEEKDAY = 12.0
 _DISCOURAGED_DATE = 20.0
 _CONSECUTIVE_HOME_BONUS = 40.0
 _DRIFT_FROM_ANCHOR = 3.0
+# A quota is a hard rule, so breaking it costs more than any preference; it
+# stays below the rest and venue clashes, which a repair cannot undo.
+_QUOTA_EXCEEDED = 5e5
 
 _ONE_DAY = timedelta(days=1)
 
@@ -58,11 +61,15 @@ class PlacementState:
     team_dates: dict[str, set[date]] = field(default_factory=dict)
     venue_dates: set[tuple[str, date]] = field(default_factory=set)
     club_home_dates: dict[str, dict[date, list[str]]] = field(default_factory=dict)
+    # Matches placed per (competition, round, weekday), for `day_quota`.
+    weekday_counts: dict[tuple[str, int, int], int] = field(default_factory=dict)
 
     def place(self, world: World, match: Match) -> None:
         self.team_dates.setdefault(match.home_team, set()).add(match.date)
         self.team_dates.setdefault(match.away_team, set()).add(match.date)
         self.venue_dates.add((match.venue, match.date))
+        quota_key = (match.competition_id, match.round_index, match.date.weekday())
+        self.weekday_counts[quota_key] = self.weekday_counts.get(quota_key, 0) + 1
         club_id = world.team(match.home_team).club_id
         self.club_home_dates.setdefault(club_id, {}).setdefault(match.date, []).append(
             match.home_team
@@ -236,16 +243,16 @@ def resolve_round_pins(
     season: Season,
     planned: list[PlannedCompetition],
     by_competition: dict[str, SeasonCalendar] | None = None,
-    cup_windows: dict[str, list[tuple[date, int]]] | None = None,
-    european_commitments: dict[str, list[EuropeanCommitmentDate]] | None = None,
+    commitments: CommitmentSet | None = None,
 ) -> tuple[dict[tuple[str, int], date], list[str]]:
     """Rounds that must land on one single date, keyed by (competition_id, round_index).
 
-    Two sources: every league's final round (`FinalRoundSameSlot`), and any
-    hard `FullRoundRequirement`, which claims the round whose anchor already
-    sits closest to it (`FullRoundOnDate`).
+    Three sources: every league's final round (`FinalRoundSameSlot`), a
+    league's `fixed_round_dates` (`FixedRoundDates`), and any hard
+    `FullRoundRequirement`, which claims the round whose anchor already sits
+    closest to it (`FullRoundOnDate`).
 
-    A pinned round puts *every* team on the same date, so a resolved cup or
+    A pinned round puts *every* team on the same date, so a hard cup or
     European commitment for even one of them conflicts — unlike a single
     fixture's window, which need only clear the two teams playing. Conflicts
     are returned as warnings rather than raised, so a caller can surface them
@@ -255,8 +262,7 @@ def resolve_round_pins(
     clear date; a `FullRoundRequirement`'s date is fixed and can only be
     flagged.
     """
-    european_commitments = european_commitments or {}
-    cup_windows = cup_windows or {}
+    commitments = commitments or CommitmentSet()
 
     pins: dict[tuple[str, int], date] = {}
     warnings: list[str] = []
@@ -273,14 +279,25 @@ def resolve_round_pins(
             anchor,
             plan,
             calendar,
-            cup_windows,
-            european_commitments,
+            commitments,
             movable=True,
             slot=plan.slots.get(final_round),
         )
         pins[(plan.competition.id, final_round)] = chosen
         if warning:
             warnings.append(warning)
+
+    for plan in planned:
+        for fixed in plan.competition.fixed_round_dates:
+            round_index = fixed.round - 1
+            if round_index not in plan.anchors:
+                continue
+            _, warning = _clear_pin_date(
+                fixed.date, plan, None, commitments, movable=False
+            )
+            pins[(plan.competition.id, round_index)] = fixed.date
+            if warning:
+                warnings.append(warning)
 
     for requirement in season.full_round_requirements:
         if not requirement.hard:
@@ -290,7 +307,7 @@ def resolve_round_pins(
             continue
         round_index = round_for_date(plan.slots, plan.anchors, requirement.date)
         _, warning = _clear_pin_date(
-            requirement.date, plan, None, cup_windows, european_commitments, movable=False
+            requirement.date, plan, None, commitments, movable=False
         )
         pins[(plan.competition.id, round_index)] = requirement.date
         if warning:
@@ -303,8 +320,7 @@ def _clear_pin_date(
     anchor: date,
     plan: PlannedCompetition,
     calendar: SeasonCalendar | None,
-    cup_windows: dict[str, list[tuple[date, int]]],
-    european_commitments: dict[str, list[EuropeanCommitmentDate]],
+    commitments: CommitmentSet,
     movable: bool,
     slot: RoundSlot | None = None,
 ) -> tuple[date, str | None]:
@@ -314,34 +330,26 @@ def _clear_pin_date(
     round's slot, nearest first.
     """
     team_ids = plan.competition.teams
-    if _round_clear(anchor, team_ids, cup_windows, european_commitments):
+    if _round_clear(anchor, team_ids, commitments):
         return anchor, None
 
     if movable and slot is not None:
         for day in sorted(slot.days, key=lambda d: (abs((d - anchor).days), d)):
             if calendar is not None and not calendar.is_allowed(day):
                 continue
-            if _round_clear(day, team_ids, cup_windows, european_commitments):
+            if _round_clear(day, team_ids, commitments):
                 return day, None
 
     round_desc = "final round" if movable else "full-round requirement"
     resolution = "no clear nearby date was found" if movable else "the date cannot move"
     return anchor, (
-        f"{plan.competition.id}: {round_desc} on {anchor} conflicts with a resolved cup or "
+        f"{plan.competition.id}: {round_desc} on {anchor} conflicts with a hard cup or "
         f"European commitment for at least one team, and {resolution}"
     )
 
 
-def _round_clear(
-    day: date,
-    team_ids: list[str],
-    cup_windows: dict[str, list[tuple[date, int]]],
-    european_commitments: dict[str, list[EuropeanCommitmentDate]],
-) -> bool:
-    return not any(
-        cup_conflict(cup_windows, team_id, day) or european_conflict(european_commitments, team_id, day)
-        for team_id in team_ids
-    )
+def _round_clear(day: date, team_ids: list[str], commitments: CommitmentSet) -> bool:
+    return not any(commitments.blocked(team_id, day) for team_id in team_ids)
 
 
 def align_home_teams_to_requirements(season: Season, planned: list[PlannedCompetition]) -> None:
@@ -471,7 +479,7 @@ def build_initial_schedule(
     calendar: SeasonCalendar | None = None,
     align: bool = True,
     cup_schedules: list[CupSchedule] | None = None,
-    european_commitments: dict[str, list[EuropeanCommitmentDate]] | None = None,
+    commitments: CommitmentSet | None = None,
     slot_plans: dict[str, SlotPlan] | None = None,
 ) -> tuple[list[Match], set[str], list[str]]:
     """Return a complete schedule, the keys of fixtures pinned to a date, and
@@ -484,10 +492,9 @@ def build_initial_schedule(
     test measure what coupled scheduling is worth against the same placer run
     with the leagues unaware of each other.
 
-    `cup_schedules` and `european_commitments` steer placement away from each
-    team's resolved commitment dates up front, so the local search starts from
-    a schedule that mostly already respects `CupRoundConflict` and
-    `EuropeanCommitmentConflict`.
+    `commitments` steer placement away from each team's hard commitment dates
+    up front, so the local search starts from a schedule that mostly already
+    respects `CommitmentConflict`.
 
     `slot_plans` fix which slot each round sits in; without them they are
     planned from the same cups and commitments.
@@ -496,16 +503,15 @@ def build_initial_schedule(
     calendar = calendar or build_calendar(world, season)
     by_competition = calendars_by_competition(calendar, competitions)
     if slot_plans is None:
-        frame = SeasonFrame.from_resolved(world, cup_schedules or [], european_commitments or {})
+        frame = SeasonFrame.from_resolved(
+            world, cup_schedules or [], commitments or CommitmentSet(), competitions
+        )
         slot_plans = plan_slots(world, season, competitions, calendar, frame)
     planned = plan_competitions(world, season, competitions, calendar, rng, slot_plans)
     if align:
         align_dual_clubs(world, planned)
-    cup_windows = resolved_cup_windows(cup_schedules or [])
-    european = european_commitments or {}
-    round_pins, pin_warnings = resolve_round_pins(
-        season, planned, by_competition, cup_windows, european
-    )
+    commitments = commitments or CommitmentSet()
+    round_pins, pin_warnings = resolve_round_pins(season, planned, by_competition, commitments)
     align_home_teams_to_requirements(season, planned)
 
     state = PlacementState()
@@ -593,8 +599,7 @@ def build_initial_schedule(
             anchor,
             state,
             rng,
-            cup_windows,
-            european,
+            commitments,
         )
         matches.append(match)
         state.place(world, match)
@@ -636,8 +641,7 @@ def _place_fixture(
     anchor: date,
     state: PlacementState,
     rng: random.Random,
-    cup_windows: dict[str, list[tuple[date, int]]],
-    european_commitments: dict[str, list[EuropeanCommitmentDate]],
+    commitments: CommitmentSet,
 ) -> Match:
     competition = plan.competition
     venue = world.team(fixture.home_team).home_venue
@@ -652,11 +656,17 @@ def _place_fixture(
     for day in window:
         cost = _placement_cost(
             world, calendar, competition, fixture, venue, day, anchor, preferred_weekday, state,
-            cup_windows, european_commitments,
+            commitments,
         )
         # Noise so different seeds explore different starting points, small
         # enough never to outweigh a real preference.
         cost += rng.random() * 0.5
+        limit = competition.day_quota.get(WEEKDAYS[day.weekday()])
+        if limit is not None and (
+            state.weekday_counts.get((competition.id, fixture.round_index, day.weekday()), 0)
+            >= limit
+        ):
+            cost += _QUOTA_EXCEEDED
         if cost < best_cost:
             best_cost, best_day = cost, day
 
@@ -681,8 +691,7 @@ def _placement_cost(
     anchor: date,
     preferred_weekday: int,
     state: PlacementState,
-    cup_windows: dict[str, list[tuple[date, int]]],
-    european_commitments: dict[str, list[EuropeanCommitmentDate]],
+    commitments: CommitmentSet,
 ) -> float:
     cost = 0.0
 
@@ -695,12 +704,7 @@ def _placement_cost(
     if state.rest_conflict(fixture.away_team, day, minimum):
         cost += _REST_VIOLATION
 
-    if cup_conflict(cup_windows, fixture.home_team, day) or cup_conflict(
-        cup_windows, fixture.away_team, day
-    ):
-        cost += _CUP_CONFLICT
-
-    cost += european_cost(european_commitments, fixture, day)
+    cost += commitment_cost(commitments, fixture, day)
 
     if (venue, day) in state.venue_dates:
         cost += _VENUE_CLASH
@@ -724,14 +728,11 @@ def _placement_cost(
     return cost
 
 
-def european_cost(
-    european_commitments: dict[str, list[EuropeanCommitmentDate]], fixture: Fixture, day: date
-) -> float:
-    """Placement cost of `fixture` on `day` from either team's European dates:
-    forbidding for a binding one, a nudge for a non-binding one (#112)."""
+def commitment_cost(commitments: CommitmentSet, fixture: Fixture, day: date) -> float:
+    """Placement cost of `fixture` on `day` from either team's commitments:
+    forbidding for a hard one, a nudge scaled by probability for a
+    contingent one (#8)."""
     teams = (fixture.home_team, fixture.away_team)
-    if any(european_conflict(european_commitments, team, day) for team in teams):
-        return _EUROPEAN_CONFLICT
-    if any(european_conflict(european_commitments, team, day, binding=False) for team in teams):
-        return _EUROPEAN_SOFT_CONFLICT
-    return 0.0
+    if any(commitments.blocked(team, day) for team in teams):
+        return _COMMITMENT_CONFLICT
+    return _CONTINGENT_CONFLICT * sum(commitments.contingent_weight(team, day) for team in teams)

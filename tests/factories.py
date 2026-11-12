@@ -30,6 +30,7 @@ from terminliste.model.schema import (
     TvTimeSpread,
     Venue,
 )
+from terminliste.rounds.commitments import Commitment, CommitmentSet
 from terminliste.rounds.cup_schedule import CupRoundPlacement, CupSchedule
 
 # `color=None` stays meaningful — a test may want a colourless competition —
@@ -93,12 +94,16 @@ def competition(
     is_main_tournament: bool = False,
     league_phase_matchdays: list[EuropeanMatchday] | None = None,
     knockout_rounds: list[MainTournamentRound] | None = None,
-    reachable_from: list[str] | None = None,
+    advance_probability: float = 0.5,
     start: date | None = None,
     end: date | None = None,
     final_round_kickoff_time: str = "18:00",
     kickoff_slots: list[str] | None = None,
     tv_time_spread: TvTimeSpread | None = None,
+    phases: list | None = None,
+    playoff_rounds: list | None = None,
+    fixed_round_dates: list | None = None,
+    day_quota: dict | None = None,
     color: str | None = _AUTO_COLOR,  # type: ignore[assignment]
     short_name: str | None = _AUTO_SHORT_NAME,  # type: ignore[assignment]
 ) -> Competition:
@@ -125,12 +130,16 @@ def competition(
         is_main_tournament=is_main_tournament,
         league_phase_matchdays=league_phase_matchdays or [],
         knockout_rounds=knockout_rounds or [],
-        reachable_from=reachable_from or [],
+        advance_probability=advance_probability,
         start=start,
         end=end,
         final_round_kickoff_time=final_round_kickoff_time,
         kickoff_slots=kickoff_slots or ["14:00", "18:00", "20:00"],
         tv_time_spread=tv_time_spread,
+        phases=phases or [],
+        playoff_rounds=playoff_rounds or [],
+        fixed_round_dates=fixed_round_dates or [],
+        day_quota=day_quota or {},
         # Derived from `id` so several colourless competitions in one test
         # world still get distinct colours and pass
         # `_validate_competition_colors` (#77).
@@ -148,6 +157,8 @@ def cup_round(
     note: str = "",
     preferred_weekday: str = "wednesday",
     team_overrides: dict[str, date] | None = None,
+    advance_probability: float | None = None,
+    reached_teams: list[str] | None = None,
 ) -> CupRound:
     return CupRound(
         id=id,
@@ -159,6 +170,8 @@ def cup_round(
         note=note,
         preferred_weekday=preferred_weekday,
         team_overrides=team_overrides or {},
+        advance_probability=advance_probability,
+        reached_teams=reached_teams or [],
     )
 
 
@@ -176,8 +189,20 @@ def european_leg(
     )
 
 
-def european_tie(team: str, opponent: str = "TBD", home_leg: str | None = None) -> EuropeanTie:
-    return EuropeanTie(team=team, opponent=opponent, home_leg=home_leg)
+def european_tie(
+    team: str,
+    opponent: str = "TBD",
+    home_leg: str | None = None,
+    win_probability: float = 0.5,
+    reached: bool = False,
+) -> EuropeanTie:
+    return EuropeanTie(
+        team=team,
+        opponent=opponent,
+        home_leg=home_leg,
+        win_probability=win_probability,
+        reached=reached,
+    )
 
 
 def european_round(
@@ -194,6 +219,8 @@ def european_round(
     note: str = "",
     drop_to_competition: str | None = None,
     drop_to_round: str | None = None,
+    on_win_main: str | None = None,
+    on_loss_main: str | None = None,
 ) -> EuropeanRound:
     """`forced_date`/`window_*` give both legs the same date/window — the
     common case for a test that doesn't care about leg-level granularity.
@@ -213,6 +240,8 @@ def european_round(
         note=note,
         drop_to_competition=drop_to_competition,
         drop_to_round=drop_to_round,
+        on_win_main=on_win_main,
+        on_loss_main=on_loss_main,
     )
 
 
@@ -313,6 +342,7 @@ def season(
     start: date = date(2026, 1, 1),
     end: date = date(2026, 12, 31),
     year: int = 2026,
+    contingency_policy=None,
 ) -> Season:
     return Season(
         id=id,
@@ -329,6 +359,7 @@ def season(
         fixed_requirements=fixed_requirements or [],
         full_round_requirements=full_round_requirements or [],
         rivalry_fixtures=rivalry_fixtures or [],
+        **({'contingency_policy': contingency_policy} if contingency_policy is not None else {}),
         discouraged_dates=discouraged_dates or [],
         extra_round_slots=extra_round_slots or [],
     )
@@ -365,3 +396,37 @@ def match(
         venue=venue_id,
         kickoff_time=kickoff_time,
     )
+
+
+def commitment(
+    team_id: str,
+    day: date,
+    *,
+    hard: bool = True,
+    probability: float | None = None,
+    min_rest_days: int = 2,
+    source: str = "uefa",
+    label: str | None = None,
+    competition_id: str = "uecl",
+    node_id: str | None = None,
+    exclusive_with: frozenset[str] = frozenset(),
+) -> Commitment:
+    """One commitment; `probability` defaults to 1.0 when hard, 0.5 otherwise."""
+    if probability is None:
+        probability = 1.0 if hard else 0.5
+    return Commitment(
+        team_id=team_id,
+        date=day,
+        min_rest_days=min_rest_days,
+        label=label or f"{competition_id}: {day}",
+        source=source,  # type: ignore[arg-type]
+        competition_id=competition_id,
+        node_id=node_id or f"{team_id}/{competition_id}/{day}",
+        reached_probability=probability,
+        exclusive_with=exclusive_with,
+        hard=hard,
+    )
+
+
+def commitment_set(*commitments: Commitment) -> CommitmentSet:
+    return CommitmentSet(commitments)

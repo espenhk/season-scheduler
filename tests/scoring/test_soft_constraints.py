@@ -7,12 +7,11 @@ from datetime import date
 import factories as f
 
 from terminliste.model.schema import TvTimeSpread as TvTimeSpreadConfig
-from terminliste.rounds.european_schedule import EuropeanCommitmentDate
 from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.soft import (
     ConsecutiveAwayDays,
     ConsecutiveHomeDays,
-    EuropeanCommitmentSoftConflict,
+    ContingentCommitmentConflict,
     GrassAwayRoundOne,
     GrassSeasonEdge,
     HomeAwayBalance,
@@ -563,64 +562,42 @@ def test_tv_time_spread_penalises_a_collision_with_another_competition():
     assert result.result("tv_time_spread").total == 0.0
 
 
-# -- european_commitment_soft_conflict (issue #93) --------------------------
+# -- contingent_commitment_conflict (#8) -----------------------------------
 
 
-def test_european_commitment_soft_conflict_penalises_only_uncertain_commitments():
+def _two_team_world():
     v = f.venue("v1")
     t1, t2 = f.team("t1", "c1", "v1"), f.team("t2", "c2", "v1")
-    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
-    world = f.world(clubs, [v], [])
-    season = f.season(competitions=[], european_competitions=["uecl"])
-    constraint = EuropeanCommitmentSoftConflict(
-        commitments_by_team={
-            "t1": [
-                EuropeanCommitmentDate(
-                    team_id="t1",
-                    date=date(2026, 8, 4),
-                    min_rest_days=3,
-                    label="uecl: playoff (first leg)",
-                    competition_id="uecl",
-                    certain=False,
-                )
-            ]
-        }
+    world = f.world([f.club("c1", [t1]), f.club("c2", [t2])], [v], [])
+    return world, f.season(competitions=[], european_competitions=["uecl"])
+
+
+def test_contingent_commitment_conflict_weights_the_shortfall_by_probability():
+    world, season = _two_team_world()
+    commitment = f.commitment(
+        "t1", date(2026, 8, 4), min_rest_days=3, hard=False, probability=0.25
     )
+    constraint = ContingentCommitmentConflict(commitments=f.commitment_set(commitment))
 
     # 1 full rest day away: short of the 3 required, so it fires.
     too_close = [f.match("league", "t1", "t2", date(2026, 8, 2), "v1")]
     result = evaluate(too_close, [constraint], _ctx(world, season))
-    assert result.result("european_commitment_soft_conflict").total == -6.0  # 3.0 * (3-1)
+    assert result.result("contingent_commitment_conflict").total == -1.5  # 3.0 * (3-1) * 0.25
 
     # Far enough away: no penalty.
     clear = [f.match("league", "t1", "t2", date(2026, 7, 20), "v1")]
     result = evaluate(clear, [constraint], _ctx(world, season))
-    assert result.result("european_commitment_soft_conflict").total == 0.0
+    assert result.result("contingent_commitment_conflict").total == 0.0
 
 
-def test_european_commitment_soft_conflict_ignores_a_certain_commitment():
-    """A certain commitment is `EuropeanCommitmentConflict`'s (hard) job —
-    counting it here too would double-penalise the same date."""
-    v = f.venue("v1")
-    t1, t2 = f.team("t1", "c1", "v1"), f.team("t2", "c2", "v1")
-    clubs = [f.club("c1", [t1]), f.club("c2", [t2])]
-    world = f.world(clubs, [v], [])
-    season = f.season(competitions=[], european_competitions=["cl"])
-    constraint = EuropeanCommitmentSoftConflict(
-        commitments_by_team={
-            "t1": [
-                EuropeanCommitmentDate(
-                    team_id="t1",
-                    date=date(2026, 8, 4),
-                    min_rest_days=3,
-                    label="cl: q3 (first leg)",
-                    competition_id="cl",
-                    certain=True,
-                )
-            ]
-        }
+def test_contingent_commitment_conflict_ignores_a_hard_commitment():
+    """A hard commitment is `CommitmentConflict`'s job — counting it here too
+    would double-penalise the same date."""
+    world, season = _two_team_world()
+    constraint = ContingentCommitmentConflict(
+        commitments=f.commitment_set(f.commitment("t1", date(2026, 8, 4), min_rest_days=3))
     )
 
     on_date = [f.match("league", "t1", "t2", date(2026, 8, 4), "v1")]
     result = evaluate(on_date, [constraint], _ctx(world, season))
-    assert result.result("european_commitment_soft_conflict").total == 0.0
+    assert result.result("contingent_commitment_conflict").total == 0.0

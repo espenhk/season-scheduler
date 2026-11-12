@@ -38,10 +38,8 @@ from dataclasses import dataclass, replace
 from datetime import date
 
 from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
-from ..model.schema import Match
+from ..model.schema import WEEKDAYS, Match
 from ..model.slots import RoundSlot
-from ..rounds.cup_schedule import cup_conflict, resolved_cup_windows
-from ..rounds.european_schedule import european_conflict
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import (
     HARD_PENALTY,
@@ -167,7 +165,7 @@ class LocalSearchScheduler:
                     seed,
                     calendar,
                     cup_schedules=request.cup_schedules,
-                    european_commitments=request.european_commitments,
+                    commitments=request.commitments,
                     slot_plans=slot_plans,
                 )
             except ValueError as exc:
@@ -560,8 +558,7 @@ class _MoveSet:
         self._world = request.world
         self._calendars = calendars
         self._competitions = {c.id: c for c in request.competitions}
-        self._cup_windows = resolved_cup_windows(request.cup_schedules)
-        self._european = request.european_commitments
+        self._commitments = request.commitments
         self._club_of = {team_id: team.club_id for team_id, team in request.world.teams.items()}
 
         # Pinned matches are tracked by list position, not by key: a key
@@ -611,15 +608,34 @@ class _MoveSet:
     # -- date admissibility ---------------------------------------------------
 
     def _date_ok(self, home: str, away: str, venue: str, competition_id: str, day: date) -> bool:
-        """Whether `day` clears the blackouts and the binding cup and European
-        dates of both teams."""
+        """Whether `day` clears the blackouts and the hard commitments of both
+        teams."""
         if not self._calendars[competition_id].is_allowed(day, venue):
             return False
-        return not any(
-            cup_conflict(self._cup_windows, team, day)
-            or european_conflict(self._european, team, day)
-            for team in (home, away)
+        return not (self._commitments.blocked(home, day) or self._commitments.blocked(away, day))
+
+    def _quota_allows(self, index: int, day: date) -> bool:
+        """Whether `day`'s weekday still has room in the match's round."""
+        match = self._matches[index]
+        limit = self._competitions[match.competition_id].day_quota.get(WEEKDAYS[day.weekday()])
+        if limit is None:
+            return True
+        taken = sum(
+            1
+            for i in self._indexes_by_round[(match.competition_id, match.round_index)]
+            if i != index and self._matches[i].date.weekday() == day.weekday()
         )
+        return taken < limit
+
+    def _round_within_quota(self, competition_id: str, round_index: int) -> bool:
+        quota = self._competitions[competition_id].day_quota
+        if not quota:
+            return True
+        counts: dict[int, int] = {}
+        for i in self._indexes_by_round[(competition_id, round_index)]:
+            weekday = self._matches[i].date.weekday()
+            counts[weekday] = counts.get(weekday, 0) + 1
+        return all(n <= quota.get(WEEKDAYS[w], n) for w, n in counts.items())
 
     def _neighbours_ok(self, index: int, day: date) -> bool:
         """Whether `day` leaves both teams their rest and double-books neither
@@ -661,6 +677,7 @@ class _MoveSet:
             day
             for day in match.slot.days
             if day != match.date
+            and self._quota_allows(index, day)
             and self._date_ok(
                 match.home_team, match.away_team, match.venue, match.competition_id, day
             )
@@ -706,6 +723,11 @@ class _MoveSet:
                 ):
                     return self._abort(snapshot)
 
+        if not (
+            self._round_within_quota(competition_id, round_a)
+            and self._round_within_quota(competition_id, round_b)
+        ):
+            return self._abort(snapshot)
         return snapshot
 
     def _abort(self, snapshot: list[_Snapshot]) -> None:

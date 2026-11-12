@@ -16,7 +16,7 @@ from datetime import date, timedelta
 
 from ..model.schema import WEEKDAYS, Competition, Match, RivalryFixture
 from ..model.schema import TvTimeSpread as TvTimeSpreadConfig
-from ..rounds.european_schedule import EuropeanCommitmentDate
+from ..rounds.commitments import CommitmentSet
 from .base import ConstraintResult, EvalContext, Event, ScheduleIndex
 
 
@@ -816,19 +816,20 @@ def _weights_by_team(
 
 
 @dataclass
-class EuropeanCommitmentSoftConflict:
-    """Discourage a league match too close to a *conditional* European
-    qualifying leg — one reachable only via a mutually-exclusive cascade
-    branch (#93).
+class ContingentCommitmentConflict:
+    """Discourage a league match too close to a commitment the team only
+    reaches with some probability (#8).
 
-    A team wins a round and advances or loses it and drops, never both, so
-    hard-blocking every branch at once would over-constrain the calendar for
-    an outcome that is still a coin flip. A penalty still steers the solver
-    away when a cheaper date exists.
+    A team that wins a round plays the next one, one that loses plays
+    something else or nothing, so blocking every branch outright would
+    over-constrain the calendar for an outcome that is still a coin flip. The
+    penalty is the rest shortfall weighted by the probability the team gets
+    there, which steers the solver away when a cheaper date exists. It stands
+    in for a planned fallback until contingency plans exist (#9).
     """
 
-    commitments_by_team: dict[str, list[EuropeanCommitmentDate]]
-    id: str = "european_commitment_soft_conflict"
+    commitments: CommitmentSet
+    id: str = "contingent_commitment_conflict"
     kind: str = "soft"
     weight: float = 3.0
 
@@ -837,26 +838,29 @@ class EuropeanCommitmentSoftConflict:
         count = 0
         events: list[Event] = []
 
-        for team_id, commitments in self.commitments_by_team.items():
+        for team_id in self.commitments.team_ids:
+            contingent = self.commitments.contingent_for(team_id)
+            if not contingent:
+                continue
             for match in index.by_team.get(team_id, ()):
-                for commitment in commitments:
-                    if commitment.binding:
-                        continue
+                for commitment in contingent:
                     rest_days = abs((match.date - commitment.date).days) - 1
                     if rest_days >= commitment.min_rest_days:
                         continue
                     shortfall = commitment.min_rest_days - rest_days
-                    total -= self.weight * shortfall
+                    delta = -self.weight * shortfall * commitment.reached_probability
+                    total += delta
                     count += 1
                     if ctx.detail:
                         events.append(
                             Event(
-                                delta=-self.weight * shortfall,
+                                delta=delta,
                                 detail=(
                                     f"{ctx.world.team_label(team_id)} plays {match.date} in "
                                     f"{match.competition_id}, {rest_days} rest day(s) from "
-                                    f"conditional commitment {commitment.label} on "
-                                    f"{commitment.date} — needs {commitment.min_rest_days}"
+                                    f"{commitment.label} on {commitment.date}, which they "
+                                    f"reach with p={commitment.reached_probability:.2f} — "
+                                    f"needs {commitment.min_rest_days}"
                                 ),
                                 match_keys=(match.key,),
                                 team_ids=(team_id,),
@@ -869,7 +873,7 @@ class EuropeanCommitmentSoftConflict:
 __all__ = [
     "ConsecutiveAwayDays",
     "ConsecutiveHomeDays",
-    "EuropeanCommitmentSoftConflict",
+    "ContingentCommitmentConflict",
     "GrassAwayRoundOne",
     "GrassSeasonEdge",
     "HomeAwayBalance",
