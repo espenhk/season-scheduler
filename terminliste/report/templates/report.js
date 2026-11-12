@@ -801,6 +801,9 @@
     this.panel = panel;
     this.fx = null;
     this.stats = null;
+    // The date last read off the calendar, kept as the reader scrolls: switching
+    // tabs means scrolling up to them, when no fixture is on screen any more.
+    this.anchor = '';
     this.state = { view: panel.querySelector('.view-btn').dataset.view, club: '', team: '', date: '', rule: '', only: false };
     this.clubSelect = panel.querySelector('.club-select');
     this.lensSelect = panel.querySelector('.lens-select');
@@ -859,12 +862,44 @@
     this.render();
   };
 
-  // Option tabs share the club, team and view, so flipping options keeps them.
+  // Option tabs share the filters, view, rule lens and selected day, so the same
+  // slice of the season can be flipped between options.
   Option.prototype.adopt = function (shared) {
     this.state.club = shared.club;
     this.state.team = shared.team;
     this.state.view = shared.view;
+    this.state.rule = shared.rule;
+    this.state.only = shared.only;
+    this.state.date = shared.date;
     this.clubSelect.value = shared.club;
+  };
+
+  // The date of the first fixture drawn in the viewport, below the sticky bar.
+  // '' when no fixture is on screen.
+  Option.prototype.anchorDate = function () {
+    var body = this.activeBody();
+    var bar = this.panel.querySelector('.controls');
+    if (!body) return '';
+    var top = bar ? bar.getBoundingClientRect().bottom : 0;
+    var nodes = body.querySelectorAll('[data-uid]');
+    for (var i = 0; i < nodes.length; i++) {
+      var rect = nodes[i].getBoundingClientRect();
+      if (rect.bottom > top && rect.top < window.innerHeight) return this.fx[+nodes[i].getAttribute('data-uid')].date;
+    }
+    return '';
+  };
+
+  // Scrolls the drawn view to its first fixture on or after `date`.
+  Option.prototype.scrollToDate = function (date) {
+    var body = this.activeBody();
+    if (!body) return;
+    var nodes = body.querySelectorAll('[data-uid]');
+    for (var i = 0; i < nodes.length; i++) {
+      if (this.fx[+nodes[i].getAttribute('data-uid')].date >= date) {
+        (nodes[i].closest('.round') || nodes[i]).scrollIntoView({ block: 'start', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
+        return;
+      }
+    }
   };
 
   // Focus goes to the filter's own select, or to the Filters button while a
@@ -1462,6 +1497,11 @@
       this.buildLensOptions();
     }
     var state = this.state;
+    // A lens carried over from another option may name a rule this one never scores.
+    if (state.rule && !(this.ruleStats()[state.rule] || {}).fixtures) {
+      state.rule = '';
+      state.only = false;
+    }
     var ctx = this.context();
     hideFlagTip();
     this.panel.setAttribute('data-current-view', state.view);
@@ -1531,6 +1571,7 @@
         other.setAttribute('aria-selected', String(other === tab));
       });
       var previous = option(current);
+      var anchor = jumping ? '' : previous.anchor;
       previous.release();
       panels[current].hidden = true;
       current = index;
@@ -1538,8 +1579,37 @@
       var next = option(current);
       next.adopt(previous.state);
       next.render();
+      if (anchor) {
+        next.scrollToDate(anchor);
+        next.anchor = anchor;
+      }
       watchBar(panels[current]);
     });
+  });
+
+  // The anchor is read once scrolling settles, so a scroll up to the tabs does
+  // not walk it back to the start of the calendar on the way.
+  var anchorTimer = 0;
+  window.addEventListener('scroll', function () {
+    clearTimeout(anchorTimer);
+    anchorTimer = setTimeout(function () {
+      var opt = options[current];
+      var date = opt && opt.fx ? opt.anchorDate() : '';
+      if (date) opt.anchor = date;
+    }, 200);
+  }, { passive: true });
+
+  // The comparison table's option names open that option's tab at the tabs,
+  // not at the reader's calendar position, so only the one scroll happens.
+  var jumping = false;
+  document.addEventListener('click', function (e) {
+    var open = e.target.closest ? e.target.closest('.cmp-open') : null;
+    if (!open) return;
+    var index = +open.getAttribute('data-option');
+    jumping = true;
+    document.querySelectorAll('.tab')[index].click();
+    jumping = false;
+    option(index).showScore();
   });
   if (panels.length) {
     option(0).render();

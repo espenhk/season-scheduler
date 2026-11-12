@@ -13,22 +13,33 @@ from pathlib import Path
 import factories as f
 import pytest
 
+from terminliste.report import payload
 from terminliste.report.payload import json_for_script
 from terminliste.report.render import (
+    _build_option,
     _club_headlines,
+    _comparison_view,
+    _competition_colors,
     _cup_entries,
     _day_competitions,
     _entity_counts,
     _european_entries,
+    _events,
     _fairness_rows,
+    _headlines,
     _match_entries,
     _month_calendar_view,
+    _option_summaries,
+    _rule_ids,
+    _score_marks,
     _search_stats_view,
+    _signed,
     _tint,
     render_report,
 )
 from terminliste.scoring.base import ConstraintResult, EvalContext, Event, Score, evaluate
 from terminliste.scoring.hard import MinRestDays, OneMatchPerTeamPerDay
+from terminliste.scoring.registry import rule_name
 from terminliste.scoring.soft import (
     ConsecutiveHomeDays,
     HomeAwayBreaks,
@@ -1514,3 +1525,225 @@ def test_the_page_receives_the_season_movement_that_club_shares_are_built_on():
 
     soft = candidate.score.soft_results()
     assert data["options"][0]["gross"] == round(sum(abs(r.total) for r in soft), 2)
+
+
+# -- comparing the options (#35) ------------------------------------------------
+
+
+def _options_for(world, candidates):
+    """The option views the page builds, with the score text and tag each one shows."""
+    dual = {club.id for club in world.dual_clubs()}
+    rule_index = {rule_id: i for i, rule_id in enumerate(_rule_ids(candidates))}
+    teams = payload.team_table(world)
+    built = [
+        _build_option(world, candidate, dual, [], _competition_colors(world), teams, rule_index)
+        for candidate in candidates
+    ]
+    for option, (text, tag) in zip(built, _score_marks(built), strict=True):
+        option["points_text"] = text
+        option["tag"] = tag
+    return built
+
+
+def _comparison(world, candidates):
+    return _comparison_view(world, candidates, _options_for(world, candidates), _rule_ids(candidates))
+
+
+def _section(comparison, title):
+    return next(section for section in comparison["sections"] if section["title"] == title)["rows"]
+
+
+def _row(comparison, label, section_title="Overall"):
+    rows = next(section for section in comparison["sections"] if section["title"] == section_title)["rows"]
+    return next(row for row in rows if row["label"] == label)
+
+
+def test_score_text_gets_a_decimal_when_whole_scores_collide_and_a_tie_is_tagged_as_one():
+    assert _score_marks([{"points": 74.04}, {"points": 73.9}, {"points": 74.0}]) == [
+        ("74.0", "tied top score"),
+        ("73.9", None),
+        ("74.0", "tied top score"),
+    ]
+    assert _score_marks([{"points": 61.6}, {"points": 73.4}]) == [("62", None), ("73", "top score")]
+    assert _score_marks([{"points": 74.4}]) == [("74", None)]
+
+
+def test_a_single_option_has_nothing_to_compare():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 14), "va")]
+    only = _candidate(world, season, matches, [ConsecutiveHomeDays(competitions=[comp_m, comp_w])])
+    assert _comparison(world, [only]) is None
+    assert 'class="compare"' not in _render(world, season, [only])
+    assert 'class="tab-tag"' not in _render(world, season, [only])
+
+
+def test_comparison_rows_show_each_candidates_own_contribution_to_the_score():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    comps = [comp_m, comp_w]
+    matches = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va"),  # Saturday, off the preferred Sunday
+        f.match("topp", "a_w", "opp_w", date(2026, 6, 7), "va"),
+        f.match("elite", "b_m", "opp_m", date(2026, 6, 14), "vb", round_index=1),
+    ]
+    both = _candidate(world, season, matches, [PreferredWeekday(competitions=comps), ConsecutiveHomeDays(competitions=comps)])
+    home_only = _candidate(world, season, matches, [ConsecutiveHomeDays(competitions=comps)])
+    comparison = _comparison(world, [both, home_only])
+
+    weekday = _row(comparison, rule_name("preferred_weekday"), "Soft points by rule, largest movement first")
+    assert weekday["cells"][0]["text"] == _signed(both.score.result("preferred_weekday").total)
+    # The second option never scored this rule: nothing to compare, so nothing is marked.
+    assert weekday["cells"][1]["text"] == "—"
+    assert weekday["best"] == [False, False]
+
+    home = _row(comparison, rule_name("consecutive_home_days"), "Soft points by rule, largest movement first")
+    assert [cell["text"] for cell in home["cells"]] == [
+        _signed(both.score.result("consecutive_home_days").total),
+        _signed(home_only.score.result("consecutive_home_days").total),
+    ]
+    soft_labels = {row["label"] for section in comparison["sections"] if section["title"].startswith("Soft") for row in section["rows"]}
+    assert soft_labels == {rule_name("preferred_weekday"), rule_name("consecutive_home_days")}
+
+
+def test_the_top_score_is_marked_and_the_option_with_hard_violations_is_weakest_on_them():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    comps = [comp_m, comp_w]
+    clean = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 14), "va"),
+        f.match("topp", "a_w", "opp_w", date(2026, 6, 7), "va"),
+    ]
+    # opp_m also plays club A's men on the same day: a hard break.
+    clashing = clean + [f.match("elite", "opp_m", "a_m", date(2026, 6, 14), "vc", round_index=2)]
+    constraints = [PreferredWeekday(competitions=comps), ConsecutiveHomeDays(competitions=comps), OneMatchPerTeamPerDay()]
+    good = _candidate(world, season, clean, constraints)
+    bad = _candidate(world, season, clashing, constraints)
+    assert good.score.hard_violations == 0 and bad.score.hard_violations > 0
+    assert good.score.points > bad.score.points
+
+    comparison = _comparison(world, [good, bad])
+    assert [column["tag"] for column in comparison["columns"]] == ["top score", None]
+    score = _row(comparison, "Score out of 100")
+    assert [cell["best"] for cell in score["cells"]] == [True, False]
+    hard = _row(comparison, "Hard-rule violations", "Hard rules")
+    assert [cell["text"] for cell in hard["cells"]] == ["0", str(bad.score.hard_violations)]
+    assert [cell["best"] for cell in hard["cells"]] == [True, False]
+    assert comparison["columns"][0]["summary"].startswith("Leads on Hard-rule violations")
+    assert "trails on Hard-rule violations (" in comparison["columns"][1]["summary"]
+
+
+def test_three_options_get_three_columns_and_a_tie_for_the_top_is_tagged_on_each():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    comps = [comp_m, comp_w]
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 14), "va")]
+    candidates = [
+        _candidate(world, season, matches, [ConsecutiveHomeDays(competitions=comps)], label=f"Option {n}")
+        for n in (1, 2, 3)
+    ]
+    comparison = _comparison(world, candidates)
+    assert [column["label"] for column in comparison["columns"]] == ["Option 1", "Option 2", "Option 3"]
+    assert [column["tag"] for column in comparison["columns"]] == ["tied top score"] * 3
+    assert not any(cell["best"] for cell in _row(comparison, "Score out of 100")["cells"])
+
+
+def test_fixture_differences_count_moved_swapped_and_retimed_fixtures_against_the_first_option():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    base = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va"),
+        f.match("topp", "a_w", "opp_w", date(2026, 6, 7), "va"),
+        f.match("elite", "b_m", "opp_m", date(2026, 6, 14), "vb", round_index=1),
+    ]
+    other = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 13), "va"),  # a week later
+        f.match("topp", "opp_w", "a_w", date(2026, 6, 7), "vc"),  # the same pair, sides swapped
+        f.match("elite", "b_m", "opp_m", date(2026, 6, 14), "vb", round_index=1, kickoff_time="18:00"),
+        f.match("elite", "a_m", "b_m", date(2026, 6, 20), "va", round_index=2),  # a pairing the baseline lacks
+    ]
+    first = _candidate(world, season, base, [])
+    second = _candidate(world, season, other, [])
+    diff = _comparison(world, [first, second])["diffs"][0]
+
+    assert diff["total"] == 4
+    assert diff["count"] == 4
+    assert diff["breakdown"] == (
+        "1 on another date (side or kickoff may differ too), 1 with home and away swapped, "
+        "1 with only the kickoff time changed, 1 not in the baseline."
+    )
+    details = [item["detail"] for item in diff["fixtures"]]  # in date order
+    assert "now at home" in details[0]
+    assert details[1] == "moved from Sat 6 Jun"
+    assert details[2] == "kickoff unset → 18:00"
+    assert details[3] == "not in the baseline option"
+
+
+def test_identical_options_report_no_fixture_differences():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 14), "va")]
+    candidates = [_candidate(world, season, matches, []), _candidate(world, season, matches, [])]
+    diff = _comparison(world, candidates)["diffs"][0]
+    assert diff["count"] == 0
+    assert diff["breakdown"] == "No fixture differs from the baseline."
+
+
+def test_the_page_shows_the_comparison_above_the_tabs_for_several_options():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    comps = [comp_m, comp_w]
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 14), "va")]
+    candidates = [
+        _candidate(world, season, matches, [ConsecutiveHomeDays(competitions=comps)], label="Option 1"),
+        _candidate(world, season, matches, [], label="Option 2"),
+    ]
+    rendered = _render(world, season, candidates)
+    assert rendered.index('class="compare"') < rendered.index('class="tabs"')
+    assert rendered.count('data-option="') == 2
+    assert "Compare the 2 options" in rendered
+
+
+def test_option_summaries_name_only_gaps_big_enough_to_matter_and_say_how_big():
+    # The largest gap is 118 points (option 1 over option 3, back-to-back home days),
+    # so gaps of 11.8 points or more are named; option 1's 5-point comfortable-rest
+    # gap over option 3 is not.
+    soft = [
+        ("Back-to-back home days", [130.0, 10.0, 12.0]),
+        ("Comfortable rest", [-20.0, -100.0, -15.0]),
+    ]
+    assert _option_summaries(soft, [0, 0, 0]) == [
+        "Leads on Back-to-back home days (+118 pts).",
+        "Trails on Back-to-back home days (−120 pts), Comfortable rest (−85 pts).",
+        "Trails on Back-to-back home days (−118 pts).",
+    ]
+
+
+def test_option_summaries_name_hard_violation_gaps_by_their_count_first():
+    summaries = _option_summaries([("Comfortable rest", [5.0, 5.0, -5.0])], [0, 0, 2])
+    assert summaries[0] == "No row sets it apart."
+    assert summaries[2] == "Trails on Hard-rule violations (2 more), Comfortable rest (−10 pts)."
+
+
+def test_events_are_singular_only_for_one():
+    assert _events(1) == "1 event"
+    assert _events(2) == "2 events"
+
+
+def test_rules_with_no_effect_in_any_option_are_listed_once_not_as_rows():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    comps = [comp_m, comp_w]
+    # One match: no back-to-back home days in either option, so the rule adds nothing.
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 14), "va")]
+    candidates = [_candidate(world, season, matches, [ConsecutiveHomeDays(competitions=comps)])] * 2
+    comparison = _comparison(world, candidates)
+    assert comparison["quiet"] == [rule_name("consecutive_home_days")]
+    soft_labels = [row["label"] for section in comparison["sections"] if section["title"].startswith("Soft") for row in section["rows"]]
+    assert rule_name("consecutive_home_days") not in soft_labels
+
+
+def test_headline_rows_carry_no_sub_line_and_the_rule_each_headline_names():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    comps = [comp_m, comp_w]
+    matches = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 14), "va"),
+        f.match("topp", "a_w", "opp_w", date(2026, 6, 14), "va"),
+    ]
+    candidate = _candidate(world, season, matches, [PreferredWeekday(competitions=comps), ConsecutiveHomeDays(competitions=comps)])
+    assert {h["rule"] for h in _headlines(world, candidate)} == {"preferred_weekday", "consecutive_home_days"}
+    comparison = _comparison(world, [candidate, candidate])
+    for headline in _section(comparison, "Headline numbers"):
+        assert all(cell["sub"] == "" for cell in headline["cells"])
