@@ -33,8 +33,12 @@
   var WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+  function dayIndex(iso) {
+    return new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10))).getUTCDay();
+  }
+
   function weekday(iso) {
-    return WEEKDAYS[new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10))).getUTCDay()];
+    return WEEKDAYS[dayIndex(iso)];
   }
 
   // "Sat 04/04" on cards, "Sat 04 Apr 2026" in the list.
@@ -247,6 +251,13 @@
     return box;
   }
 
+  // The "Combined · list" score column: the fixture's visible net points.
+  function scoreCell(fx) {
+    var cell = el('td', 'fx-score ' + netClass(fx.delta), netText(fx.delta));
+    cell.title = 'Net points from this fixture’s rule badges';
+    return cell;
+  }
+
   // The pill used in "By competition" and "Combined · calendar".
   function fixtureCard(fx, showCompetition) {
     var card = tag(el('span', 'fx' + edgeClass(fx)), fx);
@@ -289,7 +300,8 @@
       el('td', 'muted', 'v'),
       awayCell,
       el('td', '', fx.venue),
-      append(el('td'), flagBox(fx))
+      append(el('td'), flagBox(fx)),
+      scoreCell(fx)
     );
   }
 
@@ -304,6 +316,43 @@
     }
     if (fx.time) row.appendChild(el('span', 'd', fx.time));
     return append(row, flagBox(fx));
+  }
+
+  // ------------------------------------------------------------ indicators
+  //
+  // Totals over the fixtures a view shows: the net of their visible badges (the
+  // sum of data-delta, hidden rewards excluded). "Midweek" means no Fri-Sun game.
+
+  function netClass(n) { return n > 0 ? 'good' : n < 0 ? 'cost' : ''; }
+
+  // Signed points, one decimal only when fractional; zero is "0".
+  function netText(n) {
+    var mag = Math.round(Math.abs(n) * 10) / 10;
+    if (mag === 0) return '0';
+    return (n > 0 ? '+' : '−') + (Number.isInteger(mag) ? String(mag) : mag.toFixed(1));
+  }
+
+  function totals(fx, uids) {
+    var sum = { games: uids.length, net: 0, broken: 0, midweek: uids.length > 0 };
+    uids.forEach(function (uid) {
+      var f = fx[uid];
+      sum.net += f.delta;
+      if (f.broken) sum.broken++;
+      var day = dayIndex(f.date);
+      if (day === 0 || day > 4) sum.midweek = false;
+    });
+    sum.net = Math.round(sum.net * 100) / 100;
+    return sum;
+  }
+
+  function summaryNode(sum, midweekTag) {
+    var node = el('div', 'rsum');
+    node.title = 'Net points from the rule badges on the games shown (hidden rewards are not counted)';
+    node.appendChild(el('span', 'rnet ' + netClass(sum.net), netText(sum.net) + ' pts'));
+    node.appendChild(document.createTextNode(' · ' + plural(sum.games, 'game', 'games')));
+    if (sum.broken) node.appendChild(document.createTextNode(' · ' + plural(sum.broken, 'hard break', 'hard breaks')));
+    if (midweekTag && sum.midweek) node.appendChild(el('span', 'rtag', 'midweek'));
+    return node;
   }
 
   // ------------------------------------------------------------------ views
@@ -326,9 +375,15 @@
     return box;
   }
 
-  function roundLabel(title, text, note) {
+  // `sum` is the round's or week's `totals`; its edge takes the net's colour.
+  function roundLabel(title, text, note, sum) {
     var label = append(el('div', 'rlabel'), el('b', '', title), document.createTextNode(text));
     if (note) label.title = note;
+    if (sum.games) {
+      var edge = netClass(sum.net);
+      if (edge) label.classList.add('rl-' + edge);
+      label.appendChild(summaryNode(sum, true));
+    }
     return label;
   }
 
@@ -345,7 +400,11 @@
       rounds.forEach(function (round) {
         append(
           comp,
-          append(el('div', 'round'), roundLabel(round.title, round.text, round.note), fixturesOf(ctx, round.ids, false))
+          append(
+            el('div', 'round'),
+            roundLabel(round.title, round.text, round.note, totals(ctx.fx, ctx.visible(round.ids))),
+            fixturesOf(ctx, round.ids, false)
+          )
         );
       });
       root.appendChild(comp);
@@ -356,10 +415,11 @@
   function combinedCalendarView(ctx) {
     var root = document.createDocumentFragment();
     ctx.opt.data.weeks.forEach(function (week) {
-      if (!ctx.visible(week.ids).length) return;
+      var shown = ctx.visible(week.ids);
+      if (!shown.length) return;
       append(
         root,
-        append(el('div', 'round'), roundLabel(week.label, week.dates), fixturesOf(ctx, week.ids, true))
+        append(el('div', 'round'), roundLabel(week.label, week.dates, null, totals(ctx.fx, shown)), fixturesOf(ctx, week.ids, true))
       );
     });
     return root;
@@ -367,8 +427,8 @@
 
   function combinedListView(ctx) {
     var head = el('tr');
-    ['Date', 'Competition', 'Home', '', 'Away', 'Venue', 'Rules'].forEach(function (name) {
-      head.appendChild(el('th', '', name));
+    ['Date', 'Competition', 'Home', '', 'Away', 'Venue', 'Rules', 'Score'].forEach(function (name) {
+      head.appendChild(el('th', name === 'Score' ? 'fx-score' : '', name));
     });
     var body = el('tbody');
     var shown = ctx.visible(ctx.opt.data.list);
@@ -410,7 +470,10 @@
           var selected = iso === state.date;
           if (selected) button.classList.add('selected');
           button.setAttribute('aria-pressed', String(selected));
-          var label = iso + (dots.length ? ': ' + dots.map(function (c) { return DATA.competitions[c].name; }).join(', ') : '');
+          var shownToday = days[iso] ? ctx.visible(days[iso].ids) : [];
+          var sum = shownToday.length ? totals(ctx.fx, shownToday) : null;
+          var label = iso + (dots.length ? ': ' + dots.map(function (c) { return DATA.competitions[c].name; }).join(', ') : '') +
+            (sum ? '; net ' + netText(sum.net) + ' pts' : '');
           button.setAttribute('aria-label', label);
           button.setAttribute('data-label', label);
           var dotBox = el('span', 'cal-dots');
@@ -421,6 +484,11 @@
             dotBox.appendChild(dot);
           });
           append(button, el('span', 'cal-daynum', String(+iso.slice(8))), dotBox);
+          if (sum) {
+            var net = el('span', 'cal-net ' + netClass(sum.net), netText(sum.net));
+            net.setAttribute('aria-hidden', 'true');
+            button.appendChild(net);
+          }
           row.appendChild(button);
         });
         grid.appendChild(row);
@@ -439,7 +507,8 @@
       if (ids.length) {
         var box = el('div', 'fixtures');
         ids.forEach(function (uid) { box.appendChild(dayRow(ctx.fx[uid])); });
-        append(details, append(el('div', 'day-detail'), append(el('div', 'rlabel'), el('b', '', day.label)), box));
+        var head = append(el('div', 'rlabel'), el('b', '', day.label));
+        append(details, append(el('div', 'day-detail'), head, summaryNode(totals(ctx.fx, ids), false), box));
       } else {
         details.appendChild(el('div', 'day-detail-empty', state.date ? 'No games on this day.' : 'Tap a day above to see its games here.'));
       }
@@ -508,6 +577,7 @@
     this.lensCaption = panel.querySelector('.lens-caption');
     this.headlines = panel.querySelector('.headlines');
     this.headlineScope = panel.querySelector('.headline-scope');
+    this.strip = panel.querySelector('.season-strip');
     var self = this;
     panel.querySelectorAll('.view-btn').forEach(function (button) {
       button.addEventListener('click', function () {
@@ -767,6 +837,62 @@
     window.scrollTo({ top: Math.max(0, top), behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
   };
 
+  // Season strip: one button per league round, above the views that list rounds.
+  // Its figures come from the same visible fixtures as the round labels.
+  Option.prototype.renderStrip = function (ctx) {
+    var strip = this.strip;
+    var shown = this.state.view === 'by-competition' || this.state.view === 'combined-calendar';
+    strip.hidden = !shown;
+    strip.textContent = '';
+    if (!shown) return;
+    var self = this;
+    this.data.byCompetition.forEach(function (view) {
+      var cells = el('div', 'strip-cells');
+      view.rounds.forEach(function (round) { cells.appendChild(stripCell(self, ctx, round)); });
+      append(strip, append(el('div', 'strip-row'), el('span', 'strip-name', view.name), cells));
+    });
+  };
+
+  function stripCell(opt, ctx, round) {
+    var button = el('button', 'strip-cell');
+    button.type = 'button';
+    button.appendChild(el('span', 'strip-round', round.title.replace(/^Round\s*/, '')));
+    var shown = ctx.visible(round.ids);
+    if (!shown.length) {
+      button.disabled = true;
+      button.setAttribute('aria-label', round.title + ': no fixtures shown');
+      return button;
+    }
+    var sum = totals(ctx.fx, shown);
+    var edge = netClass(sum.net);
+    if (edge) button.classList.add('sc-' + edge);
+    button.appendChild(el('span', 'strip-net', netText(sum.net)));
+    if (sum.broken) {
+      var hard = el('span', 'strip-hard', String(sum.broken));
+      hard.setAttribute('aria-hidden', 'true');
+      button.appendChild(hard);
+    }
+    var label = round.title + ': ' + plural(sum.games, 'game', 'games') + ', net ' + netText(sum.net) + ' pts' +
+      (sum.broken ? ', ' + plural(sum.broken, 'hard break', 'hard breaks') : '');
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    button.addEventListener('click', function () { opt.jumpTo(round.ids); });
+    return button;
+  }
+
+  // Scrolls to the first drawn fixture of `ids` and its round or week block.
+  Option.prototype.jumpTo = function (ids) {
+    var wanted = {};
+    ids.forEach(function (uid) { wanted[uid] = true; });
+    var nodes = this.activeBody().querySelectorAll('[data-uid]');
+    for (var i = 0; i < nodes.length; i++) {
+      if (wanted[nodes[i].getAttribute('data-uid')]) {
+        nodes[i].closest('.round').scrollIntoView({ block: 'start', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
+        return;
+      }
+    }
+  };
+
   Option.prototype.render = function () {
     if (!this.fx) {
       this.fx = hydrate(this.data);
@@ -794,6 +920,7 @@
     this.renderHeadlines();
     this.renderLensUi();
     this.markLens(this.activeBody());
+    this.renderStrip(ctx);
   };
 
   // Frees the panel's view while another option is shown.

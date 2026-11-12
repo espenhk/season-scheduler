@@ -59,14 +59,28 @@ def world():
     return _world()[0]
 
 
-@pytest.fixture(scope="module")
-def report_url(tmp_path_factory):
-    world, season = _world()
-    matches = [
+def _base_matches():
+    return [
         f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va", kickoff_time="18:00"),
         f.match("topp", "a_w", "opp_w", date(2026, 6, 7), "va"),
         f.match("elite", "b_m", "opp_m", date(2026, 6, 13), "vb", round_index=1),
     ]
+
+
+@pytest.fixture(scope="module")
+def report_url(tmp_path_factory):
+    return _report_url(tmp_path_factory, _base_matches())
+
+
+@pytest.fixture(scope="module")
+def midweek_url(tmp_path_factory):
+    # A Tuesday league match in a round of its own: the only midweek round.
+    extra = f.match("elite", "b_m", "opp_m", date(2026, 6, 9), "vb", round_index=2)
+    return _report_url(tmp_path_factory, _base_matches() + [extra])
+
+
+def _report_url(tmp_path_factory, matches):
+    world, season = _world()
     ctx = EvalContext(world=world, season=season, travel=_FixedTravel(), detail=True)
     comps = [world.competition("elite"), world.competition("topp")]
     constraints = [PreferredWeekday(competitions=comps), ConsecutiveHomeDays(competitions=comps)]
@@ -758,3 +772,129 @@ def test_phone_filters_close_after_a_change_a_real_scroll_and_escape(touch_page)
     page.keyboard.press("Escape")
     assert not fields.is_visible() and toggle.get_attribute("aria-expanded") == "false"
     assert page.evaluate("document.activeElement.classList.contains('filters-toggle')")
+
+
+# -- round, week and day totals and the season strip (#32) --------------------
+#
+# A total is the net of the badges on the games shown: the home-pair matches
+# (6 and 7 June) carry 12.5 each, the 13 June match nothing, and the cup round
+# and European leg carry no badges.
+
+
+def _points(text):
+    """A total as the page writes it: "+12.5 pts", "−38 pts" or "0 pts"."""
+    return float(text.replace(" pts", "").replace("−", "-"))
+
+
+@pytest.fixture
+def midweek_page(browser, midweek_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.problems = []
+    page.on("console", lambda m: page.problems.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: page.problems.append(str(e)))
+    page.goto(midweek_url)
+    yield page
+    assert page.problems == []
+    page.close()
+
+
+def test_round_labels_total_the_visible_badges_and_count_their_games(page):
+    body = _view(page, "by-competition")
+    assert sorted(_texts(body.locator(".round .rsum"))) == sorted(
+        ["+12.5 pts · 1 game", "0 pts · 1 game", "+12.5 pts · 1 game", "0 pts · 1 game", "0 pts · 1 game"]
+    )
+    assert body.locator(".round .rlabel.rl-good").count() == 2  # the two home-pair rounds
+    assert body.locator(".rtag").count() == 0  # no round is all midweek
+    for round_ in body.locator(".round").all():
+        deltas = round_.locator(".fx").evaluate_all("els => els.map(e => Number(e.getAttribute('data-delta')))")
+        assert _points(round_.locator(".rsum .rnet").inner_text()) == pytest.approx(sum(deltas), abs=0.05)
+
+
+def test_combined_calendar_weeks_total_their_visible_games(page):
+    body = _view(page, "combined-calendar")
+    # Week 23 holds the two home-pair matches plus the cup round and European leg.
+    assert sorted(_texts(body.locator(".round .rsum"))) == ["+25 pts · 4 games", "0 pts · 1 game"]
+    assert body.locator(".round .rlabel.rl-good").count() == 1
+
+
+def test_the_club_filter_resets_the_round_and_week_totals(page):
+    page.select_option(".club-select", "club_b")
+    assert _texts(_view(page, "by-competition").locator(".round .rsum")) == ["0 pts · 1 game"]
+    assert _texts(_view(page, "combined-calendar").locator(".round .rsum")) == ["0 pts · 1 game"]
+
+    page.select_option(".club-select", "club_a")
+    assert _texts(_view(page, "combined-calendar").locator(".round .rsum")) == ["+25 pts · 4 games"]
+
+
+def test_month_days_show_their_net_and_the_day_detail_its_totals(page):
+    body = _view(page, "month-calendar")
+    day = body.locator(f'.cal-day[data-date="{DAY}"]')
+    assert day.locator(".cal-net").inner_text() == "+12.5"
+    assert "net +12.5 pts" in day.get_attribute("aria-label")
+    day.click()
+    assert _texts(body.locator(".day-detail .rsum")) == ["+12.5 pts · 3 games"]
+    assert body.locator('.cal-day[data-date="2026-06-13"] .cal-net').inner_text() == "0"
+
+    page.select_option(".club-select", "club_b")
+    assert body.locator(f'.cal-day[data-date="{DAY}"] .cal-net').count() == 0  # no club B game that day
+
+
+def test_the_combined_list_scores_each_fixture_in_its_own_column(page):
+    body = _view(page, "combined-list")
+    assert _texts(body.locator("th"))[-1].lower() == "score"  # the header is upper-cased by CSS
+    assert sorted(_texts(body.locator("tr.fx-row .fx-score"))) == sorted(["+12.5", "+12.5", "0", "0", "0"])
+
+
+def test_the_season_strip_has_a_button_per_round_in_both_league_rows(page):
+    strip = page.locator("#panel-1 .season-strip")
+    _view(page, "by-competition")
+    assert strip.is_visible()
+    assert len(_texts(strip.locator(".strip-name"))) == 2
+    cells = strip.locator(".strip-cell")
+    assert _texts(cells) == ["1 +12.5", "2 0", "1 +12.5"]
+    assert cells.first.get_attribute("aria-label") == "Round 1: 1 game, net +12.5 pts"
+
+    _view(page, "combined-calendar")
+    assert strip.is_visible()
+    for view in ("month-calendar", "combined-list"):
+        _view(page, view)
+        assert not strip.is_visible()
+
+
+def test_the_strip_follows_the_club_filter(page):
+    page.select_option(".club-select", "club_b")
+    cells = page.locator("#panel-1 .strip-cell")
+    assert _texts(cells) == ["1", "2 0", "1"]  # the two rounds with no club B game are empty
+    assert cells.first.is_disabled()
+    assert cells.first.get_attribute("aria-label") == "Round 1: no fixtures shown"
+
+
+def test_clicking_a_strip_cell_brings_its_round_below_the_sticky_bar(short_page):
+    page = short_page
+    _view(page, "by-competition")
+    page.evaluate("window.scrollTo(0, 0)")
+    assert _rect(page, "#panel-1 .view-pane:not([hidden]) .round")["top"] > 420  # starts off screen
+
+    page.locator("#panel-1 .strip-cell").first.click()
+
+    page.wait_for_function(
+        "() => { const b = document.querySelector('#panel-1 .controls').getBoundingClientRect(),"
+        " r = document.querySelector('#panel-1 .view-pane:not([hidden]) .round').getBoundingClientRect();"
+        " return r.top >= b.bottom - 1 && r.top < b.bottom + 40; }"
+    )
+
+
+def test_totals_and_strip_do_not_overflow_a_phone_screen(touch_page):
+    page = touch_page
+    for view in ("by-competition", "combined-calendar", "combined-list", "month-calendar"):
+        _view(page, view)
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_a_round_with_only_midweek_games_is_tagged(midweek_page):
+    body = _view(midweek_page, "by-competition")
+    assert body.locator(".rtag").count() == 1
+    tagged = body.locator(".round:has(.rtag)")
+    assert "Tue 09/06" in tagged.inner_text()
+    summary = " ".join(tagged.locator(".rsum").inner_text().split()).lower()  # the tag is upper-cased by CSS
+    assert "1 game" in summary and summary.endswith("midweek")
