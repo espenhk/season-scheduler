@@ -88,6 +88,16 @@ def midweek_url(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
+def other_months_url(tmp_path_factory):
+    # League fixtures in June only; the cup round and the European leg fall in
+    # July and September, months with no league fixture, so they are listed under
+    # "Other dates".
+    return _report_url(
+        tmp_path_factory, _base_matches(), cup_on=date(2026, 7, 8), europe_on=date(2026, 9, 17)
+    )
+
+
+@pytest.fixture(scope="module")
 def rules_url(tmp_path_factory):
     # Club A's men play twice on 6 June (a hard break: one match per team per day).
     # Round 4's two games each come four days after the team's previous one, a
@@ -100,7 +110,9 @@ def rules_url(tmp_path_factory):
     return _report_url(tmp_path_factory, _base_matches() + extra, rest=True)
 
 
-def _report_url(tmp_path_factory, matches, rest=False, cup_venue="away", with_europe=True):
+def _report_url(
+    tmp_path_factory, matches, rest=False, cup_venue="away", with_europe=True, cup_on=date(2026, 6, 6), europe_on=date(2026, 6, 6)
+):
     world, season = _world()
     ctx = EvalContext(world=world, season=season, travel=_FixedTravel(), detail=True)
     comps = [world.competition("elite"), world.competition("topp")]
@@ -116,13 +128,13 @@ def _report_url(tmp_path_factory, matches, rest=False, cup_venue="away", with_eu
     )
     cup = f.cup_schedule(
         "cup1",
-        [f.cup_placement("r1", {"a_m": date(2026, 6, 6)}, round_name="Round 1", venue_type=cup_venue)],
+        [f.cup_placement("r1", {"a_m": cup_on}, round_name="Round 1", venue_type=cup_venue)],
         competition_name="NM Cup",
         competition_short_name="NM",
     )
     round_ = f.european_round(
         "q3",
-        forced_date=date(2026, 6, 6),
+        forced_date=europe_on,
         ties=[f.european_tie("a_m", opponent=OPPONENT, home_leg="first")],
     )
     europe = f.competition("cl", ["a_m"], format="european", european_rounds=[round_])
@@ -133,7 +145,7 @@ def _report_url(tmp_path_factory, matches, rest=False, cup_venue="away", with_eu
         tmp_path_factory.mktemp("report") / "report.html",
         cup_schedules=[cup],
         european_competitions=[europe] if with_europe else None,
-        resolved_legs={("cl", "q3"): (date(2026, 6, 6), date(2026, 6, 6))} if with_europe else None,
+        resolved_legs={("cl", "q3"): (europe_on, europe_on)} if with_europe else None,
     )
     return path.as_uri()
 
@@ -1616,3 +1628,153 @@ def test_on_a_phone_the_summaries_move_below_a_short_table_header(browser, repor
 def test_the_summaries_sit_in_the_header_on_a_wide_screen(page):
     assert page.locator(".cmp .cmp-what").first.is_visible()
     assert page.locator(".cmp-phone-summary").is_hidden()
+
+
+# -- month view: counts, jump bar, other dates, day steps, arrow keys (#36) ------
+
+
+def _open_month(browser, url, viewport=None, touch=False):
+    if viewport or touch:
+        context = browser.new_context(viewport=viewport or {"width": 1280, "height": 900}, has_touch=touch, is_mobile=touch)
+        page = context.new_page()
+    else:
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.problems = []
+    page.on("console", lambda m: page.problems.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: page.problems.append(str(e)))
+    page.goto(url)
+    return page
+
+
+@pytest.fixture
+def other_page(browser, other_months_url):
+    page = _open_month(browser, other_months_url)
+    yield page
+    assert page.problems == []
+    page.close()
+
+
+def _detail_follows(scope, attribute, value):
+    """The open day detail sits right after the row (week or other-dates) with that attribute."""
+    return scope.locator(".day-details").evaluate(
+        """(block, [name, value]) => {
+            const row = block.previousElementSibling;
+            return !!row && row.getAttribute(name) === value;
+        }""",
+        [attribute, value],
+    )
+
+
+def test_day_cells_count_each_competitions_games_under_the_club_filter(rules_page, world):
+    body = _view(rules_page, "month-calendar")
+    elite = world.competition("elite")
+    cell = body.locator(f'.cal-day[data-date="{DAY}"]')
+    # Club A's men play twice on 6 June, so Eliteserien shows a count of 2.
+    assert _texts(cell.locator(".cal-comp .cal-n")) == ["2"]
+    assert elite.short_name in _texts(cell.locator(".cal-comp .cal-lbl"))
+    assert f"{elite.name} 2" in cell.get_attribute("aria-label")
+
+    rules_page.select_option(".club-select", "club_b")
+    assert body.locator(f'.cal-day[data-date="{DAY}"] .cal-comp').count() == 0
+    assert f"{elite.name} 2" not in body.locator(f'.cal-day[data-date="{DAY}"]').get_attribute("aria-label")
+
+    rules_page.select_option(".club-select", "club_a")
+    assert _texts(body.locator(f'.cal-day[data-date="{DAY}"] .cal-comp .cal-n')) == ["2"]
+
+
+def test_the_month_jump_bar_scrolls_to_the_month_below_the_sticky_bar(other_page):
+    body = _view(other_page, "month-calendar")
+    jump = body.locator('.month-jump button[data-jump="2026-07"]')
+    jump.click()
+    target = body.locator('.other-row[data-month-key="2026-07"]')
+    # The row is the last block on this short page, so at the page end it can
+    # sit lower than the bar's edge: that is as far as the page scrolls.
+    other_page.wait_for_function(
+        """(el) => {
+            const bar = document.querySelector('.controls').getBoundingClientRect().bottom;
+            const top = el.getBoundingClientRect().top;
+            const atEnd = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
+            return (top >= bar - 2 && top <= bar + 160) || atEnd;
+        }""",
+        arg=target.element_handle(),
+    )
+    # The bar's own jump moved the page: the July row is now in view.
+    assert target.evaluate("e => { const r = e.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight; }")
+    assert body.locator('.month-jump button').count() == 3  # June, July and September
+
+
+def test_months_without_a_league_fixture_are_listed_under_other_dates_and_open_inline(other_page):
+    body = _view(other_page, "month-calendar")
+    assert body.locator('.month[data-month-key="2026-06"]').count() == 1
+    assert body.locator('.month[data-month-key="2026-07"]').count() == 0
+    assert body.locator(".other-dates h4").inner_text().strip() == "Other dates"
+    assert _texts(body.locator('.other-row[data-month-key="2026-07"] .other-day')) == ["Wed 8"]
+    assert _texts(body.locator('.other-row[data-month-key="2026-09"] .other-day')) == ["Thu 17"]
+
+    body.locator('.cal-day.other-date[data-date="2026-07-08"]').click()
+    assert _detail_follows(body, "data-month-key", "2026-07")
+    assert body.locator(".day-detail .rlabel").inner_text().strip() == "Wednesday 08 July 2026"
+    assert body.locator(".day-detail .day-row").count() == 1
+
+
+def test_previous_and_next_match_day_skip_empty_days_and_disable_at_the_ends(other_page):
+    body = _view(other_page, "month-calendar")
+    body.locator(f'.cal-day[data-date="{DAY}"]').click()
+    prev_btn = body.locator('.day-step button[data-step="-1"]')
+    next_btn = body.locator('.day-step button[data-step="1"]')
+    assert prev_btn.is_disabled()  # nothing with a game before 6 June
+    assert not next_btn.is_disabled()
+
+    next_btn.click()  # 7 June, a Toppserien game
+    assert _under_week_of(body, "2026-06-07")
+    assert body.locator(".day-details .rlabel").inner_text().strip() == "Sunday 07 June 2026"
+    assert body.locator(".cal-day.selected").get_attribute("data-date") == "2026-06-07"
+    body.locator('.day-step button[data-step="1"]').click()  # 13 June: the days between are empty
+    assert body.locator(".cal-day.selected").get_attribute("data-date") == "2026-06-13"
+    body.locator('.day-step button[data-step="1"]').click()  # 8 July, in Other dates
+    assert body.locator(".cal-day.selected").get_attribute("data-date") == "2026-07-08"
+    assert _detail_follows(body, "data-month-key", "2026-07")
+    body.locator('.day-step button[data-step="1"]').click()  # 17 September
+    assert body.locator(".cal-day.selected").get_attribute("data-date") == "2026-09-17"
+    assert body.locator('.day-step button[data-step="1"]').is_disabled()
+    body.locator('.day-step button[data-step="-1"]').click()
+    assert body.locator(".cal-day.selected").get_attribute("data-date") == "2026-07-08"
+
+
+def test_arrow_keys_move_focus_between_day_cells_across_weeks_and_months(page):
+    body = _view(page, "month-calendar")
+    focused = body.locator(f'.cal-day[data-date="{DAY}"]')
+    focused.focus()
+
+    def focused_date():
+        return page.evaluate("document.activeElement.getAttribute('data-date')")
+
+    page.keyboard.press("ArrowRight")
+    assert focused_date() == "2026-06-07"
+    page.keyboard.press("ArrowDown")
+    assert focused_date() == "2026-06-14"
+    page.keyboard.press("ArrowUp")
+    assert focused_date() == "2026-06-07"
+    page.keyboard.press("ArrowLeft")
+    assert focused_date() == DAY
+    page.keyboard.press("Enter")  # a focused cell opens its day
+    assert body.locator(".cal-day.selected").get_attribute("data-date") == DAY
+
+
+def test_arrow_keys_cross_into_other_dates_skipping_the_empty_month(other_page):
+    body = _view(other_page, "month-calendar")
+    body.locator('.cal-day[data-date="2026-06-30"]').focus()
+    other_page.keyboard.press("ArrowRight")  # no July grid: the next date listed is 8 July
+    assert other_page.evaluate("document.activeElement.getAttribute('data-date')") == "2026-07-08"
+
+
+def test_a_phone_shows_counts_as_dot_and_number_without_the_label(browser, rules_url):
+    page = _open_month(browser, rules_url, viewport={"width": 390, "height": 844}, touch=True)
+    body = _view(page, "month-calendar")
+    cell = body.locator(f'.cal-day[data-date="{DAY}"]')
+    assert cell.locator(".cal-comp .cal-lbl").first.is_hidden()
+    assert cell.locator(".cal-comp .cal-n").first.is_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert page.problems == []
+    page.context.close()
+

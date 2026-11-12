@@ -546,7 +546,32 @@
   /* Days of the neighbouring months: space in the grid, nothing to tap. */
   .cal-day.cal-pad { border-color: transparent; background: none; }
   .cal-daynum { font-size: 12.5px; font-variant-numeric: tabular-nums; }
-  .cal-dots { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; min-height: 8px; }
+  .cal-comps { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 5px; min-height: 8px; font-size: 10.5px; line-height: 1.2; }
+  .cal-comp { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
+  .cal-comp .cal-lbl { display: none; font-weight: 600; color: var(--comp-fg, var(--ink)); }
+  .cal-comp .cal-n { color: var(--ink); }
+  @media (min-width: 720px) { .cal-comp .cal-lbl { display: inline; } }
+  .month-jump { display: flex; gap: 6px; overflow-x: auto; white-space: nowrap; padding: 2px 0 12px; }
+  .month-jump button {
+    font: inherit; font-size: 12.5px; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; cursor: pointer; flex: none;
+  }
+  .month-jump button:hover, .month-jump button:focus-visible { border-color: var(--accent); outline: none; }
+  .other-dates { margin-top: 26px; }
+  .other-dates h4 { margin: 0 0 8px; font-size: 15px; }
+  .other-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .other-month { min-width: 9.5em; font-size: 13px; font-weight: 600; }
+  .other-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .cal-day.other-date { flex-direction: row; align-items: center; gap: 6px; min-height: 0; padding: 4px 9px; border-radius: 999px; font-size: 12.5px; }
+  .other-day { white-space: nowrap; }
+  .cal-day.other-date .cal-count { display: none; } /* the competition counts already give the total */
+  .day-step { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .day-step button {
+    font: inherit; font-size: 13px; color: var(--accent); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer;
+  }
+  .day-step button:hover:not(:disabled), .day-step button:focus-visible { border-color: var(--accent); outline: none; }
+  .day-step button:disabled { color: var(--muted); cursor: default; }
   .cal-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--comp-fg, var(--muted)); }
   .legend .cal-dot { margin-right: 5px; }
   .day-details {
