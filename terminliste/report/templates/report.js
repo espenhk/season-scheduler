@@ -1075,7 +1075,9 @@
   }
   document.addEventListener('change', function (e) {
     var bar = e.target.closest ? e.target.closest('.controls.filters-open') : null;
-    if (bar && bar.querySelector('.bar-fields').contains(e.target)) setFilters(bar, false);
+    if (!bar || !bar.querySelector('.bar-fields').contains(e.target)) return;
+    // Picking a rule is what enables "Only show matching", so the fields stay open for it.
+    if (!e.target.classList.contains('lens-select')) setFilters(bar, false);
   });
   window.addEventListener('scroll', function () {
     var bar = document.querySelector('.controls.filters-open');

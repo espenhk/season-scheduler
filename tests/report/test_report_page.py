@@ -693,6 +693,9 @@ def test_the_phone_bar_stays_compact_collapses_its_filters_and_never_overflows(t
     assert fields.is_visible() and toggle.get_attribute("aria-expanded") == "true"
     assert _rect(page, "#panel-1 .controls")["h"] < 844 * 0.25
     page.select_option("#panel-1 .lens-select", PAIR)
+    # Picking a rule keeps the fields open, since it enables "Only show matching".
+    assert fields.is_visible()
+    page.check("#panel-1 .lens-only")
     assert not fields.is_visible() and "1" in toggle.inner_text()
     assert page.locator("#panel-1 .lens-clear").is_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
