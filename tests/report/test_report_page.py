@@ -857,11 +857,11 @@ def test_the_club_filter_resets_the_round_and_week_totals(page):
 def test_month_days_show_their_net_and_the_day_detail_its_totals(page):
     body = _view(page, "month-calendar")
     day = body.locator(f'.cal-day[data-date="{DAY}"]')
-    assert day.locator(".cal-net").inner_text() == "3 · +12.5"  # games, then net
+    assert _texts(day.locator(".cal-net > span")) == ["3", "+12.5"]  # the count and the net, each its own line
     assert "3 games; net +12.5 pts" in day.get_attribute("aria-label")
     day.click()
     assert _texts(body.locator(".day-detail .rsum")) == ["+12.5 pts · 3 games"]
-    assert body.locator('.cal-day[data-date="2026-06-13"] .cal-net').inner_text() == "1 · 0"
+    assert _texts(body.locator('.cal-day[data-date="2026-06-13"] .cal-net > span')) == ["1", "0"]
 
     page.select_option(".club-select", "club_b")
     assert body.locator(f'.cal-day[data-date="{DAY}"] .cal-net').count() == 0  # no club B game that day
@@ -936,6 +936,8 @@ def test_a_round_with_only_midweek_games_is_tagged(midweek_page):
     summary = " ".join(tagged.locator(".rsum").inner_text().split()).lower()  # the tag is upper-cased by CSS
     assert "1 game" in summary and summary.endswith("midweek")
     assert tagged.locator(".rtag").get_attribute("title") == "Midweek: every game falls Monday to Thursday"
+    # The strip cell's name is the parts joined with " · ", midweek last.
+    assert page_label(midweek_page, 2) == "Round 3: 0 pts · 1 game · midweek"
 
 
 @pytest.fixture
@@ -956,11 +958,31 @@ def test_round_labels_count_costs_and_repeated_badges_and_flag_hard_breaks(rules
     summary = " ".join(round_four.locator(".rsum").inner_text().split())
     assert summary.startswith("−") and " pts · 2 games · 2 with costs · 2 × short rest" in summary
     assert round_four.locator(".rnet.cost").count() == 1  # a net below zero reads amber
+    assert page_label(rules_page, 3) == "Round 4: −24 pts · 2 games · 2 with costs · 2 × short rest · midweek"
     # Hard breaks show as a count in the label and as a badge on the season strip.
     assert body.locator(".rsum", has_text="hard break").count() >= 1
     strip = rules_page.locator("#panel-1 .season-strip")
     assert strip.locator(".strip-hard").count() >= 1
     assert strip.locator(".strip-cell.sc-cost .strip-net").count() >= 1
+
+
+def page_label(page, index):
+    return page.locator("#panel-1 .strip-cell").nth(index).get_attribute("aria-label")
+
+
+INK = "rgb(148, 98, 10)"  # --warn-ink, the text colour of a cost figure
+
+
+def test_cost_figures_are_set_in_the_ink_colour(rules_page):
+    # Each view is drawn only while active, so each figure is read in its own view.
+    assert _view(rules_page, "by-competition").locator(".round .rnet.cost").first.evaluate(
+        "e => getComputedStyle(e).color") == INK
+    assert rules_page.locator("#panel-1 .strip-cell.sc-cost .strip-net").first.evaluate(
+        "e => getComputedStyle(e).color") == INK
+    assert _view(rules_page, "month-calendar").locator(
+        '.cal-day[data-date="2026-06-10"] .cal-value.cost').evaluate("e => getComputedStyle(e).color") == INK
+    assert _view(rules_page, "combined-list").locator("tr.fx-row .fx-score.cost").first.evaluate(
+        "e => getComputedStyle(e).color") == INK
 
 
 def test_costs_colour_the_combined_list_score_and_the_day_figures(rules_page):

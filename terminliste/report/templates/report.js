@@ -371,18 +371,34 @@
   // Parts are joined with " · " and each omitted when it would read zero: the net
   // only when a visible badge is on the games, costs and the repeated badge only
   // when there are any.
+  // The parts of a round or week total, as text plus an optional class for the
+  // net. Shared by the visible label and the accessible name, so they agree.
+  function summaryParts(sum) {
+    var parts = [];
+    if (sum.badged) parts.push({ text: netText(sum.net) + ' pts', net: true, cls: netClass(sum.net) });
+    parts.push({ text: plural(sum.games, 'game', 'games') });
+    if (sum.costs) parts.push({ text: sum.costs + ' with costs' });
+    if (sum.top && sum.top.n >= 2) parts.push({ text: sum.top.n + ' × ' + sum.top.rule.label });
+    if (sum.broken) parts.push({ text: plural(sum.broken, 'hard break', 'hard breaks') });
+    return parts;
+  }
+
+  // The same parts as one line of text, midweek included: a strip cell's name.
+  function summaryText(sum) {
+    var texts = summaryParts(sum).map(function (part) { return part.text; });
+    if (sum.midweek) texts.push('midweek');
+    return texts.join(' · ');
+  }
+
+  // Parts are joined with " · " and each omitted when it would read zero: the net
+  // only when a visible badge is on the games, costs and the repeated badge only
+  // when there are any.
   function summaryNode(sum, midweekTag) {
     var node = el('div', 'rsum');
     node.title = 'Net points from the rule badges on the games shown (hidden rewards are not counted)';
-    var parts = [];
-    if (sum.badged) parts.push(el('span', 'rnet ' + netClass(sum.net), netText(sum.net) + ' pts'));
-    parts.push(plural(sum.games, 'game', 'games'));
-    if (sum.costs) parts.push(sum.costs + ' with costs');
-    if (sum.top && sum.top.n >= 2) parts.push(sum.top.n + ' × ' + sum.top.rule.label);
-    if (sum.broken) parts.push(plural(sum.broken, 'hard break', 'hard breaks'));
-    parts.forEach(function (part, i) {
+    summaryParts(sum).forEach(function (part, i) {
       if (i) node.appendChild(document.createTextNode(' · '));
-      node.appendChild(typeof part === 'string' ? document.createTextNode(part) : part);
+      node.appendChild(part.net ? el('span', 'rnet' + (part.cls ? ' ' + part.cls : ''), part.text) : document.createTextNode(part.text));
     });
     if (midweekTag && sum.midweek) {
       var tagNode = el('span', 'rtag', 'midweek');
@@ -392,15 +408,13 @@
     return node;
   }
 
-  // A day's game count, with its net when a visible badge sits on one of its games.
+  // A day's game count, with its net on a second line when a visible badge sits on
+  // one of its games. Each line is its own element so the two never run together.
   function dayFigure(sum) {
     var figure = el('span', 'cal-net');
     figure.setAttribute('aria-hidden', 'true');
     figure.appendChild(el('span', 'cal-count', String(sum.games)));
-    if (sum.badged) {
-      figure.appendChild(document.createTextNode(' · '));
-      figure.appendChild(el('span', 'cal-value ' + netClass(sum.net), netText(sum.net)));
-    }
+    if (sum.badged) figure.appendChild(el('span', 'cal-value ' + netClass(sum.net), netText(sum.net)));
     return figure;
   }
 
@@ -920,7 +934,7 @@
       hard.setAttribute('aria-hidden', 'true');
       button.appendChild(hard);
     }
-    var label = round.title + ': ' + summaryNode(sum, true).textContent;
+    var label = round.title + ': ' + summaryText(sum);
     button.setAttribute('aria-label', label);
     button.title = label;
     button.addEventListener('click', function () { opt.jumpTo(round.ids); });
