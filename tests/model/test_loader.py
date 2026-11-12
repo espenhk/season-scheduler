@@ -216,6 +216,20 @@ def test_cup_competitions_are_present_and_shaped_correctly(world):
     }
 
 
+def test_cup_editions_are_named_by_their_season(world):
+    """Each cup's two editions are told apart by the season in their names (#37)."""
+    names = {
+        cup_id: world.competition(cup_id).name
+        for cup_id in ("cup_men_2026", "cup_men_2027", "cup_women_2026", "cup_women_2027")
+    }
+    assert names == {
+        "cup_men_2026": "NM Cupen 2025/26 (menn)",
+        "cup_men_2027": "NM Cupen 2026/27 (menn)",
+        "cup_women_2026": "NM Cupen 2026 (kvinner)",
+        "cup_women_2027": "NM Cupen 2026/27 (kvinner)",
+    }
+
+
 def test_cup_schedules_resolve_cleanly_from_the_shipped_data(world):
     """The shipped cup data isn't just well-formed — its forced dates and
     windows actually resolve to a valid, ordered per-team schedule."""

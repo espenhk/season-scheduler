@@ -15,8 +15,8 @@
 #   - "fotball.no: NM Kvinner 2027 — Slik spilles første runde (Round 1: 9 Sep 2026, Round 2: 21 Oct 2026, Toppserien enters at Round 2)"
 #   - "vg.no: NFF tar grep — flytter også kvinnens NM-finale til våren (women's final also moved to spring)"
 id: cup_women_2027
-name: NM Cupen (kvinner)
-short_name: "NM(k)"
+name: NM Cupen 2026/27 (kvinner)
+short_name: "NM26/27(k)"
 season: 2027
 gender: women
 format: cup

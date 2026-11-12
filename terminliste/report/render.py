@@ -1166,12 +1166,14 @@ def _competition_views(world: World, entries: list[dict]) -> list[dict]:
     for competition_id, comp_entries in sorted(by_competition.items()):
         competition = world.competition(competition_id)
         rounds: dict[int, list[dict]] = defaultdict(list)
-        for entry in comp_entries:
+        # Within a round: by date, then kickoff, then home team, as a reader scans it.
+        for entry in sorted(comp_entries, key=_reading_order):
             rounds[entry["round_index"]].append(entry)
 
         views.append(
             {
                 "id": competition_id,
+                "kind": "league",
                 "name": competition.name,
                 "meta": (
                     f"{len(comp_entries)} matches over {len(rounds)} rounds · "
@@ -1188,6 +1190,15 @@ def _competition_views(world: World, entries: list[dict]) -> list[dict]:
             }
         )
     return views
+
+
+def _reading_order(entry: dict) -> tuple:
+    """Date, then kickoff (an untimed entry after the timed ones), then home team."""
+    return (
+        entry["date"],
+        entry.get("kickoff_time") or "99:99",
+        entry.get("home", entry.get("team", "")),
+    )
 
 
 def _combined_calendar_view(entries: list[dict]) -> list[dict]:
@@ -1225,7 +1236,12 @@ def _combined_list_view(entries: list[dict]) -> list[dict]:
     one flat chronological list rather than grouped by week."""
     return sorted(
         entries,
-        key=lambda e: (e["date"], e["competition_id"], e.get("home", e.get("team", ""))),
+        key=lambda e: (
+            e["date"],
+            e.get("kickoff_time") or "99:99",
+            e["competition_id"],
+            e.get("home", e.get("team", "")),
+        ),
     )
 
 
@@ -1318,6 +1334,7 @@ def _cup_views(cup_schedules: list[CupSchedule], cup_entries: list[dict]) -> lis
         views.append(
             {
                 "id": schedule.competition_id,
+                "kind": "cup",
                 "name": schedule.competition_name,
                 "meta": (
                     f"{team_count} teams entered · opponent drawn closer to each round, so dates "
@@ -1436,6 +1453,7 @@ def _european_views(
         views.append(
             {
                 "id": competition.id,
+                "kind": "european",
                 "name": competition.name,
                 "meta": meta,
                 "rounds": rounds,

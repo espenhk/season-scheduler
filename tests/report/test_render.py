@@ -988,7 +988,7 @@ def test_league_match_wire_is_compact_and_omits_the_defaults():
     data = _report_data(_render(world, season, [candidate]))
 
     first, second = data["options"][0]["matches"]
-    assert first == {"d": "2026-06-06", "t": "18:00", "c": "elite", "h": "a_m", "a": "opp_m"}
+    assert first == {"d": "2026-06-06", "t": "18:00", "c": "elite", "r": 1, "h": "a_m", "a": "opp_m"}
     assert second["v"] == "va" and "t" not in second
     assert data["venues"]["va"] == world.venue("va").name
     assert data["teams"]["a_m"]["short"] == world.team_short_label("a_m")
@@ -1909,3 +1909,52 @@ def test_headline_rows_carry_no_sub_line_and_the_rule_each_headline_names():
     comparison = _comparison(world, [candidate, candidate])
     for headline in _section(comparison, "Headline numbers"):
         assert all(cell["sub"] == "" for cell in headline["cells"])
+
+
+def test_league_rounds_list_their_fixtures_by_date_then_kickoff_then_home_team():
+    """A round reads in the order a reader scans it: date, then kickoff, so the
+    same-slot matches of a day sit together (#37)."""
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [
+        f.match("elite", "b_m", "opp_m", date(2026, 6, 6), "vb", kickoff_time="20:00", round_index=0),
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va", kickoff_time="14:00", round_index=0),
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 13), "va", kickoff_time="12:00", round_index=0),
+    ]
+    candidate = _candidate(world, season, matches, [])
+
+    data = _report_data(_render(world, season, [candidate]))
+
+    (view,) = data["options"][0]["byCompetition"]
+    (round_,) = view["rounds"]
+    wire = data["options"][0]["matches"]
+    assert [wire[uid]["t"] for uid in round_["ids"]] == ["14:00", "20:00", "12:00"]
+
+
+def test_a_cup_round_date_keeps_one_round_for_all_its_teams_and_each_view_names_its_kind():
+    """Every team entered on a cup round date sits in that one round, which the
+    page draws as a single chip; each by-competition view says what kind it is (#37)."""
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    candidate = _candidate(world, season, matches, [])
+    schedule = f.cup_schedule(
+        "cup1",
+        [
+            f.cup_placement(
+                "r1",
+                {"a_m": date(2026, 6, 6), "b_m": date(2026, 6, 6)},
+                round_name="Round 1",
+                venue_type="away",
+            )
+        ],
+        competition_name="NM Cup",
+    )
+
+    data = _report_data(_render(world, season, [candidate], cup_schedules=[schedule]))
+
+    (cup_view,) = data["sharedByCompetition"]
+    assert cup_view["kind"] == "cup"
+    (cup_round,) = cup_view["rounds"]
+    assert len(cup_round["ids"]) == 2
+    assert {data["shared"][uid]["t"] for uid in cup_round["ids"]} == {"a_m", "b_m"}
+    (league_view,) = data["options"][0]["byCompetition"]
+    assert league_view["kind"] == "league"

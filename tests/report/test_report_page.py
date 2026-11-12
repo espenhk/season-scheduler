@@ -111,7 +111,14 @@ def rules_url(tmp_path_factory):
 
 
 def _report_url(
-    tmp_path_factory, matches, rest=False, cup_venue="away", with_europe=True, cup_on=date(2026, 6, 6), europe_on=date(2026, 6, 6)
+    tmp_path_factory,
+    matches,
+    rest=False,
+    cup_venue="away",
+    with_europe=True,
+    cup_on=date(2026, 6, 6),
+    europe_on=date(2026, 6, 6),
+    cup_dates=None,
 ):
     world, season = _world()
     ctx = EvalContext(world=world, season=season, travel=_FixedTravel(), detail=True)
@@ -128,7 +135,7 @@ def _report_url(
     )
     cup = f.cup_schedule(
         "cup1",
-        [f.cup_placement("r1", {"a_m": cup_on}, round_name="Round 1", venue_type=cup_venue)],
+        [f.cup_placement("r1", cup_dates or {"a_m": cup_on}, round_name="Round 1", venue_type=cup_venue)],
         competition_name="NM Cup",
         competition_short_name="NM",
     )
@@ -215,7 +222,20 @@ def _texts(locator):
     return [" ".join(t.split()) for t in locator.all_inner_texts()]
 
 
+def _show_cups_and_europe(page, panel="#panel-1"):
+    """Switches the cup and European competitions on in the bar, as a reader does.
+
+    The page opens on the two leagues, so a test about cup or European fixtures
+    turns them on first.
+    """
+    for kind in ("cup", "european"):
+        button = page.locator(f'{panel} .kind-btn[data-kind="{kind}"]')
+        if button.get_attribute("aria-pressed") != "true":
+            button.click()
+
+
 def test_by_competition_shows_league_cup_and_european_fixtures(page, world):
+    _show_cups_and_europe(page)
     body = _view(page, "by-competition")
 
     cards = _texts(body.locator(".fx"))
@@ -226,6 +246,7 @@ def test_by_competition_shows_league_cup_and_european_fixtures(page, world):
 
 
 def test_combined_views_tag_each_fixture_with_its_competition(page):
+    _show_cups_and_europe(page)
     calendar = _view(page, "combined-calendar")
     cards = _texts(calendar.locator(".fx"))
     assert len(cards) == 5
@@ -234,8 +255,8 @@ def test_combined_views_tag_each_fixture_with_its_competition(page):
 
     rows = _texts(_view(page, "combined-list").locator("tr.fx-row"))
     assert len(rows) == 5
-    assert any("TBD (Round 1)" in r for r in rows)
-    assert any(f"{OPPONENT} (q3)" in r for r in rows)
+    assert any("v TBD" in r and "Round 1" in r for r in rows)
+    assert any(f"v {OPPONENT}" in r and "q3" in r for r in rows)
 
 
 def _under_week_of(scope, iso):
@@ -259,6 +280,7 @@ def _in_view(page, locator):
 
 
 def test_tapping_a_day_lists_its_games_with_short_competition_tags(page, world):
+    _show_cups_and_europe(page)
     body = _view(page, "month-calendar")
     assert body.locator(".day-details").count() == 0
     assert body.locator(f'.cal-day[data-date="{DAY}"] .cal-dot').count() == 3
@@ -330,6 +352,7 @@ def test_neighbouring_month_padding_is_empty_and_each_date_is_one_button(page):
 
 
 def test_club_filter_hides_other_clubs_fixtures_and_empty_rounds(page):
+    _show_cups_and_europe(page)
     page.select_option(".club-select", "club_b")
 
     body = _view(page, "by-competition")
@@ -380,6 +403,7 @@ def test_badges_render_on_cards_rows_and_day_rows_with_their_rules_and_delta(pag
 
 
 def test_cup_and_european_fixtures_stay_unbadged(page):
+    _show_cups_and_europe(page)
     body = _view(page, "combined-calendar")
     unbadged = body.locator('.fx[data-rules=""]')
     assert unbadged.count() == 2  # the cup round and the European leg
@@ -475,6 +499,7 @@ def test_lens_selector_lists_only_rules_with_fixtures_and_their_totals(page):
 
 
 def test_lens_dims_other_fixtures_and_emphasises_matching_ones_in_every_view(page):
+    _show_cups_and_europe(page)
     _lens(page, PAIR)
     for view in ("by-competition", "combined-calendar"):
         assert _counts(_view(page, view), ".fx") == (2, 3)
@@ -508,6 +533,7 @@ def test_lens_on_the_inverse_rule_highlights_the_off_day_fixtures_the_badges_sho
 
 
 def test_lens_combines_with_the_club_filter_and_only_matching_hides_and_collapses(page):
+    _show_cups_and_europe(page)
     _lens(page, PAIR)
     page.select_option(".club-select", "club_b")
     body = _view(page, "combined-calendar")
@@ -561,6 +587,7 @@ def test_a_lens_on_a_rule_the_other_option_never_scores_is_dropped_there(page):
 
 
 def test_clearing_the_lens_restores_every_fixture(page):
+    _show_cups_and_europe(page)
     _lens(page, PAIR)
     page.check(".lens-only-box")
     assert page.locator("#panel-1 .lens-caption").is_visible()
@@ -769,6 +796,7 @@ def test_the_bar_stays_in_view_and_summarises_the_selected_option(short_page):
 
 
 def test_the_bar_controls_drive_the_view_club_and_rule_filters_and_chips_clear_them(short_page):
+    _show_cups_and_europe(short_page)
     page = short_page
     page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
     _view(page, "combined-calendar")
@@ -947,6 +975,7 @@ def midweek_page(browser, midweek_url):
 
 
 def test_round_labels_total_the_visible_badges_and_count_their_games(page):
+    _show_cups_and_europe(page)
     body = _view(page, "by-competition")
     # The league rounds with a badge (the 13 June off-day one nets to 0) keep their net.
     assert sorted(_texts(body.locator(".round .rsum"))) == sorted(
@@ -960,6 +989,7 @@ def test_round_labels_total_the_visible_badges_and_count_their_games(page):
 
 
 def test_a_round_with_no_badges_says_its_games_and_no_points(page):
+    _show_cups_and_europe(page)
     body = _view(page, "by-competition")
     # The cup round and the European leg carry no badges.
     assert _texts(body.locator(".round:not(:has(.rnet)) .rsum")) == ["1 game", "1 game"]
@@ -967,6 +997,7 @@ def test_a_round_with_no_badges_says_its_games_and_no_points(page):
 
 
 def test_combined_calendar_weeks_total_their_visible_games(page):
+    _show_cups_and_europe(page)
     body = _view(page, "combined-calendar")
     # Week 23 holds the two home-pair matches plus the cup round and European leg.
     assert sorted(_texts(body.locator(".round .rsum"))) == ["+25 pts · 4 games", "0 pts · 1 game"]
@@ -974,6 +1005,7 @@ def test_combined_calendar_weeks_total_their_visible_games(page):
 
 
 def test_the_club_filter_resets_the_round_and_week_totals(page):
+    _show_cups_and_europe(page)
     page.select_option(".club-select", "club_b")
     assert _texts(_view(page, "by-competition").locator(".round .rsum")) == ["0 pts · 1 game"]
     assert _texts(_view(page, "combined-calendar").locator(".round .rsum")) == ["0 pts · 1 game"]
@@ -983,6 +1015,7 @@ def test_the_club_filter_resets_the_round_and_week_totals(page):
 
 
 def test_month_days_show_their_net_and_the_day_detail_its_totals(page):
+    _show_cups_and_europe(page)
     body = _view(page, "month-calendar")
     day = body.locator(f'.cal-day[data-date="{DAY}"]')
     assert _texts(day.locator(".cal-value")) == ["+12.5"]  # the net; the total is in the label, not drawn
@@ -997,8 +1030,9 @@ def test_month_days_show_their_net_and_the_day_detail_its_totals(page):
 
 
 def test_the_combined_list_scores_each_fixture_in_its_own_column(page):
+    _show_cups_and_europe(page)
     body = _view(page, "combined-list")
-    assert _texts(body.locator("th"))[-1].lower() == "score"  # the header is upper-cased by CSS
+    assert _texts(body.locator("thead th"))[-1].lower() == "score"  # the header is upper-cased by CSS
     assert sorted(_texts(body.locator("tr.fx-row .fx-score"))) == sorted(["+12.5", "+12.5", "0", "0", "0"])
 
 
@@ -1059,10 +1093,11 @@ def test_totals_and_strip_do_not_overflow_a_phone_screen(touch_page):
 
 
 def test_a_round_with_only_midweek_games_is_tagged(midweek_page):
+    _show_cups_and_europe(midweek_page)
     body = _view(midweek_page, "by-competition")
     assert body.locator(".rtag").count() == 1
     tagged = body.locator(".round:has(.rtag)")
-    assert "Tue 09/06" in tagged.inner_text()
+    assert "Tue 9 Jun" in tagged.inner_text()
     summary = " ".join(tagged.locator(".rsum").inner_text().split()).lower()  # the tag is upper-cased by CSS
     assert "1 game" in summary and summary.endswith("midweek")
     assert tagged.locator(".rtag").get_attribute("title") == "Midweek: every game falls Monday to Thursday"
@@ -1269,6 +1304,7 @@ def test_the_scope_is_announced_and_the_season_scorecard_comes_back_on_clear(pag
 
 
 def test_the_shown_count_sits_in_the_banner_for_a_club_and_under_the_bar_for_a_rule(page):
+    _show_cups_and_europe(page)
     data = _wire(page)
     count = page.locator("#panel-1 .scope-count")
     assert count.is_hidden()
@@ -1286,6 +1322,7 @@ def test_the_shown_count_sits_in_the_banner_for_a_club_and_under_the_bar_for_a_r
 
 
 def test_a_dual_club_opens_on_a_timeline_of_both_teams_in_date_order(page):
+    _show_cups_and_europe(page)
     data = _wire(page)
     teams = _club_teams(data, "club_a")
     counts = Counter()
@@ -1373,6 +1410,7 @@ def test_a_tie_with_no_venue_decided_is_marked_and_never_paired(tbd_url, browser
     context = browser.new_context(viewport={"width": 1280, "height": 900})
     page = context.new_page()
     page.goto(tbd_url)
+    _show_cups_and_europe(page)
     page.select_option("#panel-1 .club-select", "club_a")
     rows = page.locator("#panel-1 .tl-row")
     assert _texts(rows.nth(0).locator(".tl-tag")) == []  # 5 June: no pair with the tie
@@ -1384,6 +1422,7 @@ def test_a_tie_with_no_venue_decided_is_marked_and_never_paired(tbd_url, browser
 
 
 def test_a_team_filter_narrows_every_view_and_the_timeline_to_one_lane(page):
+    _show_cups_and_europe(page)
     data = _wire(page)
     women = next(tid for tid, t in data["teams"].items() if t["club"] == "club_a" and t["gender"] == "women")
     page.select_option("#panel-1 .club-select", "club_a")
@@ -1708,6 +1747,7 @@ def test_the_month_jump_bar_scrolls_to_the_month_below_the_sticky_bar(other_page
 
 
 def test_months_without_a_league_fixture_are_listed_under_other_dates_and_open_inline(other_page):
+    _show_cups_and_europe(other_page)
     body = _view(other_page, "month-calendar")
     assert body.locator('.month[data-month-key="2026-06"]').count() == 1
     assert body.locator('.month[data-month-key="2026-07"]').count() == 0
@@ -1722,6 +1762,7 @@ def test_months_without_a_league_fixture_are_listed_under_other_dates_and_open_i
 
 
 def test_previous_and_next_match_day_skip_empty_days_and_disable_at_the_ends(other_page):
+    _show_cups_and_europe(other_page)
     body = _view(other_page, "month-calendar")
     body.locator(f'.cal-day[data-date="{DAY}"]').click()
     prev_btn = body.locator('.day-step button[data-step="-1"]')
@@ -1782,3 +1823,300 @@ def test_a_phone_shows_counts_as_dot_and_number_without_the_label(browser, rules
     assert page.problems == []
     page.context.close()
 
+
+# -- competition filter, cup chips and navigation (#37) ----------------------
+
+
+@pytest.fixture(scope="module")
+def chip_url(tmp_path_factory):
+    # Two entered teams on one cup round date: one chip, not two placeholder cards.
+    return _report_url(
+        tmp_path_factory, _base_matches(), cup_dates={"a_m": date(2026, 6, 6), "b_m": date(2026, 6, 6)}
+    )
+
+
+@pytest.fixture(scope="module")
+def kickoff_url(tmp_path_factory):
+    # A second league match on 6 June, kicking off before the first one.
+    extra = f.match("topp", "b_w", "opp_w", date(2026, 6, 6), "vb", kickoff_time="14:00")
+    return _report_url(tmp_path_factory, _base_matches() + [extra])
+
+
+def _desktop_page(browser, url):
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.problems = []
+    page.on("console", lambda m: page.problems.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: page.problems.append(str(e)))
+    page.goto(url)
+    yield page
+    assert page.problems == []
+    page.close()
+
+
+@pytest.fixture
+def chip_page(browser, chip_url):
+    yield from _desktop_page(browser, chip_url)
+
+
+@pytest.fixture
+def kickoff_page(browser, kickoff_url):
+    yield from _desktop_page(browser, kickoff_url)
+
+
+def _visible_pane(page):
+    return page.locator("#panel-1 .view-pane:not([hidden]) .pane-body")
+
+
+def test_the_page_opens_on_the_two_leagues_with_cups_and_europe_switched_off(page):
+    buttons = page.locator("#panel-1 .kind-btn")
+    assert _texts(buttons) == ["Leagues", "Cups", "Europe"]
+    assert [b.get_attribute("aria-pressed") for b in buttons.all()] == ["true", "false", "false"]
+    assert page.locator("#panel-1 .kind-clear").is_hidden()
+    assert _view(page, "combined-calendar").locator(".fx").count() == 3  # the three league matches
+
+
+def test_competition_chips_filter_the_views_and_clearing_them_restores_the_leagues(page):
+    body = _view(page, "combined-calendar")
+    page.click('#panel-1 .kind-btn[data-kind="cup"]')
+    assert body.locator(".fx").count() == 4
+    page.click('#panel-1 .kind-btn[data-kind="european"]')
+    assert body.locator(".fx").count() == 5
+    page.click('#panel-1 .kind-btn[data-kind="league"]')
+    assert body.locator(".fx").count() == 2
+    # On a desktop the pressed buttons show the choice, so the clear chip stays out of the bar.
+    assert page.locator("#panel-1 .kind-clear").text_content().strip() == "Shown: Cups + Europe ×"
+    assert page.locator("#panel-1 .kind-clear").is_hidden()
+    page.click('#panel-1 .kind-btn[data-kind="league"]')
+    page.click('#panel-1 .kind-btn[data-kind="cup"]')
+    page.click('#panel-1 .kind-btn[data-kind="european"]')
+    assert body.locator(".fx").count() == 3
+
+
+def test_competition_chips_reach_the_month_dots_the_strip_and_the_sections(page):
+    cell = _view(page, "month-calendar").locator('.cal-day[data-date="2026-06-06"]')
+    assert cell.locator(".cal-comp").count() == 1  # the league match alone
+    page.click('#panel-1 .kind-btn[data-kind="cup"]')
+    assert cell.locator(".cal-comp").count() == 2  # and the cup round
+
+    body = _view(page, "by-competition")
+    page.click('#panel-1 .kind-btn[data-kind="european"]')
+    page.click('#panel-1 .kind-btn[data-kind="league"]')
+    assert _texts(body.locator(".comp-name")) == ["NM Cup", "cl"]
+    # With the leagues off, every season-strip round has nothing shown.
+    assert page.locator("#panel-1 .strip-cell[disabled]").count() == page.locator("#panel-1 .strip-cell").count()
+
+
+def test_competition_choice_carries_across_the_option_tabs(page):
+    page.click('#panel-1 .kind-btn[data-kind="cup"]')
+    page.click('.tab[data-panel="panel-2"]')
+    assert page.get_attribute('#panel-2 .kind-btn[data-kind="cup"]', "aria-pressed") == "true"
+    assert page.get_attribute('#panel-2 .kind-btn[data-kind="european"]', "aria-pressed") == "false"
+    assert page.get_attribute('#panel-2 .kind-btn[data-kind="league"]', "aria-pressed") == "true"
+    page.click('.tab[data-panel="panel-1"]')
+
+
+def test_by_competition_groups_its_sections_and_its_jump_list_scrolls_below_the_bar(page):
+    _show_cups_and_europe(page)
+    body = _view(page, "by-competition")
+    # The group headings are upper-cased by CSS.
+    assert [h.lower() for h in _texts(body.locator(".group-head"))] == ["leagues", "cups", "europe"]
+    names = _texts(body.locator(".comp-name"))
+    assert names == ["elite", "topp", "NM Cup", "cl"]
+    assert _texts(body.locator(".comp-jump-btn")) == names
+
+    summary = body.locator("details.comp > summary").nth(1)
+    assert summary.evaluate("e => getComputedStyle(e).position") == "sticky"
+    bar_height = page.evaluate("document.querySelector('#panel-1 .controls').offsetHeight")
+    assert summary.evaluate("e => getComputedStyle(e).top") == f"{bar_height}px"
+
+    # From the foot of the page, the jump list brings the Eliteserien heading to just under the bar.
+    page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+    body.locator(".comp-jump-btn").nth(0).click()
+    page.wait_for_function(
+        """() => {
+          const s = document.querySelectorAll('#panel-1 .view-pane:not([hidden]) details.comp > summary')[0];
+          const bar = document.querySelector('#panel-1 .controls').getBoundingClientRect().bottom;
+          const top = s.getBoundingClientRect().top;
+          return top >= bar - 1 && top <= bar + 16;
+        }"""
+    )
+
+
+def test_a_competition_section_collapses_and_opens_from_its_heading(page):
+    _show_cups_and_europe(page)
+    body = _view(page, "by-competition")
+    section = body.locator("details.comp").nth(0)
+    section.locator("summary").click()
+    assert section.evaluate("d => d.open") is False
+    assert section.locator(".round").first.is_hidden()
+    section.locator("summary").click()
+    assert section.evaluate("d => d.open") is True
+    assert section.locator(".round").first.is_visible()
+
+
+def test_a_cup_round_date_is_one_chip_that_opens_to_its_teams_and_a_club_filter_leaves_its_entry(chip_page):
+    page = chip_page
+    _show_cups_and_europe(page)
+    body = _view(page, "combined-calendar")
+    chip = body.locator("details.fx-group")
+    assert chip.count() == 1
+    assert _texts(chip.locator("summary")) == ["NM Cup · Round 1 · 2 teams"]
+    assert chip.evaluate("d => d.open") is False
+    chip.locator("summary").click()
+    teams = _texts(chip.locator(".fx"))
+    assert len(teams) == 2 and all("v TBD" in team for team in teams)
+    # The day heading gives the date and the kickoffs: 18:00 league, the cups and the European tie untimed.
+    # The chip counts its own teams, so the day heading counts only the Europe card left.
+    assert _texts(body.locator(".day-head"))[0] == "Sat 6 Jun — 18:00 ×1 · cup/UEFA ×1"
+
+    page.select_option("#panel-1 .club-select", "club_b")
+    pane = _visible_pane(page)
+    assert pane.locator("details.fx-group").count() == 0
+    cards = _texts(pane.locator(".fx"))
+    assert len(cards) == 2 and sum("v TBD" in card for card in cards) == 1
+
+
+def test_fixtures_in_a_day_read_in_kickoff_order_under_one_day_heading(kickoff_page):
+    page = kickoff_page
+    _show_cups_and_europe(page)
+    body = _view(page, "combined-calendar")
+    assert _texts(body.locator(".day-head"))[0] == "Sat 6 Jun — 14:00 ×1 · 18:00 ×1 · cup/UEFA ×2"
+    first_week = body.locator(".fixtures").first
+    assert _texts(first_week.locator(".fx .d")) == ["14:00", "18:00"]
+    assert first_week.locator(".fx .d").first.inner_text().strip() == "14:00"  # no date on the card
+
+
+def test_the_combined_list_has_a_sticky_header_round_column_date_rows_and_a_text_filter(page):
+    _show_cups_and_europe(page)
+    body = _view(page, "combined-list")
+    header = _visible_pane(page).locator("thead th").first
+    assert header.evaluate("e => getComputedStyle(e).position") == "sticky"
+    assert [h.lower() for h in _texts(body.locator("thead th"))] == [
+        "time", "round", "competition", "team / opponent", "venue", "rules", "score",
+    ]
+    assert body.locator("tr.date-row").count() == 3  # 6, 7 and 13 June
+    rows = body.locator("tr.fx-row")
+    assert _texts(rows.locator(".fx-round")) == ["R1", "Round 1", "q3", "R1", "R2"]
+    cup_row = rows.nth(1)
+    assert "v TBD" in cup_row.locator(".fx-team").inner_text()
+    assert cup_row.locator(".fx-venue").count() == 1  # the venue is its own column, not the opponent's
+
+    text = body.locator(".list-filter")
+    text.fill("no such team")
+    assert body.locator("tr.fx-row:visible").count() == 0
+    assert body.locator("tr.date-row:visible").count() == 0
+    text.fill("TBD")
+    assert body.locator("tr.fx-row:visible").count() == 1
+    assert body.locator("tr.date-row:visible").count() == 1
+    text.fill("")
+    assert body.locator("tr.fx-row:visible").count() == 5
+
+
+def test_the_combined_list_folds_a_cup_round_date_into_one_row_that_opens_to_its_teams(chip_page):
+    page = chip_page
+    _show_cups_and_europe(page)
+    body = _view(page, "combined-list")
+    toggle = body.locator(".fx-group-toggle")
+    assert _texts(toggle) == ["NM Cup · Round 1 · 2 teams"]
+    members = body.locator("tr.fx-member")
+    assert members.count() == 2 and members.first.is_hidden()
+    toggle.click()
+    assert members.first.is_visible() and toggle.get_attribute("aria-expanded") == "true"
+    body.locator(".list-filter").fill("no such team")
+    assert body.locator("tr.fx-member:visible").count() == 0
+
+
+def test_reveal_lifts_a_competition_switched_off_to_show_its_fixture(page):
+    page.click('#panel-1 .kind-btn[data-kind="league"]')  # leagues off: nothing in the calendar
+    assert _visible_pane(page).locator(".fx").count() == 0
+    item = page.locator(f'#panel-1 details.item[data-rule="{PAIR}"]')
+    item.locator("summary").click()
+    row = item.locator(".occ-row").nth(1)
+    uid = row.get_attribute("data-fx")
+    row.click()
+    flashed = page.locator("#panel-1 .view-pane:not([hidden]) .flash")
+    flashed.wait_for()
+    assert flashed.get_attribute("data-uid") == uid
+    assert page.get_attribute('#panel-1 .kind-btn[data-kind="league"]', "aria-pressed") == "true"
+
+
+def test_the_competition_chips_and_grouped_views_fit_a_phone_without_overflow(touch_page):
+    page = touch_page
+    _open_filters(page)
+    _show_cups_and_europe(page)
+    for name in ("by-competition", "combined-calendar", "combined-list", "month-calendar"):
+        _view(page, name)
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), name
+
+
+def test_a_hint_above_each_view_names_the_hidden_competitions_and_shows_them(page):
+    pane = _view(page, "combined-calendar")
+    hint = _visible_pane(page).locator("xpath=..").locator(".kind-hint")
+    assert hint.is_visible()
+    assert _texts(hint.locator(".kind-hint-text")) == ["Cups and Europe are hidden"]
+    hint.locator(".kind-hint-btn").click()
+    assert page.get_attribute('#panel-1 .kind-btn[data-kind="cup"]', "aria-pressed") == "true"
+    assert page.get_attribute('#panel-1 .kind-btn[data-kind="european"]', "aria-pressed") == "true"
+    assert hint.is_hidden()
+    assert pane.locator(".fx").count() == 5
+    # A single hidden competition is named with its own verb and button.
+    page.click('#panel-1 .kind-btn[data-kind="european"]')
+    assert _texts(hint.locator(".kind-hint-text")) == ["Europe is hidden"]
+    assert _texts(hint.locator(".kind-hint-btn")) == ["Show it"]
+
+
+def test_a_desktop_bar_keeps_its_height_when_a_competition_is_toggled(page):
+    before = page.evaluate("document.querySelector('#panel-1 .controls').offsetHeight")
+    page.click('#panel-1 .kind-btn[data-kind="cup"]')
+    after = page.evaluate("document.querySelector('#panel-1 .controls').offsetHeight")
+    assert after == before and after <= 90
+    assert page.locator("#panel-1 .kind-clear").is_hidden()
+
+
+def test_a_phone_counts_the_competitions_switched_on_and_its_clear_chip_resets_them(touch_page):
+    page = touch_page
+    assert page.text_content("#panel-1 .filters-toggle") == "Filters"
+    _open_filters(page)
+    page.click('#panel-1 .kind-btn[data-kind="cup"]')
+    page.click("#panel-1 .filters-toggle")  # close, so the chip is in the bar
+    assert page.text_content("#panel-1 .filters-toggle") == "Filters 1"
+    chip = page.locator("#panel-1 .kind-clear")
+    assert chip.is_visible() and chip.text_content().strip() == "Shown: Leagues + Cups ×"
+    # The option label is whole, not cut off with an ellipsis.
+    label_fits = page.evaluate(
+        """() => { const o = document.querySelector('#panel-1 .bar-opt');
+          const r = document.createRange(); r.selectNodeContents(o);
+          return r.getBoundingClientRect().width <= o.clientWidth + 0.5; }"""
+    )
+    assert label_fits
+    chip.click()
+    assert page.locator("#panel-1 .kind-clear").is_hidden()
+    _open_filters(page)
+    assert page.get_attribute('#panel-1 .kind-btn[data-kind="cup"]', "aria-pressed") == "false"
+
+
+def test_a_collapsed_competition_stays_collapsed_when_the_view_redraws(page):
+    _show_cups_and_europe(page)
+    body = _view(page, "by-competition")
+    league = body.locator("details.comp").nth(0)
+    league.locator("summary").click()
+    assert league.evaluate("d => d.open") is False
+    page.click('#panel-1 .kind-btn[data-kind="european"]')  # a redraw of the view
+    page.click('.tab[data-panel="panel-2"]')
+    page.click('.tab[data-panel="panel-1"]')
+    assert _visible_pane(page).locator("details.comp").nth(0).evaluate("d => d.open") is False
+
+
+def test_a_list_chip_collapses_and_reopens_while_the_text_filter_is_on(chip_page):
+    page = chip_page
+    _show_cups_and_europe(page)
+    body = _view(page, "combined-list")
+    body.locator(".list-filter").fill("TBD")
+    toggle = body.locator(".fx-group-toggle")
+    members = body.locator("tr.fx-member")
+    assert toggle.get_attribute("aria-expanded") == "true" and members.first.is_visible()
+    toggle.click()
+    assert toggle.get_attribute("aria-expanded") == "false"
+    assert members.first.is_hidden()
+    toggle.click()
+    assert toggle.get_attribute("aria-expanded") == "true" and members.first.is_visible()

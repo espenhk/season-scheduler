@@ -35,7 +35,7 @@ Some of those hard violations are expected, and are artefacts of this baseline's
 - Eliteserien: 8 pair(s) meet a different number of times than 2 — e.g. Aalesunds FK v Lillestrøm SK met 1 time(s)
 - Toppserien: 60 pair(s) never meet (expected 2 meetings each) — e.g. Aalesunds FK Kvinner v FK Bodø/Glimt Kvinner
 - Toppserien: 6 pair(s) meet a different number of times than 2 — e.g. Aalesunds FK Kvinner v Vålerenga Fotball Kvinner met 1 time(s)
-- NM Cupen (menn): Round 1 is forced to 2026-08-22, inside a UEFA week for lillestrom_m
+- NM Cupen 2026/27 (menn): Round 1 is forced to 2026-08-22, inside a UEFA week for lillestrom_m
 
 ## Hard rules broken
 
