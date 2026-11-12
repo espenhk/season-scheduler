@@ -322,7 +322,7 @@
   .comp { margin-top: 30px; }
   .comp h3 { font-size: 16px; margin: 0 0 2px; }
   .comp .meta { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
-  .round { border-top: 1px solid var(--line); padding: 10px 0; display: grid; grid-template-columns: 130px 1fr; gap: 14px; }
+  .round { border-top: 1px solid var(--line); padding: 10px 0; display: grid; grid-template-columns: 200px 1fr; gap: 14px; }
   .round .rlabel { font-size: 12px; color: var(--muted); }
   .round .rlabel b { display: block; color: var(--ink); font-size: 14px; }
   /* Round and week totals: the label's edge takes the net's colour, the text says the figure. */
@@ -331,6 +331,7 @@
   .rsum { margin-top: 3px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .rsum .rnet { font-weight: 700; color: var(--ink); }
   .rsum .rnet.good { color: var(--good); }
+  .rsum .rnet.cost { color: var(--warn); }
   .rtag {
     display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px;
     font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
@@ -447,17 +448,20 @@
   .day-row .flags { flex-basis: 100%; }
   .day-row .d { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-  .cal-net { font-size: 10.5px; line-height: 1; font-variant-numeric: tabular-nums; color: var(--muted); }
-  .cal-net.good { color: var(--good); font-weight: 600; }
+  .cal-net { font-size: 10.5px; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--muted); text-align: center; max-width: 100%; }
+  .cal-value { font-weight: 600; }
+  .cal-value.good { color: var(--good); }
+  .cal-value.cost { color: var(--warn); }
 
   /* Season strip: one button per round; each league row scrolls inside itself. */
   .season-strip { margin: 14px 0 0; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
   .season-strip[hidden] { display: none; }
-  .strip-row { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; align-items: center; margin-top: 6px; }
+  .strip-row { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px; align-items: center; margin-top: 6px; }
   .strip-name { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .strip-cells { display: flex; gap: 3px; min-width: 0; overflow-x: auto; padding: 8px 6px 4px 2px; }
+  .strip-caption { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .strip-cells { display: flex; gap: 2px; min-width: 0; overflow-x: auto; padding: 8px 4px 4px 0; }
   .strip-cell {
-    position: relative; flex: 0 0 auto; width: 40px; display: flex; flex-direction: column; align-items: center; gap: 1px;
+    position: relative; flex: 1 1 0; min-width: 30px; max-width: 46px; display: flex; flex-direction: column; align-items: center; gap: 1px;
     padding: 3px 2px 4px; font: inherit; font-size: 11px; line-height: 1.2; color: var(--ink);
     background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 5px; cursor: pointer;
   }
@@ -465,6 +469,7 @@
   .strip-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .strip-cell.sc-good { border-left-color: var(--good); }
   .strip-cell.sc-cost { border-left-color: var(--warn); }
+  .strip-cell.sc-cost .strip-net { color: var(--warn); }
   .strip-cell:disabled { opacity: 0.4; cursor: default; }
   .strip-round { font-weight: 700; font-variant-numeric: tabular-nums; }
   .strip-net { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -477,6 +482,7 @@
   /* Combined list's score column, right-aligned so the signs line up. */
   .fx-score { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .fx-score.good { color: var(--good); font-weight: 600; }
+  .fx-score.cost { color: var(--warn); }
 
   @media print { .controls { position: static; box-shadow: none; } .legend-wrap, .filters-toggle, .back-to-score, .jump-cal { display: none; } }
 
@@ -506,6 +512,13 @@
     .fx-row td:nth-child(8) { grid-area: score; text-align: left; }
     .fx-row td.fx-score::after { content: " pts"; color: var(--muted); font-weight: 400; }
     .strip-row { grid-template-columns: 84px minmax(0, 1fr); }
+    /* Phone: fixed-width cells that scroll; the fade says the row goes on. */
+    .strip-cells {
+      padding-right: 26px;
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+      mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+    }
+    .strip-cell { flex: 0 0 auto; width: 40px; max-width: none; }
     .fx-row td:first-child { border-left: none; }
     .fx-row.lens-hit { background: #eaf2f8; box-shadow: inset 0 0 0 2px var(--accent); }
     .fx-row.lens-hit td { background: none; box-shadow: none; }
@@ -882,7 +895,7 @@
               <span><span class="swatch" style="margin-right:5px" aria-hidden="true"></span>square = home club colour</span>
               <span><span class="swatch-diamond" style="margin-right:5px" aria-hidden="true"></span>diamond = away club colour</span>
               <span><span class="swatch-neutral" style="margin-right:5px" aria-hidden="true"></span>circle = cup final, neutral ground</span>
-              <span>round, week and day totals: net points of the badges on the games shown</span>
+              <span>round, week and day totals: net points of the badges on the games shown; midweek means all games Mon–Thu</span>
             </div>
           </div>
           {% if flag_legend %}

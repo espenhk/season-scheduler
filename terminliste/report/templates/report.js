@@ -332,27 +332,76 @@
     return (n > 0 ? '+' : '−') + (Number.isInteger(mag) ? String(mag) : mag.toFixed(1));
   }
 
+  // `badged`: some shown game carries a badge, so the net means something.
+  // `costs`: shown games with a visible badge that takes points off (a hard
+  // break is not a cost); `top` is the cost badge on the most of them.
   function totals(fx, uids) {
-    var sum = { games: uids.length, net: 0, broken: 0, midweek: uids.length > 0 };
+    var sum = { games: uids.length, net: 0, badged: false, costs: 0, top: null, broken: 0, midweek: uids.length > 0 };
+    var costRules = {};
+    var costOrder = [];
     uids.forEach(function (uid) {
       var f = fx[uid];
       sum.net += f.delta;
+      if (f.flags.length) sum.badged = true;
       if (f.broken) sum.broken++;
       var day = dayIndex(f.date);
       if (day === 0 || day > 4) sum.midweek = false;
+      var seen = {};
+      var costly = false;
+      f.flags.forEach(function (flag) {
+        if (flag.rule.hard || flag.delta >= 0) return;
+        costly = true;
+        if (seen[flag.rule.id]) return;
+        seen[flag.rule.id] = true;
+        if (!costRules[flag.rule.id]) {
+          costRules[flag.rule.id] = { rule: flag.rule, n: 0 };
+          costOrder.push(flag.rule.id);
+        }
+        costRules[flag.rule.id].n++;
+      });
+      if (costly) sum.costs++;
+    });
+    costOrder.forEach(function (id) {
+      if (!sum.top || costRules[id].n > sum.top.n) sum.top = costRules[id];
     });
     sum.net = Math.round(sum.net * 100) / 100;
     return sum;
   }
 
+  // Parts are joined with " · " and each omitted when it would read zero: the net
+  // only when a visible badge is on the games, costs and the repeated badge only
+  // when there are any.
   function summaryNode(sum, midweekTag) {
     var node = el('div', 'rsum');
     node.title = 'Net points from the rule badges on the games shown (hidden rewards are not counted)';
-    node.appendChild(el('span', 'rnet ' + netClass(sum.net), netText(sum.net) + ' pts'));
-    node.appendChild(document.createTextNode(' · ' + plural(sum.games, 'game', 'games')));
-    if (sum.broken) node.appendChild(document.createTextNode(' · ' + plural(sum.broken, 'hard break', 'hard breaks')));
-    if (midweekTag && sum.midweek) node.appendChild(el('span', 'rtag', 'midweek'));
+    var parts = [];
+    if (sum.badged) parts.push(el('span', 'rnet ' + netClass(sum.net), netText(sum.net) + ' pts'));
+    parts.push(plural(sum.games, 'game', 'games'));
+    if (sum.costs) parts.push(sum.costs + ' with costs');
+    if (sum.top && sum.top.n >= 2) parts.push(sum.top.n + ' × ' + sum.top.rule.label);
+    if (sum.broken) parts.push(plural(sum.broken, 'hard break', 'hard breaks'));
+    parts.forEach(function (part, i) {
+      if (i) node.appendChild(document.createTextNode(' · '));
+      node.appendChild(typeof part === 'string' ? document.createTextNode(part) : part);
+    });
+    if (midweekTag && sum.midweek) {
+      var tagNode = el('span', 'rtag', 'midweek');
+      tagNode.title = 'Midweek: every game falls Monday to Thursday';
+      node.appendChild(tagNode);
+    }
     return node;
+  }
+
+  // A day's game count, with its net when a visible badge sits on one of its games.
+  function dayFigure(sum) {
+    var figure = el('span', 'cal-net');
+    figure.setAttribute('aria-hidden', 'true');
+    figure.appendChild(el('span', 'cal-count', String(sum.games)));
+    if (sum.badged) {
+      figure.appendChild(document.createTextNode(' · '));
+      figure.appendChild(el('span', 'cal-value ' + netClass(sum.net), netText(sum.net)));
+    }
+    return figure;
   }
 
   // ------------------------------------------------------------------ views
@@ -380,7 +429,7 @@
     var label = append(el('div', 'rlabel'), el('b', '', title), document.createTextNode(text));
     if (note) label.title = note;
     if (sum.games) {
-      var edge = netClass(sum.net);
+      var edge = sum.badged ? netClass(sum.net) : '';
       if (edge) label.classList.add('rl-' + edge);
       label.appendChild(summaryNode(sum, true));
     }
@@ -473,7 +522,7 @@
           var shownToday = days[iso] ? ctx.visible(days[iso].ids) : [];
           var sum = shownToday.length ? totals(ctx.fx, shownToday) : null;
           var label = iso + (dots.length ? ': ' + dots.map(function (c) { return DATA.competitions[c].name; }).join(', ') : '') +
-            (sum ? '; net ' + netText(sum.net) + ' pts' : '');
+            (sum ? '; ' + plural(sum.games, 'game', 'games') + (sum.badged ? '; net ' + netText(sum.net) + ' pts' : '') : '');
           button.setAttribute('aria-label', label);
           button.setAttribute('data-label', label);
           var dotBox = el('span', 'cal-dots');
@@ -484,11 +533,7 @@
             dotBox.appendChild(dot);
           });
           append(button, el('span', 'cal-daynum', String(+iso.slice(8))), dotBox);
-          if (sum) {
-            var net = el('span', 'cal-net ' + netClass(sum.net), netText(sum.net));
-            net.setAttribute('aria-hidden', 'true');
-            button.appendChild(net);
-          }
+          if (sum) button.appendChild(dayFigure(sum));
           row.appendChild(button);
         });
         grid.appendChild(row);
@@ -845,6 +890,7 @@
     strip.hidden = !shown;
     strip.textContent = '';
     if (!shown) return;
+    strip.appendChild(el('div', 'strip-caption', 'Net points per round — click to jump'));
     var self = this;
     this.data.byCompetition.forEach(function (view) {
       var cells = el('div', 'strip-cells');
@@ -864,16 +910,17 @@
       return button;
     }
     var sum = totals(ctx.fx, shown);
-    var edge = netClass(sum.net);
-    if (edge) button.classList.add('sc-' + edge);
-    button.appendChild(el('span', 'strip-net', netText(sum.net)));
+    if (sum.badged) {
+      var edge = netClass(sum.net);
+      if (edge) button.classList.add('sc-' + edge);
+      button.appendChild(el('span', 'strip-net', netText(sum.net)));
+    }
     if (sum.broken) {
       var hard = el('span', 'strip-hard', String(sum.broken));
       hard.setAttribute('aria-hidden', 'true');
       button.appendChild(hard);
     }
-    var label = round.title + ': ' + plural(sum.games, 'game', 'games') + ', net ' + netText(sum.net) + ' pts' +
-      (sum.broken ? ', ' + plural(sum.broken, 'hard break', 'hard breaks') : '');
+    var label = round.title + ': ' + summaryNode(sum, true).textContent;
     button.setAttribute('aria-label', label);
     button.title = label;
     button.addEventListener('click', function () { opt.jumpTo(round.ids); });
