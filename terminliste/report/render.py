@@ -27,8 +27,21 @@ from ..model.loader import World
 from ..model.schema import WEEKDAYS, Competition, Match, Season
 from ..rounds.cup_schedule import NEUTRAL_CUP_VENUE, CupRoundPlacement, CupSchedule
 from ..rounds.european_schedule import ResolvedLegs
-from ..scoring.base import ConstraintResult, Event, Score
-from ..scoring.registry import BADGE_LABELS, badge_label, describe
+from ..scoring.base import (
+    INFEASIBLE_CEILING,
+    SOFT_SCALE,
+    ConstraintResult,
+    Event,
+    Score,
+    points_for_soft_per_match,
+)
+from ..scoring.registry import (
+    BADGE_LABELS,
+    COVERAGE_UNITS,
+    badge_label,
+    describe,
+    rule_name,
+)
 from ..scoring.soft import PreferredWeekday
 from ..slot_planner import search_space_log10
 from ..solvers.base import Candidate, SearchStats, SolverResult
@@ -122,6 +135,11 @@ def render_report(
         for candidate in result.candidates
     ]
 
+    for option, (points_text, tag) in zip(options, _score_marks(options), strict=True):
+        option["points_text"] = points_text
+        option["tag"] = tag
+    comparison = _comparison_view(world, result.candidates, options, rule_ids)
+
     competitions = payload.competition_table(
         shared_entries + [e for option in options for e in option["league_entries"]],
         extra=calendar_legend,
@@ -145,6 +163,7 @@ def render_report(
         season=season,
         result=result,
         options=options,
+        comparison=comparison,
         search_stats=_search_stats_view(result.search_stats),
         all_clubs=sorted(world.clubs.values(), key=lambda c: c.name),
         warnings=warnings or [],
@@ -188,6 +207,7 @@ def _build_option(
     club_headlines = _club_headlines(world, candidate, dual_club_ids)
     fairness = _fairness_rows(world, candidate)
     month_calendar, month_calendar_details = _month_calendar_view(combined_entries)
+    gross = _gross_movement(score)
     return {
         "label": candidate.label,
         "seed": candidate.seed,
@@ -196,22 +216,30 @@ def _build_option(
         "hard_violations": score.hard_violations,
         "soft_total": score.soft_total,
         "points": score.points,
+        "scoring": _scoring_view(score, gross),
         "headlines": headlines,
         "hard_violation_detail": (
-            [_result_row(r, world, pinned, full=True) for r in score.hard_results() if r.count]
+            [_result_row(r, world, pinned, full=True, gross=gross) for r in score.hard_results() if r.count]
             if full_diagnostics
             else []
         ),
-        "problems": [_result_row(r, world, pinned, full=full_diagnostics) for r in score.biggest_problems(limit=limit)],
-        "upsides": [_result_row(r, world, pinned, full=full_diagnostics) for r in score.biggest_upsides(limit=limit)],
-        "breakdown": [_result_row(r, world, pinned, full=True) for r in _ordered_results(score)],
+        "problems": [
+            _result_row(r, world, pinned, full=full_diagnostics, gross=gross)
+            for r in score.biggest_problems(limit=limit)
+        ],
+        "upsides": [
+            _result_row(r, world, pinned, full=full_diagnostics, gross=gross)
+            for r in score.biggest_upsides(limit=limit)
+        ],
+        "breakdown": [_result_row(r, world, pinned, full=True, gross=gross) for r in _ordered_results(score)],
+        "soft": _soft_summary(score, gross, world, pinned),
         "fairness": fairness,
         "league_entries": entries,
         "client": payload.option_wire(
             entries=entries,
             teams=teams,
             rule_index=rule_index,
-            headlines=headlines,
+            headlines=[{"value": h["value"], "label": h["label"]} for h in headlines],
             club_headlines=club_headlines,
             league_views=_competition_views(world, entries),
             combined_calendar=_combined_calendar_view(combined_entries),
@@ -219,12 +247,299 @@ def _build_option(
             month_calendar=month_calendar,
             month_calendar_details=month_calendar_details,
             rule_totals={r.constraint_id: r.total for r in score.results},
+            gross=gross,
             score_order=[rule_index[r.constraint_id] for r in _ordered_results(score)],
             club_unpinned=_club_unpinned(world, candidate, rule_index),
             club_ranks=_club_ranks(fairness),
             limit=limit,
             full=full_diagnostics,
         ),
+    }
+
+
+# -- comparing the options (#35) ------------------------------------------------
+
+_COMPARE_LIST_LIMIT = 100
+
+
+def _score_marks(options: list[dict]) -> list[tuple[str, str | None]]:
+    """Each option's score as its tab shows it, and the tag marking the top score.
+
+    Scores that round to the same whole number get a decimal, so 74 and 74
+    read as 74.2 and 73.9 rather than looking identical.
+    """
+    if len(options) < 2:
+        return [(f"{option['points']:.0f}", None) for option in options]
+    whole = [round(option["points"]) for option in options]
+    decimals = 1 if len(set(whole)) < len(whole) else 0
+    tenths = [round(option["points"], 1) for option in options]
+    top = max(tenths)
+    tied = tenths.count(top) > 1
+    tag = "tied top score" if tied else "top score"
+    return [
+        (f"{option['points']:.{decimals}f}", tag if value == top else None)
+        for option, value in zip(options, tenths, strict=True)
+    ]
+
+
+def _best(numbers: list[float | None], higher_is_better: bool) -> list[bool]:
+    """Which options hold the best value on a row. A row where every option is
+    level has none, so nothing is marked."""
+    present = [value for value in numbers if value is not None]
+    if len(set(present)) < 2:
+        return [False] * len(numbers)
+    top = max(present) if higher_is_better else min(present)
+    return [value is not None and value == top for value in numbers]
+
+
+def _signed(value: float) -> str:
+    return f"{value:+.1f}".replace("-", "−")
+
+
+def _fixture_identity(match: Match) -> tuple:
+    """A league fixture as the same fixture in every option: its competition,
+    leg and team pair, whichever side is at home and whatever date it lands on."""
+    return (match.competition_id, match.leg, tuple(sorted((match.home_team, match.away_team))))
+
+
+def _day_label(day: date) -> str:
+    return f"{day:%a} {day.day} {day:%b}"
+
+
+def _fixture_diff(world: World, baseline: list[Match], other: list[Match]) -> dict:
+    """How one option's league fixtures differ from the baseline option's.
+
+    A fixture counts once, under the first of date, home side and kickoff time
+    that changed. Fixtures absent from the baseline are counted as unmatched.
+    """
+    base = {_fixture_identity(match): match for match in baseline}
+    counts = {"date": 0, "side": 0, "kickoff": 0, "unmatched": 0}
+    items: list[dict] = []
+    for match in sorted(other, key=lambda m: (m.date, m.competition_id, m.home_team)):
+        was = base.get(_fixture_identity(match))
+        if was is None:
+            kind, detail = "unmatched", "not in the baseline option"
+        elif was.date != match.date:
+            kind, detail = "date", f"moved from {_day_label(was.date)}"
+        elif was.home_team != match.home_team:
+            kind, detail = "side", f"{world.team_label(match.home_team)} now at home"
+        elif was.kickoff_time != match.kickoff_time:
+            kind, detail = "kickoff", f"kickoff {was.kickoff_time or 'unset'} → {match.kickoff_time or 'unset'}"
+        else:
+            continue
+        counts[kind] += 1
+        competition = world.competition(match.competition_id)
+        fixture = f"{competition.short_name}: {world.team_label(match.home_team)} v {world.team_label(match.away_team)}"
+        items.append({"date": _day_label(match.date), "fixture": fixture, "detail": detail})
+    parts = [
+        f"{counts[kind]} {text}"
+        for kind, text in (
+            ("date", "on another date (side or kickoff may differ too)"),
+            ("side", "with home and away swapped"),
+            ("kickoff", "with only the kickoff time changed"),
+            ("unmatched", "not in the baseline"),
+        )
+        if counts[kind]
+    ]
+    return {
+        "count": len(items),
+        "total": len(other),
+        "breakdown": (", ".join(parts) + ".").capitalize() if parts else "No fixture differs from the baseline.",
+        "fixtures": items[:_COMPARE_LIST_LIMIT],
+        "more": max(0, len(items) - _COMPARE_LIST_LIMIT),
+    }
+
+
+# A lead or trail is named in an option's summary only when its gap is at least
+# this share of the table's largest gap, so rows that barely separate the
+# options stay out of the summary.
+_SUMMARY_GAP_SHARE = 0.10
+# Per option and per side (leads, trails), so the summary stays a line or two.
+_SUMMARY_NAMES = 3
+
+
+def _gap_text(gap: float) -> str:
+    digits = 0 if abs(gap) >= 10 else 1
+    return f"{gap:+.{digits}f} pts".replace("-", "−")
+
+
+def _events(count: int) -> str:
+    return "1 event" if count == 1 else f"{count} events"
+
+
+def _gaps(numbers: list[float | None]) -> list[float | None]:
+    """Each option's gap to the best of the others: its lead over the next best
+    when positive, its deficit to the best when negative."""
+    gaps: list[float | None] = []
+    for i, value in enumerate(numbers):
+        others = [n for j, n in enumerate(numbers) if j != i and n is not None]
+        gaps.append(round(value - max(others), 1) if value is not None and others else None)
+    return gaps
+
+
+def _option_summaries(soft: list[tuple[str, list[float | None]]], hard_counts: list[int]) -> list[str]:
+    """One summary per option: the rules it leads on and trails on, by how much.
+
+    `soft` is (rule name, soft points per option); `hard_counts` the hard-rule
+    violations per option. Hard-rule gaps are counted, not weighed, and are
+    always named when they exist.
+    """
+    count = len(hard_counts)
+    soft_gaps = [(name, _gaps(numbers)) for name, numbers in soft]
+    largest = max((abs(g) for _, gaps in soft_gaps for g in gaps if g is not None), default=0.0)
+    threshold = _SUMMARY_GAP_SHARE * largest
+    hard = _gaps([-c for c in hard_counts])  # fewer violations is a lead
+    summaries = []
+    for i in range(count):
+        leads: list[tuple[tuple[int, float], str]] = []
+        trails: list[tuple[tuple[int, float], str]] = []
+        if hard[i]:
+            if hard[i] > 0:
+                leads.append(((0, 0.0), f"Hard-rule violations ({int(hard[i])} fewer)"))
+            else:
+                trails.append(((0, 0.0), f"Hard-rule violations ({int(-hard[i])} more)"))
+        for name, gaps in soft_gaps:
+            gap = gaps[i]
+            if not gap or abs(gap) < threshold:
+                continue
+            text = f"{name} ({_gap_text(gap)})"
+            if gap > 0:
+                leads.append(((1, -gap), text))
+            else:
+                trails.append(((1, gap), text))
+        lead_names = [text for _, text in sorted(leads)][:_SUMMARY_NAMES]
+        trail_names = [text for _, text in sorted(trails)][:_SUMMARY_NAMES]
+        pieces = []
+        if lead_names:
+            pieces.append("Leads on " + ", ".join(lead_names))
+        if trail_names:
+            pieces.append("trails on " + ", ".join(trail_names))
+        if not pieces:
+            summaries.append("No row sets it apart.")
+            continue
+        sentence = "; ".join(pieces)
+        summaries.append(sentence[0].upper() + sentence[1:] + ".")
+    return summaries
+
+
+def _comparison_view(
+    world: World, candidates: list[Candidate], options: list[dict], rule_ids: list[str]
+) -> dict | None:
+    """The side-by-side table of the options, or None with one option.
+
+    A soft rule row shows the soft points that rule adds to each option, so its
+    best value is the one that adds most (or costs least). Hard-rule violations
+    are the exception: fewer is better. Rules that add nothing in any option
+    are listed once, not as rows.
+    """
+    if len(candidates) < 2:
+        return None
+    count = len(candidates)
+    results = [{r.constraint_id: r for r in c.score.results} for c in candidates]
+    kinds: dict[str, str] = {}
+    for per_option in results:
+        for rule_id, result in per_option.items():
+            kinds.setdefault(rule_id, result.kind)
+
+    def contribution(i: int, rule_id: str) -> float | None:
+        result = results[i].get(rule_id)
+        return None if result is None else round(result.total, 1)
+
+    def row(label, numbers, texts, subs=None, higher_is_better=True) -> dict:
+        best = _best(numbers, higher_is_better)
+        cells = [
+            {"text": texts[i], "sub": subs[i] if subs else "", "best": best[i]} for i in range(count)
+        ]
+        return {"label": label, "cells": cells, "best": best}
+
+    score_row = row(
+        "Score out of 100",
+        [round(option["points"], 1) for option in options],
+        [option["points_text"] for option in options],
+    )
+
+    diffs = [_fixture_diff(world, candidates[0].matches, c.matches) for c in candidates[1:]]
+    fixture_row = {
+        "label": f"Fixtures that differ from {options[0]['label']}",
+        "cells": [{"text": "baseline", "sub": "", "best": False}]
+        + [{"text": f"{diff['count']} of {diff['total']}", "sub": "", "best": False} for diff in diffs],
+        "best": [False] * count,
+    }
+
+    headline_rules: list[str] = []
+    headline_labels: dict[str, str] = {}
+    for option in options:
+        for headline in option["headlines"]:
+            if headline["rule"] not in headline_rules:
+                headline_rules.append(headline["rule"])
+                text = headline["label"]
+                headline_labels[headline["rule"]] = text[:1].upper() + text[1:]
+    headline_rows = []
+    for rule_id in headline_rules:
+        shown = [{h["rule"]: h["value"] for h in option["headlines"]}.get(rule_id, "—") for option in options]
+        headline_rows.append(
+            row(headline_labels[rule_id], [contribution(i, rule_id) for i in range(count)], shown)
+        )
+
+    hard_row = row(
+        "Hard-rule violations",
+        [option["hard_violations"] for option in options],
+        [str(option["hard_violations"]) for option in options],
+        higher_is_better=False,
+    )
+
+    soft_rows = []
+    quiet: list[str] = []
+    for rule_id in (rule for rule in kinds if kinds[rule] == "soft"):
+        numbers = [contribution(i, rule_id) for i in range(count)]
+        if all(n in (None, 0.0) for n in numbers):
+            quiet.append(rule_name(rule_id))
+            continue
+        events = [results[i][rule_id].count if rule_id in results[i] else 0 for i in range(count)]
+        soft_rows.append(
+            (
+                max(abs(n) for n in numbers if n is not None),
+                row(
+                    rule_name(rule_id),
+                    numbers,
+                    [_signed(n) if n is not None else "—" for n in numbers],
+                    subs=[_events(n) if n else "" for n in events],
+                ),
+                numbers,
+            )
+        )
+    soft_rows.sort(key=lambda entry: (-entry[0], entry[1]["label"]))
+    quiet.sort()
+
+    sections = [{"title": "Overall", "rows": [score_row, fixture_row]}]
+    if headline_rows:
+        sections.append({"title": "Headline numbers", "rows": headline_rows})
+    sections.append({"title": "Hard rules", "rows": [hard_row]})
+    sections.append({"title": "Soft points by rule, largest movement first", "rows": [e[1] for e in soft_rows]})
+
+    summaries = _option_summaries(
+        [(entry[1]["label"], entry[2]) for entry in soft_rows],
+        [option["hard_violations"] for option in options],
+    )
+    columns = []
+    for i, option in enumerate(options):
+        tag = option["tag"]
+        columns.append(
+            {
+                "index": i,
+                "label": option["label"],
+                "seed": candidates[i].seed or None,
+                "tag": tag,
+                "tag_short": None if tag is None else ("top" if tag == "top score" else "tied"),
+                "summary": summaries[i],
+            }
+        )
+    return {
+        "columns": columns,
+        "sections": sections,
+        "quiet": quiet,
+        "baseline": options[0]["label"],
+        "diffs": [{"label": option["label"], **diff} for option, diff in zip(options[1:], diffs, strict=True)],
     }
 
 
@@ -352,6 +667,7 @@ def _search_stats_view(stats: SearchStats) -> dict | None:
     breakdown = [
         {
             "id": constraint_id,
+            "name": rule_name(constraint_id),
             "description": describe(constraint_id),
             "count": count,
             "pct": 100.0 * count / stats.hard_violation_scenarios if stats.hard_violation_scenarios else 0.0,
@@ -387,17 +703,82 @@ def _pinned_fixture_counts(entries: list[dict]) -> dict[str, int]:
     return counts
 
 
+def _gross_movement(score: Score) -> float:
+    """Total soft movement, the denominator of every rule's share (#34)."""
+    return sum(abs(r.total) for r in score.soft_results())
+
+
+def _scoring_view(score: Score, gross: float) -> dict:
+    """The numbers behind the 0-100 score, so the page can show its working."""
+    return {
+        "feasible": score.feasible,
+        "hard_violations": score.hard_violations,
+        "raw_soft": score.soft_total,
+        "num_matches": score.num_matches,
+        "soft_per_match": score.soft_per_match,
+        "soft_scale": SOFT_SCALE,
+        "saturation": score.soft_saturation,
+        "ceiling": INFEASIBLE_CEILING,
+        "points": score.points,
+        "gross": gross,
+        # Worked examples for the explanation, from the same curve as `points`.
+        "example_zero": points_for_soft_per_match(0.0),
+        "example_per_match": 5.5,
+        "example_points": points_for_soft_per_match(5.5),
+    }
+
+
+def _coverage(result: ConstraintResult) -> dict | None:
+    """How many of a rule's opportunities it used, when the rule reports them (#34)."""
+    if result.achieved is None or not result.opportunities:
+        return None
+    return {
+        "achieved": result.achieved,
+        "opportunities": result.opportunities,
+        "unit": COVERAGE_UNITS.get(result.constraint_id, "opportunities"),
+        "pct": 100.0 * result.achieved / result.opportunities,
+    }
+
+
+def _soft_summary(score: Score, gross: float, world: World, pinned: dict[str, int]) -> dict:
+    """Every soft rule grouped by effect, and how the gains and costs net out."""
+    soft = score.soft_results()
+    rows = [_result_row(r, world, pinned, full=True, gross=gross) for r in soft]
+    helped = sum(r.total for r in soft if r.total > 0)
+    hurt = sum(r.total for r in soft if r.total < 0)
+    moved = helped - hurt
+    return {
+        "count": len(soft),
+        "helping": sorted((row for row in rows if row["total"] > 0), key=lambda row: -row["total"]),
+        "hurting": sorted((row for row in rows if row["total"] < 0), key=lambda row: row["total"]),
+        "neutral": [row["name"] for row in rows if row["total"] == 0],
+        "helped": helped,
+        "hurt": hurt,
+        "net": score.soft_total,
+        "gain_pct": 100.0 * helped / moved if moved else 0.0,
+    }
+
+
 def _result_row(
-    result: ConstraintResult, world: World, pinned: dict[str, int], full: bool = False
+    result: ConstraintResult,
+    world: World,
+    pinned: dict[str, int],
+    full: bool = False,
+    gross: float = 0.0,
 ) -> dict:
     # A rule's fixtures are listed by the page from the fixture flags, so only
     # the events that point at no fixture are spelled out here.
     if pinned.get(result.constraint_id):
         result = replace(result, events=[e for e in result.events if not e.match_keys])
+    # Soft rules are weighed as a share of the season's total movement, so rules
+    # sit on one scale; hard rules are counted, not weighed.
+    share = 100.0 * abs(result.total) / gross if result.kind == "soft" and gross else None
     return {
         "id": result.constraint_id,
+        "name": rule_name(result.constraint_id),
         "kind": result.kind,
         "total": result.total,
+        "share": share,
         "count": result.count,
         "description": describe(result.constraint_id),
         # A handful of concrete examples: enough to judge whether the number
@@ -409,6 +790,7 @@ def _result_row(
         # (#61).
         "occurrences": _entity_counts(world, result),
         "pinned": pinned.get(result.constraint_id, 0),
+        "coverage": _coverage(result),
     }
 
 
@@ -502,6 +884,7 @@ def _headlines(world: World, candidate: Candidate) -> list[dict]:
     score = candidate.score
     matches = candidate.matches
     headlines: list[dict] = []
+    # Each headline names its rule: the comparison table reads it to rank the headline.
 
     weekday = score.result("preferred_weekday")
     if weekday is not None and matches:
@@ -509,19 +892,24 @@ def _headlines(world: World, candidate: Candidate) -> list[dict]:
             {
                 "value": f"{100.0 * weekday.count / len(matches):.0f}%",
                 "label": "on the preferred weekday",
+                "rule": "preferred_weekday",
             }
         )
 
     home_pairs = score.result("consecutive_home_days")
     if home_pairs is not None:
         headlines.append(
-            {"value": str(home_pairs.count), "label": "back-to-back home days"}
+            {"value": str(home_pairs.count), "label": "back-to-back home days", "rule": "consecutive_home_days"}
         )
 
     away_pairs = score.result("consecutive_away_days")
     if away_pairs is not None:
         headlines.append(
-            {"value": str(away_pairs.count), "label": "paired away days within travel range"}
+            {
+                "value": str(away_pairs.count),
+                "label": "paired away days within travel range",
+                "rule": "consecutive_away_days",
+            }
         )
 
     return headlines
@@ -1202,6 +1590,7 @@ def _fairness_row(constraint_id: str, entries: list[tuple[str, int, str]], by: s
     mean = sum(values) / len(values)
     return {
         "id": constraint_id,
+        "name": rule_name(constraint_id),
         "by": by,
         "description": describe(constraint_id),
         "entries": [{"label": label, "count": n, "club": club} for label, n, club in entries],
