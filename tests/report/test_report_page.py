@@ -495,6 +495,8 @@ def test_opening_a_scorecard_entry_lists_its_fixtures_grouped_by_team(page, worl
     item = page.locator(f'#panel-1 details.item[data-rule="{PAIR}"]')
     assert item.locator(".occ-row").count() == 0  # built lazily
     item.locator("summary").click()
+    # The list is built on the toggle event, after the click returns.
+    item.locator(".occ-row").first.wait_for()
 
     groups = _texts(item.locator(".occ-group > summary"))
     assert groups == ["Club A ×2"]
@@ -505,6 +507,7 @@ def test_opening_a_scorecard_entry_lists_its_fixtures_grouped_by_team(page, worl
 
     off_day = page.locator(f'#panel-1 details.item[data-rule="{OFF_DAY}"]')
     off_day.locator("summary").click()
+    off_day.locator(".occ-row").first.wait_for()
     assert "2 fixtures off the preferred day" in off_day.locator(".occ-summary").inner_text()
     # Grouped by competition; the summary already says the reward is forgone.
     assert _texts(off_day.locator(".occ-group > summary")) == [f"{world.competition('elite').name} ×2"]
