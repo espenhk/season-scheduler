@@ -60,8 +60,71 @@
     font-size: 14px; font-weight: 600; border-bottom: none;
   }
   .tab .score { color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .tab .tab-seed { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 8px; }
+  .tab .tab-tag, .cmp-tag {
+    display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; padding: 1px 7px; border-radius: 9px; margin-left: 8px;
+    background: #e8f6ee; color: #14653a; white-space: nowrap;
+  }
   .tab[aria-selected="true"] { background: var(--ink); color: #fff; }
   .tab[aria-selected="true"] .score { color: #c9c9c4; }
+  .tab[aria-selected="true"] .tab-seed { color: #c9c9c4; }
+  .tab[aria-selected="true"] .tab-tag { background: #ffffff; color: #14653a; }
+
+  /* -- comparing the options (#35): a table of what each option scores per rule -- */
+  .compare { margin: 28px 0 0; }
+  .compare h2 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
+  .compare .desc { margin: 4px 0 0; }
+  .cmp-wrap {
+    margin-top: 12px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--panel); overflow-x: auto;
+  }
+  table.cmp { margin: 0; font-size: 14px; }
+  .cmp th, .cmp td { padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  .cmp thead th {
+    text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--ink);
+    font-weight: 700; vertical-align: top; background: var(--panel);
+  }
+  .cmp-measure { width: 30%; text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--ink); font-weight: 500; }
+  .cmp-open {
+    border: 0; background: none; padding: 0; color: var(--ink); font: inherit; font-weight: 700;
+    text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+  }
+  .cmp-seed { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 6px; white-space: nowrap; }
+  .cmp .cmp-tag { white-space: normal; margin: 4px 0 0; }
+  .cmp-what {
+    margin-top: 6px; font-size: 12.5px; font-weight: 400; color: var(--muted); line-height: 1.4;
+    text-transform: none; letter-spacing: 0;
+  }
+  .cmp tbody + tbody tr:first-child th { border-top: 1px solid var(--line); }
+  .cmp tr.cmp-section th {
+    background: #fafaf8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); font-weight: 700; padding: 6px 12px;
+  }
+  .cmp td.cmp-cell { text-align: right; font-variant-numeric: tabular-nums; }
+  .cmp-val { font-weight: 500; }
+  .cmp-sub { display: block; font-size: 12px; color: var(--muted); }
+  .cmp-best {
+    display: inline-block; margin-left: 6px; font-size: 10.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em; color: #14653a; white-space: nowrap;
+  }
+  .cmp td.is-best { background: #e8f6ee; }
+  .cmp td.is-best .cmp-val { font-weight: 800; }
+  @media (max-width: 480px) {
+    .cmp th, .cmp td { padding: 8px 6px; }
+    .cmp-measure { width: 30%; }
+    .cmp-what { font-size: 12px; }
+  }
+  .cmp-diffs { margin-top: 12px; }
+  .cmp-diff { margin-top: 6px; }
+  .cmp-diff summary { font-size: 14px; }
+  .cmp-list { margin: 6px 0 0; padding-left: 18px; font-size: 13.5px; }
+  .cmp-list li { margin: 2px 0; }
+  .cmp-date { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 4px; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
   .panel {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: 0 8px 8px 8px; padding: var(--panel-pad);
@@ -861,11 +924,69 @@
 </details>
 {% endif %}
 
+{% if comparison %}
+<section class="compare" aria-labelledby="compare-title">
+  <h2 id="compare-title">Compare the {{ options|length }} options</h2>
+  <p class="desc">Each row is what that measure adds to a score, so higher is better. The best value on a row is shaded and marked “best”; a row where every option is level is left unmarked.</p>
+  <div class="cmp-wrap">
+    <table class="cmp">
+      <thead>
+        <tr>
+          <th scope="col" class="cmp-measure"><span class="sr-only">Measure</span></th>
+          {% for col in comparison.columns %}
+          <th scope="col">
+            <button type="button" class="cmp-open" data-option="{{ col.index }}">{{ col.label }}</button>
+            {% if col.seed %}<span class="cmp-seed">seed {{ col.seed }}</span>{% endif %}
+            {% if col.tag %}<span class="cmp-tag">{{ col.tag }}</span>{% endif %}
+            <div class="cmp-what">{{ col.summary }}</div>
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      {% for section in comparison.sections %}
+      <tbody>
+        <tr class="cmp-section"><th scope="rowgroup" colspan="{{ comparison.columns|length + 1 }}">{{ section.title }}</th></tr>
+        {% for row in section.rows %}
+        <tr>
+          <th scope="row" class="cmp-measure">{{ row.label }}</th>
+          {% for cell in row.cells %}
+          <td class="cmp-cell{% if cell.best %} is-best{% endif %}">
+            <span class="cmp-val">{{ cell.text }}</span>{% if cell.best %}<span class="cmp-best">best</span>{% endif %}
+            {% if cell.sub %}<span class="cmp-sub">{{ cell.sub }}</span>{% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+      {% endfor %}
+    </table>
+  </div>
+  {% if comparison.diffs %}
+  <div class="cmp-diffs">
+    {% for diff in comparison.diffs %}
+    <details class="cmp-diff">
+      <summary>{{ diff.label }}: {{ diff.count }} of {{ diff.total }} league fixtures differ from {{ comparison.baseline }}</summary>
+      <p class="desc">{{ diff.breakdown }}</p>
+      {% if diff.fixtures %}
+      <ul class="cmp-list">
+        {% for item in diff.fixtures %}
+        <li><span class="cmp-date">{{ item.date }}</span>{{ item.fixture }} <span class="desc">({{ item.detail }})</span></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if diff.more %}<div class="more">…and {{ diff.more }} more</div>{% endif %}
+    </details>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
 <div class="tabs" role="tablist">
   {% for option in options %}
   <button class="tab" role="tab" data-panel="panel-{{ loop.index }}"
           aria-selected="{{ 'true' if loop.first else 'false' }}">
-    {{ option.label }}<span class="score">{{ '%.0f'|format(option.points) }}</span>
+    {{ option.label }}{% if option.seed %}<span class="tab-seed">seed {{ option.seed }}</span>{% endif %}{% if option.tag %}<span class="tab-tag">{{ option.tag }}</span>{% endif %}<span class="score">{{ option.points_text }}</span>
   </button>
   {% endfor %}
 </div>
@@ -876,7 +997,7 @@
 {% if not loop.first %}<template>{% endif %}
 
   <div class="scoreline">
-    <div class="total">{{ '%.0f'|format(option.points) }}<small>/ 100</small></div>
+    <div class="total">{{ option.points_text }}<small>/ 100</small></div>
     {% if option.feasible %}
       <span class="badge ok">feasible · 0 hard violations</span>
     {% else %}
@@ -890,10 +1011,10 @@
     <div class="how-body">
       {% set sc = option.scoring %}
       {% if sc.feasible %}
-      <p>With no hard-rule violations the score is 20 + 80 × s, where s = 1 ÷ (1 + e^−(soft per match ÷ {{ '%g'|format(sc.soft_scale) }})). This schedule has {{ '%.1f'|format(sc.raw_soft) }} raw soft points over {{ sc.num_matches }} match{{ '' if sc.num_matches == 1 else 'es' }}, {{ '%.2f'|format(sc.soft_per_match) }} per match, so s = {{ '%.3f'|format(sc.saturation) }} and the score is {{ '%.1f'|format(sc.points) }}, shown as {{ '%.0f'|format(option.points) }}.</p>
+      <p>With no hard-rule violations the score is 20 + 80 × s, where s = 1 ÷ (1 + e^−(soft per match ÷ {{ '%g'|format(sc.soft_scale) }})). This schedule has {{ '%.1f'|format(sc.raw_soft) }} raw soft points over {{ sc.num_matches }} match{{ '' if sc.num_matches == 1 else 'es' }}, {{ '%.2f'|format(sc.soft_per_match) }} per match, so s = {{ '%.3f'|format(sc.saturation) }} and the score is {{ '%.1f'|format(sc.points) }}, shown as {{ option.points_text }}.</p>
       <p>Soft points are scored per match, so seasons of different sizes compare fairly. Per match, 0 gives {{ '%.0f'|format(sc.example_zero) }}; about {{ '%g'|format(sc.example_per_match) }} gives {{ '%.0f'|format(sc.example_points) }}; more keeps helping, with diminishing returns.</p>
       {% else %}
-      <p>{{ sc.hard_violations }} hard-rule violation{{ '' if sc.hard_violations == 1 else 's' }} cap the score at 20 and shrink it with each one: 20 × e^(−0.25 × {{ sc.hard_violations }}) = {{ '%.1f'|format(sc.points) }}, shown as {{ '%.0f'|format(option.points) }}. Fix the broken rules below before comparing the soft rules.</p>
+      <p>{{ sc.hard_violations }} hard-rule violation{{ '' if sc.hard_violations == 1 else 's' }} cap the score at 20 and shrink it with each one: 20 × e^(−0.25 × {{ sc.hard_violations }}) = {{ '%.1f'|format(sc.points) }}, shown as {{ option.points_text }}. Fix the broken rules below before comparing the soft rules.</p>
       {% endif %}
       <p>Each rule's bar is its share of the season's total soft movement: the absolute totals of all soft rules add up to {{ '%.1f'|format(sc.gross) }} points here. A green + adds points and a red − takes them away. Shares compare rules with each other; they are not points on the 0–100 scale.</p>
     </div>
@@ -1058,7 +1179,7 @@
   <div class="controls">
     <div class="bar-summary">
       <span class="bar-opt">{{ option.label }}</span>
-      <span class="bar-score">{{ '%.0f'|format(option.points) }}<small>/100</small></span>
+      <span class="bar-score">{{ option.points_text }}<small>/100</small></span>
       {% if option.feasible %}
         <span class="badge ok">feasible</span>
       {% else %}

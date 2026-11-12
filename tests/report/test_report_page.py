@@ -445,7 +445,7 @@ def test_lens_combines_with_the_club_filter_and_only_matching_hides_and_collapse
     assert "No fixtures match" in _view(page, "by-competition").inner_text()
 
 
-def test_lens_persists_across_views_and_is_kept_per_option(page):
+def test_lens_persists_across_views_and_carries_over_to_the_other_option(page):
     _lens(page, PAIR)
     page.check(".lens-only-box")
     _view(page, "month-calendar")
@@ -456,14 +456,22 @@ def test_lens_persists_across_views_and_is_kept_per_option(page):
     assert page.input_value("#panel-1 .lens-select") == PAIR
 
     page.click('.tab[data-panel="panel-2"]')
-    assert page.locator("#panel-2").get_attribute("data-lens-rule") == ""
-    assert page.locator("#panel-2 .lens-hit, #panel-2 .lens-dim").count() == 0
-    assert [o.get_attribute("value") for o in page.locator("#panel-2 .lens-select option").all()] == ["", PAIR]
-    _lens(page, PAIR, "#panel-2")
+    assert page.locator("#panel-2").get_attribute("data-lens-rule") == PAIR
+    assert page.locator("#panel-2").get_attribute("data-lens-only") == "true"
+    assert page.input_value("#panel-2 .lens-select") == PAIR
+    assert page.locator("#panel-2 .view-pane:not([hidden]) .fx").count() == 2
 
     page.click('.tab[data-panel="panel-1"]')
     assert page.locator("#panel-1").get_attribute("data-lens-rule") == PAIR
     assert page.locator("#panel-1 .view-pane:not([hidden]) .fx").count() == 2  # still only the matches
+
+
+def test_a_lens_on_a_rule_the_other_option_never_scores_is_dropped_there(page):
+    _lens(page, OFF_DAY)
+    page.click('.tab[data-panel="panel-2"]')
+    assert page.locator("#panel-2").get_attribute("data-lens-rule") == ""
+    assert page.locator("#panel-2 .lens-hit, #panel-2 .lens-dim").count() == 0
+    assert [o.get_attribute("value") for o in page.locator("#panel-2 .lens-select option").all()] == ["", PAIR]
 
 
 def test_clearing_the_lens_restores_every_fixture(page):
@@ -1431,3 +1439,63 @@ def test_the_club_breakdown_hides_rank_and_fixtures_on_a_phone(browser, report_u
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     context.close()
 
+
+
+# -- comparing the options (#35) ----------------------------------------------
+
+
+def _first_visible_round(page, panel):
+    """The title line of the first round in the drawn view that is on screen below the bar."""
+    return page.evaluate(
+        """(panel) => {
+          const top = document.querySelector(panel + ' .controls').getBoundingClientRect().bottom;
+          for (const n of document.querySelectorAll(panel + ' .view-pane:not([hidden]) [data-uid]')) {
+            const r = n.getBoundingClientRect();
+            if (r.bottom > top && r.top < innerHeight) return n.closest('.round').innerText.split('\\n')[0];
+          }
+          return null;
+        }""",
+        panel,
+    )
+
+
+def test_the_comparison_sits_above_the_tabs_and_each_option_name_opens_its_tab(page):
+    assert page.locator(".compare").is_visible()
+    assert page.locator(".compare .cmp-open").count() == 2
+    assert page.locator(".compare").bounding_box()["y"] < page.locator(".tabs").bounding_box()["y"]
+
+    page.click('.cmp-open[data-option="1"]')
+    assert page.get_attribute('.tab[data-panel="panel-2"]', "aria-selected") == "true"
+    assert page.locator("#panel-2").is_visible()
+    assert not page.locator("#panel-1").is_visible()
+
+
+def test_the_comparison_fits_a_phone_screen_without_overflow(browser, report_url):
+    context = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
+    page = context.new_page()
+    page.problems = []
+    page.on("console", lambda m: page.problems.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: page.problems.append(str(e)))
+    page.goto(report_url)
+    assert page.locator(".compare").is_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    # The table fits its own wrapper, so it never has to scroll sideways on a phone.
+    assert page.evaluate("(() => { const w = document.querySelector('.cmp-wrap'); return w.scrollWidth <= w.clientWidth; })()")
+    assert page.problems == []
+    context.close()
+
+
+def test_switching_options_keeps_the_round_in_view(page):
+    _view(page, "by-competition")
+    page.evaluate(
+        "window.scrollTo(0, document.querySelectorAll('#panel-1 .round')[1].getBoundingClientRect().top + window.scrollY)"
+    )
+    page.wait_for_timeout(400)  # the anchor is read once scrolling settles
+    before = _first_visible_round(page, "#panel-1")
+    assert before
+    # Scroll up to the tabs, as a reader does, then flip to the other option.
+    page.mouse.wheel(0, -20000)
+    page.wait_for_timeout(800)
+    page.click('.tab[data-panel="panel-2"]')
+    page.wait_for_timeout(1000)  # the anchor scroll is smooth
+    assert _first_visible_round(page, "#panel-2") == before

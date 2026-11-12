@@ -135,6 +135,11 @@ def render_report(
         for candidate in result.candidates
     ]
 
+    for option, (points_text, tag) in zip(options, _score_marks(options), strict=True):
+        option["points_text"] = points_text
+        option["tag"] = tag
+    comparison = _comparison_view(world, result.candidates, options, rule_ids)
+
     competitions = payload.competition_table(
         shared_entries + [e for option in options for e in option["league_entries"]],
         extra=calendar_legend,
@@ -158,6 +163,7 @@ def render_report(
         season=season,
         result=result,
         options=options,
+        comparison=comparison,
         search_stats=_search_stats_view(result.search_stats),
         all_clubs=sorted(world.clubs.values(), key=lambda c: c.name),
         warnings=warnings or [],
@@ -233,7 +239,7 @@ def _build_option(
             entries=entries,
             teams=teams,
             rule_index=rule_index,
-            headlines=headlines,
+            headlines=[{"value": h["value"], "label": h["label"]} for h in headlines],
             club_headlines=club_headlines,
             league_views=_competition_views(world, entries),
             combined_calendar=_combined_calendar_view(combined_entries),
@@ -248,6 +254,234 @@ def _build_option(
             limit=limit,
             full=full_diagnostics,
         ),
+    }
+
+
+# -- comparing the options (#35) ------------------------------------------------
+
+_COMPARE_LIST_LIMIT = 100
+_COMPARE_NAMES_LIMIT = 3
+
+
+def _score_marks(options: list[dict]) -> list[tuple[str, str | None]]:
+    """Each option's score as its tab shows it, and the tag marking the top score.
+
+    Scores that round to the same whole number get a decimal, so 74 and 74
+    read as 74.2 and 73.9 rather than looking identical.
+    """
+    if len(options) < 2:
+        return [(f"{option['points']:.0f}", None) for option in options]
+    whole = [round(option["points"]) for option in options]
+    decimals = 1 if len(set(whole)) < len(whole) else 0
+    tenths = [round(option["points"], 1) for option in options]
+    top = max(tenths)
+    tied = tenths.count(top) > 1
+    tag = "tied top score" if tied else "top score"
+    return [
+        (f"{option['points']:.{decimals}f}", tag if value == top else None)
+        for option, value in zip(options, tenths, strict=True)
+    ]
+
+
+def _extremes(numbers: list[float | None], higher_is_better: bool) -> tuple[list[bool], list[bool]]:
+    """Which options hold the best and the weakest value on a row. A row where
+    every option is level has neither, so nothing is marked."""
+    present = [value for value in numbers if value is not None]
+    if len(set(present)) < 2:
+        return [False] * len(numbers), [False] * len(numbers)
+    top = max(present) if higher_is_better else min(present)
+    bottom = min(present) if higher_is_better else max(present)
+    best = [value is not None and value == top for value in numbers]
+    weakest = [value is not None and value == bottom for value in numbers]
+    return best, weakest
+
+
+def _signed(value: float) -> str:
+    return f"{value:+.1f}".replace("-", "−")
+
+
+def _listed(names: list[str]) -> str:
+    shown = ", ".join(names[:_COMPARE_NAMES_LIMIT])
+    extra = len(names) - _COMPARE_NAMES_LIMIT
+    return f"{shown} and {extra} more" if extra > 0 else shown
+
+
+def _fixture_identity(match: Match) -> tuple:
+    """A league fixture as the same fixture in every option: its competition,
+    leg and team pair, whichever side is at home and whatever date it lands on."""
+    return (match.competition_id, match.leg, tuple(sorted((match.home_team, match.away_team))))
+
+
+def _day_label(day: date) -> str:
+    return f"{day:%a} {day.day} {day:%b}"
+
+
+def _fixture_diff(world: World, baseline: list[Match], other: list[Match]) -> dict:
+    """How one option's league fixtures differ from the baseline option's.
+
+    A fixture counts once, under the first of date, home side and kickoff time
+    that changed. Fixtures absent from the baseline are counted as unmatched.
+    """
+    base = {_fixture_identity(match): match for match in baseline}
+    counts = {"date": 0, "side": 0, "kickoff": 0, "unmatched": 0}
+    items: list[dict] = []
+    for match in sorted(other, key=lambda m: (m.date, m.competition_id, m.home_team)):
+        was = base.get(_fixture_identity(match))
+        if was is None:
+            kind, detail = "unmatched", "not in the baseline option"
+        elif was.date != match.date:
+            kind, detail = "date", f"moved from {_day_label(was.date)}"
+        elif was.home_team != match.home_team:
+            kind, detail = "side", f"{world.team_label(match.home_team)} now at home"
+        elif was.kickoff_time != match.kickoff_time:
+            kind, detail = "kickoff", f"kickoff {was.kickoff_time or 'unset'} → {match.kickoff_time or 'unset'}"
+        else:
+            continue
+        counts[kind] += 1
+        competition = world.competition(match.competition_id)
+        fixture = f"{competition.short_name}: {world.team_label(match.home_team)} v {world.team_label(match.away_team)}"
+        items.append({"date": _day_label(match.date), "fixture": fixture, "detail": detail})
+    parts = [
+        f"{counts[kind]} {text}"
+        for kind, text in (
+            ("date", "on another date"),
+            ("side", "with home and away swapped"),
+            ("kickoff", "with only the kickoff time changed"),
+            ("unmatched", "not in the baseline"),
+        )
+        if counts[kind]
+    ]
+    return {
+        "count": len(items),
+        "total": len(other),
+        "breakdown": (", ".join(parts) + ".").capitalize() if parts else "No fixture differs from the baseline.",
+        "fixtures": items[:_COMPARE_LIST_LIMIT],
+        "more": max(0, len(items) - _COMPARE_LIST_LIMIT),
+    }
+
+
+def _comparison_view(
+    world: World, candidates: list[Candidate], options: list[dict], rule_ids: list[str]
+) -> dict | None:
+    """The side-by-side table of the options, or None with one option.
+
+    A rule row shows what the rule adds to each option's score, so its best
+    value is the one that helps most (or hurts least). Hard-rule violations
+    are the exception: fewer is better.
+    """
+    if len(candidates) < 2:
+        return None
+    count = len(candidates)
+    results = [{r.constraint_id: r for r in c.score.results} for c in candidates]
+    kinds: dict[str, str] = {}
+    for per_option in results:
+        for rule_id, result in per_option.items():
+            kinds.setdefault(rule_id, result.kind)
+
+    def contribution(i: int, rule_id: str) -> float | None:
+        result = results[i].get(rule_id)
+        return None if result is None else round(result.total, 1)
+
+    def row(label, numbers, texts, subs=None, higher_is_better=True, characterise=True) -> dict:
+        best, weakest = _extremes(numbers, higher_is_better)
+        cells = [
+            {"text": texts[i], "sub": subs[i] if subs else "", "best": best[i]} for i in range(count)
+        ]
+        return {"label": label, "cells": cells, "best": best, "weakest": weakest, "characterise": characterise}
+
+    score_row = row(
+        "Score out of 100",
+        [round(option["points"], 1) for option in options],
+        [option["points_text"] for option in options],
+        characterise=False,
+    )
+
+    diffs = [_fixture_diff(world, candidates[0].matches, c.matches) for c in candidates[1:]]
+    fixture_row = {
+        "label": "League fixtures on another date, side or kickoff",
+        "cells": [{"text": "baseline", "sub": "", "best": False}]
+        + [{"text": f"{diff['count']} of {diff['total']}", "sub": "", "best": False} for diff in diffs],
+        "best": [False] * count,
+        "weakest": [False] * count,
+        "characterise": False,
+    }
+
+    headline_rules: list[str] = []
+    headline_labels: dict[str, str] = {}
+    for option in options:
+        for headline in option["headlines"]:
+            if headline["rule"] not in headline_rules:
+                headline_rules.append(headline["rule"])
+                text = headline["label"]
+                headline_labels[headline["rule"]] = text[:1].upper() + text[1:]
+    headline_rows = []
+    for rule_id in headline_rules:
+        shown = [{h["rule"]: h["value"] for h in option["headlines"]}.get(rule_id, "—") for option in options]
+        totals = [contribution(i, rule_id) for i in range(count)]
+        headline_rows.append(
+            row(
+                headline_labels[rule_id],
+                totals,
+                shown,
+                subs=[f"score {_signed(t)}" if t is not None else "" for t in totals],
+                characterise=False,
+            )
+        )
+
+    hard_row = row(
+        "Hard-rule violations",
+        [option["hard_violations"] for option in options],
+        [str(option["hard_violations"]) for option in options],
+        higher_is_better=False,
+    )
+
+    soft_rows = []
+    for rule_id in (rule for rule in kinds if kinds[rule] == "soft"):
+        numbers = [contribution(i, rule_id) for i in range(count)]
+        events = [results[i][rule_id].count if rule_id in results[i] else 0 for i in range(count)]
+        soft_rows.append(
+            (
+                max((abs(n) for n in numbers if n is not None), default=0.0),
+                row(
+                    rule_name(rule_id),
+                    numbers,
+                    [_signed(n) if n is not None else "—" for n in numbers],
+                    subs=[f"{n} events" if n else "" for n in events],
+                ),
+            )
+        )
+    soft_rows.sort(key=lambda pair: (-pair[0], pair[1]["label"]))
+
+    sections = [{"title": "Overall", "rows": [score_row, fixture_row]}]
+    if headline_rows:
+        sections.append({"title": "Headline numbers", "rows": headline_rows})
+    sections.append({"title": "Hard rules", "rows": [hard_row]})
+    sections.append({"title": "Soft rules, largest movement first", "rows": [r for _, r in soft_rows]})
+
+    compared = [r for section in sections for r in section["rows"] if r["characterise"]]
+    columns = []
+    for i, option in enumerate(options):
+        best = [r["label"] for r in compared if r["best"][i]]
+        weakest = [r["label"] for r in compared if r["weakest"][i]]
+        parts = []
+        if best:
+            parts.append(f"Best on {_listed(best)}.")
+        if weakest:
+            parts.append(f"Weakest on {_listed(weakest)}.")
+        columns.append(
+            {
+                "index": i,
+                "label": option["label"],
+                "seed": candidates[i].seed or None,
+                "tag": option["tag"],
+                "summary": " ".join(parts) if parts else "No row sets it apart.",
+            }
+        )
+    return {
+        "columns": columns,
+        "sections": sections,
+        "baseline": options[0]["label"],
+        "diffs": [{"label": option["label"], **diff} for option, diff in zip(options[1:], diffs, strict=True)],
     }
 
 
@@ -599,19 +833,24 @@ def _headlines(world: World, candidate: Candidate) -> list[dict]:
             {
                 "value": f"{100.0 * weekday.count / len(matches):.0f}%",
                 "label": "on the preferred weekday",
+                "rule": "preferred_weekday",
             }
         )
 
     home_pairs = score.result("consecutive_home_days")
     if home_pairs is not None:
         headlines.append(
-            {"value": str(home_pairs.count), "label": "back-to-back home days"}
+            {"value": str(home_pairs.count), "label": "back-to-back home days", "rule": "consecutive_home_days"}
         )
 
     away_pairs = score.result("consecutive_away_days")
     if away_pairs is not None:
         headlines.append(
-            {"value": str(away_pairs.count), "label": "paired away days within travel range"}
+            {
+                "value": str(away_pairs.count),
+                "label": "paired away days within travel range",
+                "rule": "consecutive_away_days",
+            }
         )
 
     return headlines
