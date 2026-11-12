@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import glob
 import os
+import re
+from collections import Counter
 from datetime import date
 
 import factories as f
@@ -97,7 +99,7 @@ def rules_url(tmp_path_factory):
     return _report_url(tmp_path_factory, _base_matches() + extra, rest=True)
 
 
-def _report_url(tmp_path_factory, matches, rest=False):
+def _report_url(tmp_path_factory, matches, rest=False, cup_venue="away", with_europe=True):
     world, season = _world()
     ctx = EvalContext(world=world, season=season, travel=_FixedTravel(), detail=True)
     comps = [world.competition("elite"), world.competition("topp")]
@@ -113,7 +115,7 @@ def _report_url(tmp_path_factory, matches, rest=False):
     )
     cup = f.cup_schedule(
         "cup1",
-        [f.cup_placement("r1", {"a_m": date(2026, 6, 6)}, round_name="Round 1", venue_type="away")],
+        [f.cup_placement("r1", {"a_m": date(2026, 6, 6)}, round_name="Round 1", venue_type=cup_venue)],
         competition_name="NM Cup",
         competition_short_name="NM",
     )
@@ -129,8 +131,8 @@ def _report_url(tmp_path_factory, matches, rest=False):
         SolverResult(candidates=[candidate, other], solver="test"),
         tmp_path_factory.mktemp("report") / "report.html",
         cup_schedules=[cup],
-        european_competitions=[europe],
-        resolved_legs={("cl", "q3"): (date(2026, 6, 6), date(2026, 6, 6))},
+        european_competitions=[europe] if with_europe else None,
+        resolved_legs={("cl", "q3"): (date(2026, 6, 6), date(2026, 6, 6))} if with_europe else None,
     )
     return path.as_uri()
 
@@ -513,15 +515,14 @@ def test_an_occurrence_row_jumps_to_and_flashes_its_fixture(page):
     flashed.wait_for()
     assert flashed.count() == 1 and flashed.get_attribute("data-uid") == uid
 
-    # In the month calendar the row opens its day; a hiding club filter is lifted.
+    # In the month calendar the row opens its day. (A club pick hides the season
+    # scorecard, so the row is only reachable while no club is selected.)
     page.wait_for_timeout(2600)
     month = _view(page, "month-calendar")
-    page.select_option(".club-select", "club_b")
     row.click()
     flashed = month.locator(".flash")
     flashed.wait_for()
     assert flashed.get_attribute("data-uid") == uid
-    assert page.input_value(".club-select") == ""
     assert month.locator(".cal-day.selected").get_attribute("data-date") == "2026-06-07"
 
 
@@ -673,8 +674,9 @@ def test_the_bar_controls_drive_the_view_club_and_rule_filters_and_chips_clear_t
     assert page.input_value("#panel-1 .lens-select") == "" and not page.locator("#panel-1 .lens-clear").is_visible()
     page.click("#panel-1 .club-clear")
     assert page.input_value("#panel-1 .club-select") == "" and not page.locator("#panel-1 .club-clear").is_visible()
-    assert len(body.locator(".fx").all()) == 5
     assert page.evaluate("document.activeElement.className") == "club-select"
+    body = _view(page, "combined-calendar")  # clearing the club leaves the timeline
+    assert len(body.locator(".fx").all()) == 5
 
 
 def test_scroll_targets_clear_the_sticky_bar(short_page):
@@ -745,13 +747,13 @@ def test_focus_and_anchors_leave_room_for_the_bar(page):
     assert padding >= height
 
 
-def test_all_four_phone_view_buttons_fit_the_bar_without_scrolling(browser, report_url):
+def test_all_five_phone_view_buttons_fit_the_bar_without_scrolling(browser, report_url):
     for width in (390, 360):
         context = browser.new_context(viewport={"width": width, "height": 800}, has_touch=True)
         page = context.new_page()
         page.goto(report_url)
         boxes = [b.bounding_box() for b in page.locator("#panel-1 .view-btn").all()]
-        assert len(boxes) == 4
+        assert len(boxes) == 5
         assert all(b["x"] >= 0 and b["x"] + b["width"] <= width for b in boxes)
         assert len({round(b["y"]) for b in boxes}) == 1
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
@@ -893,6 +895,7 @@ def test_the_season_strip_has_a_button_per_round_in_both_league_rows(page):
 
 def test_the_strip_follows_the_club_filter(page):
     page.select_option(".club-select", "club_b")
+    _view(page, "by-competition")  # a dual club opens on the timeline; the strip belongs to the round views
     cells = page.locator("#panel-1 .strip-cell")
     assert _texts(cells) == ["1", "2 0", "1"]  # the two rounds with no club B game are empty
     assert cells.first.is_disabled()
@@ -990,3 +993,331 @@ def test_costs_colour_the_combined_list_score_and_the_day_figures(rules_page):
     month = _view(rules_page, "month-calendar")
     for day in ("2026-06-10", "2026-06-17"):  # the two short-rest games of round 4
         assert month.locator(f'.cal-day[data-date="{day}"] .cal-value.cost').count() == 1
+
+
+# -- club scope and timeline (issue #33) ---------------------------------------
+
+
+@pytest.fixture(scope="module")
+def clash_url(tmp_path_factory):
+    # Both of club A's teams are at home on 6 June: the timeline's clash tag.
+    d = date(2026, 6, 6)
+    matches = [
+        f.match("elite", "a_m", "opp_m", d, "va"),
+        f.match("topp", "a_w", "opp_w", d, "va"),
+    ]
+    return _report_url(tmp_path_factory, matches)
+
+
+def _wire(page):
+    return page.evaluate("JSON.parse(document.getElementById('report-data').textContent)")
+
+
+def _signed(total):
+    text = f"{round(total, 1):+.1f}"
+    return text.replace("-", "−")
+
+
+def _points_text(total):
+    """The page's points text: one decimal under 10, whole numbers above."""
+    if abs(total) < 10:
+        text = f"{abs(total):.1f}"
+    else:
+        text = str(int(abs(total) + 0.5))
+    return ("+" if total > 0 else "−" if total < 0 else "") + text
+
+
+def _club_teams(data, club):
+    return [tid for tid, team in data["teams"].items() if team["club"] == club]
+
+
+def _club_expected(data, option, club):
+    """A club's figure per rule, rebuilt from the wire the way the page builds it:
+    the badges on its fixtures that name one of its teams or the club, plus the
+    season-level events attributed to it. Preferred weekday (inverse) is per
+    competition, so it belongs to no club."""
+    names = {data["clubNames"][club]} | {data["teams"][tid]["label"] for tid in _club_teams(data, club)}
+    totals = Counter()
+    for match in option["matches"]:
+        if club not in (data["teams"][match["h"]]["club"], data["teams"][match["a"]]["club"]):
+            continue
+        for flag in match.get("f", []):
+            rule = data["rules"][flag[0]]
+            group = option["groups"][flag[4]] if len(flag) > 4 else ""
+            if not rule.get("inv") and group in names:
+                totals[rule["id"]] += flag[1]
+    for rule_index, total, _count in option["clubUnpinned"].get(club, []):
+        totals[data["rules"][rule_index]["id"]] += total
+    return totals
+
+
+def _club_fixture_count(data, club):
+    league = sum(
+        1
+        for m in data["options"][0]["matches"]
+        if club in (data["teams"][m["h"]]["club"], data["teams"][m["a"]]["club"])
+    )
+    cup = sum(1 for e in data["shared"] if data["teams"][e["t"]]["club"] == club)
+    return league + cup, len(data["options"][0]["matches"]) + len(data["shared"])
+
+
+def test_selecting_a_club_restates_the_breakdown_as_its_own_share(page):
+    data = _wire(page)
+    option = data["options"][0]
+    expected = _club_expected(data, option, "club_a")
+    page.select_option("#panel-1 .club-select", "club_a")
+    page.locator("#panel-1 .scope-breakdown > summary").click()
+
+    rows = page.locator("#panel-1 .scope-breakdown tbody tr")
+    assert rows.count() == len(option["order"])
+    for i, index in enumerate(option["order"]):
+        rule_id = data["rules"][index]["id"]
+        row = rows.nth(i)
+        assert row.locator(".name").inner_text() == rule_id.replace("_", " ")
+        total = round(expected[rule_id], 1)
+        assert row.locator("td").nth(2).inner_text() == (_signed(total) if total else "—"), rule_id
+
+
+def test_the_club_scorecard_lists_its_biggest_upsides_and_problems_from_its_share(page):
+    data = _wire(page)
+    option = data["options"][0]
+    expected = _club_expected(data, option, "club_a")
+    page.select_option("#panel-1 .club-select", "club_a")
+
+    ups = page.locator("#panel-1 .scope-card .col").nth(0).locator("details.item")
+    downs = page.locator("#panel-1 .scope-card .col").nth(1).locator("details.item")
+    got_ups = {(ups.nth(i).locator(".name").inner_text(), ups.nth(i).locator(".delta").inner_text()) for i in range(ups.count())}
+    got_downs = {(downs.nth(i).locator(".name").inner_text(), downs.nth(i).locator(".delta").inner_text()) for i in range(downs.count())}
+    want_ups = {
+        (rule.replace("_", " "), _points_text(total))
+        for rule, total in expected.items() if total > 0
+    }
+    want_downs = {
+        (rule.replace("_", " "), _points_text(total))
+        for rule, total in expected.items() if total < 0
+    }
+    assert got_ups == want_ups
+    assert got_downs == want_downs
+
+
+def test_the_scope_is_announced_and_the_season_scorecard_comes_back_on_clear(page):
+    data = _wire(page)
+    before = page.inner_text("#panel-1 .cols.season-part")
+    page.select_option("#panel-1 .club-select", "club_a")
+
+    banner = page.locator("#panel-1 .scope-banner")
+    assert banner.is_visible()
+    matches = data["options"][0]["clubHeadlines"]["club_a"][0]["value"]
+    assert page.inner_text("#panel-1 .scope-text").startswith(f"Club A — {matches} match")
+    assert "season-wide" in page.inner_text("#panel-1 .scope-text")
+    assert "Preferred weekday is scored per competition and left out." in page.inner_text("#panel-1 .scope-text")
+    assert page.locator("#panel-1 .cols.season-part").is_hidden()
+
+    page.click("#panel-1 .scope-clear")
+    assert page.input_value("#panel-1 .club-select") == ""
+    assert banner.is_hidden()
+    assert page.locator("#panel-1 .scope-card").inner_html() == ""
+    assert page.inner_text("#panel-1 .cols.season-part") == before
+
+
+def test_the_shown_count_sits_in_the_banner_for_a_club_and_under_the_bar_for_a_rule(page):
+    data = _wire(page)
+    count = page.locator("#panel-1 .scope-count")
+    assert count.is_hidden()
+    page.select_option("#panel-1 .club-select", "club_a")
+    shown, total = _club_fixture_count(data, "club_a")
+    assert count.inner_text() == f"{shown} of {total} fixtures shown"
+    assert page.locator("#panel-1 .scope-banner .scope-count").is_visible()
+
+    page.select_option("#panel-1 .club-select", "")
+    assert count.is_hidden()
+    page.select_option("#panel-1 .lens-select", PAIR)
+    page.check("#panel-1 .lens-only-box")
+    assert page.locator("#panel-1 .lens-caption .lens-count").is_visible()
+    assert re.fullmatch(r"\d+ of \d+ fixtures shown", page.inner_text("#panel-1 .lens-count"))
+
+
+def test_a_dual_club_opens_on_a_timeline_of_both_teams_in_date_order(page):
+    data = _wire(page)
+    teams = _club_teams(data, "club_a")
+    counts = Counter()
+    for e in data["shared"]:
+        if e["t"] in teams:
+            counts[(e["d"], e["t"])] += 1
+    for m in data["options"][0]["matches"]:
+        for tid in (m["h"], m["a"]):
+            if tid in teams:
+                counts[(m["d"], tid)] += 1
+    dates = sorted({d for d, _ in counts})
+
+    page.select_option("#panel-1 .club-select", "club_a")
+    assert page.get_attribute("#panel-1", "data-current-view") == "club-timeline"
+    # The lane headings are uppercased by CSS, so compare their text, not what is drawn.
+    assert page.locator("#panel-1 .tl-lane").all_text_contents() == [data["teams"][tid]["label"] for tid in teams]
+
+    rows = page.locator("#panel-1 .tl-row")
+    assert _texts(rows.locator(".tl-date b")) == [date.fromisoformat(d).strftime("%a %d/%m") for d in dates]
+    for i, d in enumerate(dates):
+        for j, tid in enumerate(teams):
+            lane = rows.nth(i).locator(".tl-cell").nth(j)
+            assert lane.locator(".tl-fx").count() == counts[(d, tid)], (d, tid)
+
+
+def test_home_pairs_across_the_two_teams_are_tagged_on_both_days(page):
+    page.select_option("#panel-1 .club-select", "club_a")
+    rows = page.locator("#panel-1 .tl-row")
+    # Club A's men play at home on 6 June and its women on 7 June.
+    assert _texts(rows.nth(0).locator(".tl-tag")) == ["home pair"]
+    assert _texts(rows.nth(1).locator(".tl-tag")) == ["home pair"]
+    assert rows.nth(1).locator(".tl-cell").nth(1).locator(".tl-ha").inner_text() == "H"
+
+
+def test_two_teams_of_one_club_at_home_on_the_same_day_are_a_flagged_clash(clash_url, browser):
+    context = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = context.new_page()
+    page.goto(clash_url)
+    page.select_option("#panel-1 .club-select", "club_a")
+    first = page.locator("#panel-1 .tl-row").nth(0)
+    assert "tl-clash" in first.get_attribute("class")
+    tag = first.locator(".tl-tag")
+    assert tag.inner_text() == "both home the same day"
+    assert "tl-tag-bad" in tag.get_attribute("class")
+    context.close()
+
+
+def test_the_timeline_without_a_club_offers_the_dual_clubs_and_clearing_leaves_it(page):
+    _view(page, "club-timeline")
+    buttons = page.locator("#panel-1 .tl-club-btn")
+    assert _texts(buttons) == ["Club A", "Club B"]
+    buttons.nth(1).click()
+    assert page.input_value("#panel-1 .club-select") == "club_b"
+    assert page.locator("#panel-1 .tl-row").count() > 0
+
+    page.click("#panel-1 .club-clear")
+    assert page.get_attribute("#panel-1", "data-current-view") == "by-competition"
+
+
+def test_the_club_and_view_carry_over_to_the_other_option(page):
+    page.select_option("#panel-1 .club-select", "club_b")
+    page.locator(".tab").nth(1).click()
+    assert page.input_value("#panel-2 .club-select") == "club_b"
+    assert page.get_attribute("#panel-2", "data-current-view") == "club-timeline"
+
+
+def test_a_dual_club_keeps_the_view_the_reader_is_on(page):
+    _view(page, "month-calendar")
+    page.select_option("#panel-1 .club-select", "club_a")
+    assert page.get_attribute("#panel-1", "data-current-view") == "month-calendar"
+    _view(page, "by-competition")
+    page.select_option("#panel-1 .club-select", "club_b")
+    assert page.get_attribute("#panel-1", "data-current-view") == "club-timeline"
+
+
+@pytest.fixture(scope="module")
+def tbd_url(tmp_path_factory):
+    # Club A's women play away on 5 June; its men's cup tie on 6 June has no venue
+    # decided yet. The two must not read as an away pair.
+    matches = [f.match("topp", "opp_w", "a_w", date(2026, 6, 5), "vc")]
+    return _report_url(tmp_path_factory, matches, cup_venue="unknown", with_europe=False)
+
+
+def test_a_tie_with_no_venue_decided_is_marked_and_never_paired(tbd_url, browser):
+    context = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = context.new_page()
+    page.goto(tbd_url)
+    page.select_option("#panel-1 .club-select", "club_a")
+    rows = page.locator("#panel-1 .tl-row")
+    assert _texts(rows.nth(0).locator(".tl-tag")) == []  # 5 June: no pair with the tie
+    assert _texts(rows.nth(1).locator(".tl-tag")) == []  # 6 June: the tie is not an away venue
+    cup = rows.nth(1).locator(".tl-cell").nth(0).locator(".tl-fx").filter(has_text="TBD")
+    assert cup.locator(".tl-ha").inner_text() == "?"
+    assert cup.locator(".tl-ha").get_attribute("aria-label") == "Venue not decided"
+    context.close()
+
+
+def test_a_team_filter_narrows_every_view_and_the_timeline_to_one_lane(page):
+    data = _wire(page)
+    women = next(tid for tid, t in data["teams"].items() if t["club"] == "club_a" and t["gender"] == "women")
+    page.select_option("#panel-1 .club-select", "club_a")
+    select = page.locator("#panel-1 .team-select")
+    assert page.locator("#panel-1 .team-filter").is_visible()
+    assert _texts(select.locator("option")) == ["All", "Men", "Women"]
+
+    select.select_option(women)
+    shown = sum(
+        1 for m in data["options"][0]["matches"] if women in (m["h"], m["a"])
+    ) + sum(1 for e in data["shared"] if e["t"] == women)
+    total = len(data["options"][0]["matches"]) + len(data["shared"])
+    assert page.inner_text("#panel-1 .scope-count") == f"{shown} of {total} fixtures shown"
+    assert "With Women picked" in page.inner_text("#panel-1 .scope-text")
+    assert page.locator("#panel-1 .tl-lane").all_text_contents() == [data["teams"][women]["label"]]
+
+    _view(page, "combined-list")
+    assert page.locator('#panel-1 .view-pane[data-view="combined-list"] tbody tr.fx-row').count() == shown
+
+    page.click("#panel-1 .team-clear")
+    assert select.input_value() == ""
+    assert page.locator("#panel-1 .team-clear").is_hidden()
+    club_total, _ = _club_fixture_count(data, "club_a")
+    assert page.locator('#panel-1 .view-pane[data-view="combined-list"] tbody tr.fx-row').count() == club_total
+    _view(page, "club-timeline")
+    assert page.locator("#panel-1 .tl-lane").count() == 2
+
+
+def test_a_hidden_team_is_lifted_when_a_list_row_points_at_its_fixture(page):
+    data = _wire(page)
+    men = next(tid for tid, t in data["teams"].items() if t["club"] == "club_a" and t["gender"] == "men")
+    page.select_option("#panel-1 .club-select", "club_a")
+    item = page.locator('#panel-1 .scope-card details.item[data-rule="' + PAIR + '"]')
+    lifted = False
+    for i in range(2):
+        page.select_option("#panel-1 .team-select", men)
+        if not item.evaluate("e => e.open"):
+            item.locator("summary").click()
+        row = item.locator(".occ-row").nth(i)
+        row.click()
+        flashed = page.locator("#panel-1 .view-pane:not([hidden]) .flash")
+        flashed.wait_for()
+        assert flashed.is_visible()
+        lifted = lifted or page.input_value("#panel-1 .team-select") == ""
+    assert lifted
+
+
+def test_the_breakdown_and_upsides_give_the_clubs_place_among_teams(page):
+    data = _wire(page)
+    option = data["options"][0]
+    ranks = {row["id"]: row for row in option["clubRanks"]["club_a"]}
+    page.select_option("#panel-1 .club-select", "club_a")
+    page.locator("#panel-1 .scope-breakdown > summary").click()
+    rows = page.locator("#panel-1 .scope-breakdown tbody tr")
+    for i, index in enumerate(option["order"]):
+        rule_id = data["rules"][index]["id"]
+        cell = rows.nth(i).locator("td").nth(4).inner_text()
+        if rule_id not in ranks:
+            assert cell == "\u2014"
+            continue
+        row = ranks[rule_id]
+        unit = "dual clubs" if row["by"] == "club" else "teams"
+        parts = [f"{label} {_ordinal(rank)} of {row['of']} {unit} ({_events(count)})" for label, count, rank in row["found"]]
+        assert cell == "; ".join(parts), rule_id
+
+
+def _ordinal(n):
+    suffix = "th" if 11 <= n % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def _events(n):
+    return f"{n} event" if n == 1 else f"{n} events"
+
+
+def test_the_club_scorecard_and_timeline_fit_a_phone_without_overflow(touch_page):
+    _open_filters(touch_page)
+    touch_page.select_option("#panel-1 .club-select", "club_a")
+    assert touch_page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    touch_page.locator("#panel-1 .scope-card").scroll_into_view_if_needed()
+    assert touch_page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert touch_page.locator("#panel-1 .scope-card .cols").bounding_box()["width"] <= 390 - 32
+    _view(touch_page, "club-timeline")
+    assert touch_page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert touch_page.locator("#panel-1 .tl-grid").bounding_box()["width"] <= 390 - 32
