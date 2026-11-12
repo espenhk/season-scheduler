@@ -21,8 +21,8 @@
 #   - "fotball.no: NM menn 2027 — kvalifisering 2026 (format change, Eliteserien from Round 1)"
 #   - "en.wikipedia.org: 2026-27 Norwegian Football Cup (tournament starts 21-22 Aug 2026, final end of May 2027)"
 id: cup_men_2027
-name: NM Cupen (menn)
-short_name: "NM(m)"
+name: NM Cupen 2026/27 (menn)
+short_name: "NM26/27(m)"
 season: 2027
 gender: men
 format: cup

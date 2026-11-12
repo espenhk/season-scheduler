@@ -10,9 +10,9 @@ view refers to fixtures by `uid` only.
 
 Wire shapes, one per fixture kind (short keys: league matches dominate the size):
 
-    league    {d, t?, c, h, a, v?, f?, q?}  date, kickoff, competition, home/away team,
-                                         venue if not the home team's own ground,
-                                         f=badges, q=quiet rewards (below)
+    league    {d, t?, c, r, h, a, v?, f?, q?}  date, kickoff, competition, round number,
+                                         home/away team, venue if not the home team's own
+                                         ground, f=badges, q=quiet rewards (below)
     cup       {k: "cup", d, c, n, t, vt, vl}
     european  {k: "eu",  d, c, n, t, vt, vl, o}
               round name, team, venue type (home/away/neutral/unknown), venue label,
@@ -267,6 +267,7 @@ def league_entry_wire(
     wire: dict[str, Any] = {
         "d": entry["date"].isoformat(),
         "c": entry["competition_id"],
+        "r": entry["round_index"] + 1,
         "h": entry["home_team"],
         "a": entry["away_team"],
     }
@@ -299,6 +300,7 @@ def by_competition_wire(views: list[dict]) -> list[dict]:
         wire.append(
             {
                 "id": view["id"],
+                "kind": view["kind"],
                 "name": view["name"],
                 "meta": view["meta"],
                 "rounds": [

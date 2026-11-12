@@ -327,6 +327,17 @@
     padding: 2px 10px; border-radius: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .chip:hover { background: var(--accent); color: #fff; }
+  /* Competitions shown: a pressed button carries a tick as well as its tint. */
+  .kind-filter { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; }
+  .kind-label { color: var(--muted); font-weight: 600; margin-right: 2px; }
+  .kind-btn {
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 2px 10px; border-radius: 14px;
+  }
+  .kind-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .kind-btn[aria-pressed="true"] { border-color: var(--accent); background: #eaf2f8; color: var(--accent); }
+  .kind-btn[aria-pressed="true"]::before { content: "✓ "; }
+  .kind-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .chip[hidden] { display: none; }
   .jump-cal { margin-left: auto; align-self: center; }
   .legend-wrap { display: contents; }
@@ -428,10 +439,32 @@
 
   /* -- calendar -- */
   .cal-wrap { overflow-x: auto; }
+  /* Sticky headings (By competition sections, the list's header) need their pane not to be a scroll box. */
+  .view-pane[data-view="by-competition"], .view-pane[data-view="combined-list"] { overflow-x: clip; }
   .view-pane[hidden] { display: none; }
-  .comp { margin-top: 30px; }
-  .comp h3 { font-size: 16px; margin: 0 0 2px; }
-  .comp .meta { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .comp { margin-top: 14px; }
+  .comp > summary {
+    position: sticky; top: var(--bar-h); z-index: 2; background: var(--panel); list-style: none; cursor: pointer;
+    padding: 8px 0 6px; border-bottom: 1px solid var(--line);
+  }
+  .comp > summary::-webkit-details-marker { display: none; }
+  .comp > summary::before { content: "▾"; display: inline-block; width: 1em; color: var(--muted); }
+  .comp:not([open]) > summary::before { content: "▸"; }
+  .comp-name { display: inline; font-size: 16px; margin: 0; }
+  .comp .meta { display: block; color: var(--muted); font-size: 13px; margin: 2px 0 0 1em; }
+  .group-head {
+    font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    margin: 22px 0 0;
+  }
+  .comp-jump { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
+  .comp-jump-btn {
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); padding: 3px 10px; border-radius: 14px;
+  }
+  .comp-jump-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .comp-jump-btn:focus-visible, .comp > summary:focus-visible, .fx-group > summary:focus-visible, .fx-group-toggle:focus-visible, .list-filter:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
   .round { border-top: 1px solid var(--line); padding: 10px 0; display: grid; grid-template-columns: 200px 1fr; gap: 14px; }
   .round .rlabel { font-size: 12px; color: var(--muted); }
   .round .rlabel b { display: block; color: var(--ink); font-size: 14px; }
@@ -447,6 +480,17 @@
     font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
   }
   .fixtures { display: flex; flex-wrap: wrap; gap: 8px; }
+  /* A day heading takes a whole line of the card flow: "Sun 15 Mar — 14:00 ×4 · 18:00 ×1". */
+  .day-head { flex: 0 0 100%; margin: 12px 0 0; font-size: 12.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .fixtures > .day-head:first-child { margin-top: 0; }
+  /* A cup or European round date: one chip that opens to the teams. */
+  .fx-group { flex: 0 0 100%; margin: 0; border: 1px solid var(--line); border-radius: 7px; background: #fcfcfb; }
+  .fx-group > summary { list-style: none; cursor: pointer; padding: 7px 12px; font-size: 13px; font-weight: 600; }
+  .fx-group > summary::-webkit-details-marker { display: none; }
+  .fx-group > summary::before { content: "▸  "; color: var(--muted); }
+  .fx-group[open] > summary::before { content: "▾  "; }
+  .fx-group[open] > summary { border-bottom: 1px solid var(--line); }
+  .fx-group-body { padding: 10px; }
   /* `gap` alone spaces every child of the card (date, tag, swatches, names,
      the "v" separator, the pair dot) evenly — issue #61 asked for more
      breathing room here, so this replaced a set of per-element margins that
@@ -507,6 +551,30 @@
   .swatch-dim { opacity: 0.4; }
   .fx-row .swatch, .fx-row .swatch-diamond, .fx-row .swatch-neutral { margin-right: 5px; }
   .fx-row .muted { color: var(--muted); }
+  /* Combined list: header stays under the bar; a date row heads each day; chip rows open to teams. */
+  .list-tools { margin: 12px 0 8px; }
+  .list-filter {
+    font: inherit; font-size: 13px; width: min(340px, 100%); padding: 5px 10px; border: 1px solid var(--line);
+    border-radius: 14px; background: var(--panel); color: var(--ink);
+  }
+  .fx-table { border-collapse: separate; border-spacing: 0; }
+  .view-pane[data-view="combined-list"] thead th {
+    position: sticky; top: var(--bar-h); z-index: 2; background: var(--panel); box-shadow: inset 0 -1px 0 var(--line);
+  }
+  .fx-table .date-row th {
+    text-align: left; padding: 10px 6px 4px; font-size: 13px; color: var(--ink); background: #f6f6f3;
+    border-bottom: 1px solid var(--line);
+  }
+  .fx-table .fx-time, .fx-table .fx-round { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .fx-table .fx-venue { color: var(--muted); }
+  .fx-group-row td { padding: 6px 0 2px; }
+  .fx-group-toggle {
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; color: var(--ink);
+    border: 1px solid var(--line); background: #fcfcfb; padding: 5px 12px; border-radius: 7px;
+  }
+  .fx-group-toggle::before { content: "▸  "; color: var(--muted); }
+  .fx-group-toggle[aria-expanded="true"]::before { content: "▾  "; }
+  .fx-row[hidden], .fx-member[hidden], .fx-group-row[hidden], .date-row[hidden] { display: none; }
   .swatch { border-radius: 2px; }
   .swatch-diamond { border-radius: 1px; transform: rotate(45deg); }
   /* Cup final only: neutral ground, so neither the square (home) nor the
@@ -695,22 +763,25 @@
        Rules badges are not scrolled out of sight. */
     .view-pane[data-view="combined-list"] table, .view-pane[data-view="combined-list"] tbody { display: block; }
     .view-pane[data-view="combined-list"] thead { display: none; }
+    .fx-table .date-row, .fx-table .date-row th { display: block; }
+    .fx-table .date-row th { padding: 10px 2px 4px; border-bottom: none; background: none; }
+    .fx-group-row, .fx-group-row td { display: block; }
+    /* Each row becomes a small card: time and round, competition, the team, venue and score, rules. */
     .fx-row {
-      display: grid; grid-template-columns: 1fr auto 1fr; gap: 2px 8px; align-items: center;
-      grid-template-areas: "date score comp" "home vs away" "venue venue venue" "rules rules rules";
+      display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 2px 8px; align-items: center;
+      grid-template-areas: "time round comp score" "team team team team" "venue venue venue venue" "rules rules rules rules";
       padding: 8px 0 8px 8px; border-bottom: 1px solid var(--line); border-left: 4px solid transparent;
     }
     .fx-row td { padding: 0; border: none; }
-    .fx-row td:nth-child(1) { grid-area: date; }
-    .fx-row td:nth-child(2) { grid-area: comp; justify-self: end; }
-    .fx-row td:nth-child(3) { grid-area: home; }
-    .fx-row td:nth-child(4) { grid-area: vs; }
-    .fx-row td:nth-child(5) { grid-area: away; }
-    .fx-row td:nth-child(6) { grid-area: venue; color: var(--muted); font-size: 12px; }
-    .fx-row td:nth-child(7) { grid-area: rules; }
-    .fx-row td:nth-child(7):empty { display: none; }
+    .fx-row td:nth-child(1) { grid-area: time; }
+    .fx-row td:nth-child(2) { grid-area: round; color: var(--muted); font-size: 12px; }
+    .fx-row td:nth-child(3) { grid-area: comp; justify-self: end; }
+    .fx-row td:nth-child(4) { grid-area: team; }
+    .fx-row td:nth-child(5) { grid-area: venue; color: var(--muted); font-size: 12px; }
+    .fx-row td:nth-child(6) { grid-area: rules; }
+    .fx-row td:nth-child(6):empty { display: none; }
     /* No column header on a card, so the score carries its unit. */
-    .fx-row td:nth-child(8) { grid-area: score; text-align: left; }
+    .fx-row td:nth-child(7) { grid-area: score; text-align: right; }
     .fx-row td.fx-score::after { content: " pts"; color: var(--muted); font-weight: 400; }
     .strip-row { grid-template-columns: 84px minmax(0, 1fr); }
     /* Phone: fixed-width cells that scroll; the fade says the row goes on. */
@@ -1276,6 +1347,13 @@
     </div>
     <div class="bar-filters">
       <div class="bar-fields" id="filters-{{ loop.index }}">
+        {# Competitions shown, by fixture kind. Leagues start on; cups and Europe are switched on here. #}
+        <div class="kind-filter" role="group" aria-label="Competitions shown">
+          <span class="kind-label" aria-hidden="true">Show</span>
+          <button type="button" class="kind-btn" data-kind="league" aria-pressed="true">Leagues</button>
+          <button type="button" class="kind-btn" data-kind="cup" aria-pressed="false">Cups</button>
+          <button type="button" class="kind-btn" data-kind="european" aria-pressed="false">Europe</button>
+        </div>
         <label class="club-filter">
           Club
           <select class="club-select">
@@ -1301,6 +1379,7 @@
         <button type="button" class="chip club-clear" hidden><span class="chip-text"></span> <span aria-hidden="true">×</span></button>
         <button type="button" class="chip team-clear" hidden><span class="chip-text"></span> <span aria-hidden="true">×</span></button>
         <button type="button" class="chip lens-clear" hidden><span class="chip-text"></span> <span aria-hidden="true">×</span></button>
+        <button type="button" class="chip kind-clear" hidden><span class="chip-text"></span> <span aria-hidden="true">×</span></button>
       </div>
     </div>
   </div>
@@ -1335,9 +1414,9 @@
 
   <div class="cal-wrap view-pane" data-view="combined-calendar" hidden>
     <div class="desc" style="margin-top:8px">
-      Every league's matches and every cup's per-team round dates, interleaved
-      by date. A cup round has no fixture-level pairing yet (the opponent is
-      drawn closer to each round), so those cards show "v TBD" — see
+      Every league's matches and every cup or European round date, interleaved
+      by date. A round date with several teams is one chip: open it for the teams.
+      The opponent is drawn closer to each round, so a team reads "v TBD" — see
       "By competition" for the venue rule behind each round.
     </div>
     <div class="pane-body"></div>
