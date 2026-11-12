@@ -512,7 +512,7 @@
     return weekday(iso) + ' ' + (+iso.slice(8, 10)) + ' ' + MONTHS[+iso.slice(5, 7) - 1];
   }
 
-  // "Sun 15 Mar — 14:00 ×4 · 18:00 ×1 · cup/UEFA ×16"
+  // "Sun 15 Mar — 14:00 ×4 · 18:00 ×1 · cup/UEFA ×2" (lone teams; chips are not counted)
   function dayHeading(date, items) {
     var timed = {};
     var untimed = {};
@@ -520,9 +520,10 @@
       var n = item.fxs.length;
       if (item.time) {
         timed[item.time] = (timed[item.time] || 0) + n;
-      } else {
+      } else if (!item.group) {
+        // A chip says how many teams it holds, so it is not counted again here.
         var label = item.fxs[0].kind === 'league' ? 'no kickoff' : 'cup/UEFA';
-        untimed[label] = (untimed[label] || 0) + n;
+        untimed[label] = (untimed[label] || 0) + 1;
       }
     });
     var parts = Object.keys(timed).sort().map(function (time) { return time + ' ×' + timed[time]; });
@@ -591,8 +592,12 @@
   var KIND_GROUPS = [['league', 'Leagues'], ['cup', 'Cups'], ['european', 'Europe']];
 
   function competitionSection(ctx, view, rounds) {
+    var state = ctx.opt.state;
     var section = el('details', 'comp');
-    section.open = true;
+    section.open = !state.closed[view.id];
+    section.addEventListener('toggle', function () {
+      state.closed[view.id] = !section.open;
+    });
     var head = el('summary', 'comp-head');
     append(head, el('h3', 'comp-name', view.name), el('span', 'meta', view.meta));
     section.appendChild(head);
@@ -610,6 +615,7 @@
   // heading sticks under the bar, with a jump list above them all.
   function byCompetitionView(ctx) {
     var root = document.createDocumentFragment();
+    var jumpState = ctx.opt.state;
     var shown = [];
     ctx.opt.data.byCompetition.concat(DATA.sharedByCompetition).forEach(function (view) {
       // Under a filter a round (or a whole competition) with nothing left collapses rather than leaving a bare heading.
@@ -627,6 +633,7 @@
       button.type = 'button';
       button.addEventListener('click', function () {
         entry.section.open = true;
+        jumpState.closed[entry.view.id] = false;
         entry.section.scrollIntoView({ block: 'start', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
       });
       jump.appendChild(button);
@@ -662,6 +669,11 @@
     return append(el('tr', 'date-row'), th);
   }
 
+  // Whether a list chip is open: the reader's choice once made, else open while a text query is on.
+  function listGroupOpen(state, key) {
+    return state.open[key] === undefined ? !!state.query.trim() : state.open[key];
+  }
+
   // A cup or European round date in the list: a chip row that opens to its team rows.
   function groupRows(body, item, state, refresh) {
     var first = item.fxs[0];
@@ -669,7 +681,7 @@
     var toggle = el('button', 'fx-group-toggle', DATA.competitions[first.comp].name + ' · ' + first.round + ' · ' + plural(item.fxs.length, 'team', 'teams'));
     toggle.type = 'button';
     toggle.addEventListener('click', function () {
-      state.open[key] = !state.open[key];
+      state.open[key] = !listGroupOpen(state, key);
       refresh();
     });
     var cell = append(el('td'), toggle);
@@ -705,7 +717,7 @@
       var show;
       if (row.classList.contains('fx-group-row')) {
         show = matches(row);
-        var expanded = q ? show : !!state.open[key];
+        var expanded = listGroupOpen(state, key);
         open[key] = expanded;
         row.querySelector('.fx-group-toggle').setAttribute('aria-expanded', String(expanded));
       } else if (row.classList.contains('fx-member')) {
@@ -1214,7 +1226,7 @@
     this.anchor = '';
     this.state = {
       view: panel.querySelector('.view-btn').dataset.view, club: '', team: '', date: '', rule: '', only: false,
-      kinds: DEFAULT_KINDS.slice(), query: '', open: {}
+      kinds: DEFAULT_KINDS.slice(), query: '', open: {}, closed: {}
     };
     this.clubSelect = panel.querySelector('.club-select');
     this.lensSelect = panel.querySelector('.lens-select');
@@ -1236,6 +1248,12 @@
         var kind = button.dataset.kind;
         var kinds = self.state.kinds;
         self.setKinds(kinds.indexOf(kind) !== -1 ? kinds.filter(function (k) { return k !== kind; }) : kinds.concat(kind));
+      });
+    });
+    panel.querySelectorAll('.kind-hint-btn').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var missing = button.parentNode.getAttribute('data-missing').split(' ');
+        self.setKinds(self.state.kinds.concat(missing));
       });
     });
     panel.querySelector('.kind-clear').addEventListener('click', function () {
@@ -1285,6 +1303,23 @@
     this.render();
   };
 
+  // The line above each view naming the competitions that are hidden, with a button to show them.
+  Option.prototype.renderHints = function () {
+    var kinds = this.state.kinds;
+    var missing = ALL_KINDS.filter(function (kind) { return kinds.indexOf(kind) === -1; });
+    var names = missing.map(function (kind) { return KIND_LABEL[kind]; });
+    var list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0];
+    var plural = missing.length > 1 || missing[0] !== 'european';
+    var text = list + (plural ? ' are hidden' : ' is hidden');
+    var button = plural ? 'Show them' : 'Show it';
+    this.panel.querySelectorAll('.kind-hint').forEach(function (hint) {
+      hint.hidden = !missing.length;
+      hint.querySelector('.kind-hint-text').textContent = text;
+      hint.querySelector('.kind-hint-btn').textContent = button;
+      hint.setAttribute('data-missing', missing.join(' '));
+    });
+  };
+
   Option.prototype.renderKinds = function () {
     var kinds = this.state.kinds;
     this.panel.querySelectorAll('.kind-btn').forEach(function (button) {
@@ -1309,6 +1344,7 @@
     this.state.kinds = shared.kinds.slice();
     this.state.query = shared.query;
     this.state.open = Object.assign({}, shared.open);
+    this.state.closed = Object.assign({}, shared.closed);
     this.clubSelect.value = shared.club;
   };
 
@@ -1982,6 +2018,7 @@
     });
     this.renderHeadlines();
     this.renderKinds();
+    this.renderHints();
     this.renderTeamUi();
     this.renderScope();
     this.renderLensUi();

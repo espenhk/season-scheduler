@@ -328,12 +328,23 @@
   }
   .chip:hover { background: var(--accent); color: #fff; }
   /* Competitions shown: a pressed button carries a tick as well as its tint. */
-  .kind-filter { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; }
+  .kind-filter { display: flex; flex-wrap: nowrap; gap: 4px; align-items: center; font-size: 12.5px; }
   .kind-label { color: var(--muted); font-weight: 600; margin-right: 2px; }
   .kind-btn {
-    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap;
-    border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 2px 10px; border-radius: 14px;
+    font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 1px 8px; border-radius: 14px;
   }
+  /* The clear chip is for a phone with Filters closed; there the Show buttons are out of sight. */
+  .kind-clear { display: none; }
+  @media (max-width: 480px) { .controls:not(.filters-open) .kind-clear:not([hidden]) { display: inline-block; } }
+  /* The line above a view that names what is hidden, and its button. */
+  .kind-hint { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
+  .kind-hint-btn {
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; margin-left: 4px; color: var(--accent);
+    background: none; border: 0; padding: 0; text-decoration: underline;
+  }
+  .kind-hint-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .kind-hint[hidden] { display: none; }
   .kind-btn:hover { border-color: var(--accent); color: var(--accent); }
   .kind-btn[aria-pressed="true"] { border-color: var(--accent); background: #eaf2f8; color: var(--accent); }
   .kind-btn[aria-pressed="true"]::before { content: "✓ "; }
@@ -807,10 +818,10 @@
     }
     .bar-opt { font-size: 12.5px; }
     .bar-score { font-size: 14px; }
-    .bar-summary { gap: 5px; }
+    .bar-summary { gap: 4px; min-width: max-content; }
     .bar-summary .badge { text-transform: none; letter-spacing: 0; font-size: 11px; padding: 1px 6px; }
-    .bar-actions { gap: 3px; }
-    .bar-btn { padding: 3px 7px; font-size: 11.5px; }
+    .bar-actions { gap: 2px; }
+    .bar-btn { padding: 3px 6px; font-size: 11.5px; }
     .bar-btn-text, .legend-toggle .caret { display: none; }
     .controls.filters-open .bar-chips { display: none; }
     .filters-toggle { display: inline-block; }
@@ -1394,10 +1405,12 @@
 
   {# Fixtures are drawn into each `.pane-body` by report.js from #report-data. #}
   <div class="cal-wrap view-pane" data-view="by-competition" hidden>
+    <p class="kind-hint" hidden><span class="kind-hint-text"></span> <button type="button" class="kind-hint-btn"></button></p>
     <div class="pane-body"></div>
   </div>
 
   <div class="cal-wrap view-pane" data-view="month-calendar" hidden>
+    <p class="kind-hint" hidden><span class="kind-hint-text"></span> <button type="button" class="kind-hint-btn"></button></p>
     <div class="desc" style="margin-top:8px">
       One dot per competition with something on that day (a match, cup round, or European leg) —
       tap a day to list its games under that week. A figure under a day is the net rule points of its games shown.
@@ -1413,6 +1426,7 @@
   </div>
 
   <div class="cal-wrap view-pane" data-view="combined-calendar" hidden>
+    <p class="kind-hint" hidden><span class="kind-hint-text"></span> <button type="button" class="kind-hint-btn"></button></p>
     <div class="desc" style="margin-top:8px">
       Every league's matches and every cup or European round date, interleaved
       by date. A round date with several teams is one chip: open it for the teams.
@@ -1423,10 +1437,12 @@
   </div>
 
   <div class="cal-wrap view-pane" data-view="combined-list" hidden>
+    <p class="kind-hint" hidden><span class="kind-hint-text"></span> <button type="button" class="kind-hint-btn"></button></p>
     <div class="pane-body"></div>
   </div>
 
   <div class="cal-wrap view-pane" data-view="club-timeline" hidden>
+    <p class="kind-hint" hidden><span class="kind-hint-text"></span> <button type="button" class="kind-hint-btn"></button></p>
     <div class="pane-body"></div>
   </div>
 

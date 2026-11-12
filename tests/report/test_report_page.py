@@ -1883,10 +1883,13 @@ def test_competition_chips_filter_the_views_and_clearing_them_restores_the_leagu
     assert body.locator(".fx").count() == 5
     page.click('#panel-1 .kind-btn[data-kind="league"]')
     assert body.locator(".fx").count() == 2
-    assert _texts(page.locator("#panel-1 .kind-clear .chip-text")) == ["Shown: Cups + Europe"]
-    page.click("#panel-1 .kind-clear")
-    assert body.locator(".fx").count() == 3
+    # On a desktop the pressed buttons show the choice, so the clear chip stays out of the bar.
+    assert page.locator("#panel-1 .kind-clear").text_content().strip() == "Shown: Cups + Europe ×"
     assert page.locator("#panel-1 .kind-clear").is_hidden()
+    page.click('#panel-1 .kind-btn[data-kind="league"]')
+    page.click('#panel-1 .kind-btn[data-kind="cup"]')
+    page.click('#panel-1 .kind-btn[data-kind="european"]')
+    assert body.locator(".fx").count() == 3
 
 
 def test_competition_chips_reach_the_month_dots_the_strip_and_the_sections(page):
@@ -1963,7 +1966,8 @@ def test_a_cup_round_date_is_one_chip_that_opens_to_its_teams_and_a_club_filter_
     teams = _texts(chip.locator(".fx"))
     assert len(teams) == 2 and all("v TBD" in team for team in teams)
     # The day heading gives the date and the kickoffs: 18:00 league, the cups and the European tie untimed.
-    assert _texts(body.locator(".day-head"))[0] == "Sat 6 Jun — 18:00 ×1 · cup/UEFA ×3"
+    # The chip counts its own teams, so the day heading counts only the Europe card left.
+    assert _texts(body.locator(".day-head"))[0] == "Sat 6 Jun — 18:00 ×1 · cup/UEFA ×1"
 
     page.select_option("#panel-1 .club-select", "club_b")
     pane = _visible_pane(page)
@@ -2043,3 +2047,76 @@ def test_the_competition_chips_and_grouped_views_fit_a_phone_without_overflow(to
     for name in ("by-competition", "combined-calendar", "combined-list", "month-calendar"):
         _view(page, name)
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), name
+
+
+def test_a_hint_above_each_view_names_the_hidden_competitions_and_shows_them(page):
+    pane = _view(page, "combined-calendar")
+    hint = _visible_pane(page).locator("xpath=..").locator(".kind-hint")
+    assert hint.is_visible()
+    assert _texts(hint.locator(".kind-hint-text")) == ["Cups and Europe are hidden"]
+    hint.locator(".kind-hint-btn").click()
+    assert page.get_attribute('#panel-1 .kind-btn[data-kind="cup"]', "aria-pressed") == "true"
+    assert page.get_attribute('#panel-1 .kind-btn[data-kind="european"]', "aria-pressed") == "true"
+    assert hint.is_hidden()
+    assert pane.locator(".fx").count() == 5
+    # A single hidden competition is named with its own verb and button.
+    page.click('#panel-1 .kind-btn[data-kind="european"]')
+    assert _texts(hint.locator(".kind-hint-text")) == ["Europe is hidden"]
+    assert _texts(hint.locator(".kind-hint-btn")) == ["Show it"]
+
+
+def test_a_desktop_bar_keeps_its_height_when_a_competition_is_toggled(page):
+    before = page.evaluate("document.querySelector('#panel-1 .controls').offsetHeight")
+    page.click('#panel-1 .kind-btn[data-kind="cup"]')
+    after = page.evaluate("document.querySelector('#panel-1 .controls').offsetHeight")
+    assert after == before and after <= 90
+    assert page.locator("#panel-1 .kind-clear").is_hidden()
+
+
+def test_a_phone_counts_the_competitions_switched_on_and_its_clear_chip_resets_them(touch_page):
+    page = touch_page
+    assert page.text_content("#panel-1 .filters-toggle") == "Filters"
+    _open_filters(page)
+    page.click('#panel-1 .kind-btn[data-kind="cup"]')
+    page.click("#panel-1 .filters-toggle")  # close, so the chip is in the bar
+    assert page.text_content("#panel-1 .filters-toggle") == "Filters 1"
+    chip = page.locator("#panel-1 .kind-clear")
+    assert chip.is_visible() and chip.text_content().strip() == "Shown: Leagues + Cups ×"
+    # The option label is whole, not cut off with an ellipsis.
+    label_fits = page.evaluate(
+        """() => { const o = document.querySelector('#panel-1 .bar-opt');
+          const r = document.createRange(); r.selectNodeContents(o);
+          return r.getBoundingClientRect().width <= o.clientWidth + 0.5; }"""
+    )
+    assert label_fits
+    chip.click()
+    assert page.locator("#panel-1 .kind-clear").is_hidden()
+    _open_filters(page)
+    assert page.get_attribute('#panel-1 .kind-btn[data-kind="cup"]', "aria-pressed") == "false"
+
+
+def test_a_collapsed_competition_stays_collapsed_when_the_view_redraws(page):
+    _show_cups_and_europe(page)
+    body = _view(page, "by-competition")
+    league = body.locator("details.comp").nth(0)
+    league.locator("summary").click()
+    assert league.evaluate("d => d.open") is False
+    page.click('#panel-1 .kind-btn[data-kind="european"]')  # a redraw of the view
+    page.click('.tab[data-panel="panel-2"]')
+    page.click('.tab[data-panel="panel-1"]')
+    assert _visible_pane(page).locator("details.comp").nth(0).evaluate("d => d.open") is False
+
+
+def test_a_list_chip_collapses_and_reopens_while_the_text_filter_is_on(chip_page):
+    page = chip_page
+    _show_cups_and_europe(page)
+    body = _view(page, "combined-list")
+    body.locator(".list-filter").fill("TBD")
+    toggle = body.locator(".fx-group-toggle")
+    members = body.locator("tr.fx-member")
+    assert toggle.get_attribute("aria-expanded") == "true" and members.first.is_visible()
+    toggle.click()
+    assert toggle.get_attribute("aria-expanded") == "false"
+    assert members.first.is_hidden()
+    toggle.click()
+    assert toggle.get_attribute("aria-expanded") == "true" and members.first.is_visible()
