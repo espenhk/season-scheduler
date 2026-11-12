@@ -21,16 +21,14 @@
 #   - "fotball.no: NM menn 2027 — kvalifisering 2026 (format change, Eliteserien from Round 1)"
 #   - "en.wikipedia.org: 2026-27 Norwegian Football Cup (tournament starts 21-22 Aug 2026, final end of May 2027)"
 id: cup_men_2027
-name: NM Cupen (menn)
-short_name: "NM(m)"
+name: NM Cupen 2026/27 (menn)
+short_name: "NM26/27(m)"
 season: 2027
 gender: men
 format: cup
 
-# Season report colour (issue #77) — its own colour, distinct from both
-# leagues and from cup_women_2027's, so the cup calendar dot is
-# unmistakably its own competition rather than reusing Eliteserien's.
-color: "#c0392b"
+# NM cup family colour, a shade of red (#36); see the colour test in tests/report/test_render.py.
+color: "#880828"
 
 # NFF fixes these rounds' dates (forced or windowed) — issue #31 — never
 # something this project's solver proposes moving.

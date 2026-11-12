@@ -1,3 +1,4 @@
+# This edition runs within one calendar year, so it is named "2026", not "2025/26".
 # The 2026 Norwegian Football Cup (NM kvinner). Unlike the men's, the women's
 # 2026 edition runs entirely inside the calendar year (April to September), so
 # its rounds overlap the Toppserien season. Toppserien clubs enter at Round 2;
@@ -14,7 +15,8 @@ season: 2026
 gender: women
 format: cup
 
-color: "#e84393"
+# NM cup family colour, a shade of red (#36); see the colour test in tests/report/test_render.py.
+color: "#f05808"
 
 movable: false
 

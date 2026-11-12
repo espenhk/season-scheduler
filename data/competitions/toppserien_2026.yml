@@ -5,8 +5,8 @@ season: 2026
 gender: women
 format: league
 
-# Season report colour (issue #77) — see eliteserien_2026.yml's comment.
-color: "#8e44ad"
+# Toppserien's own strong colour, the women's top-flight family (#36); see the colour test in tests/report/test_render.py.
+color: "#86198f"
 
 # Scheduler-controlled, same as eliteserien_2026.yml — see its comment and
 # issue #31.

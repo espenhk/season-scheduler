@@ -15,14 +15,14 @@
 #   - "fotball.no: NM Kvinner 2027 — Slik spilles første runde (Round 1: 9 Sep 2026, Round 2: 21 Oct 2026, Toppserien enters at Round 2)"
 #   - "vg.no: NFF tar grep — flytter også kvinnens NM-finale til våren (women's final also moved to spring)"
 id: cup_women_2027
-name: NM Cupen (kvinner)
-short_name: "NM(k)"
+name: NM Cupen 2026/27 (kvinner)
+short_name: "NM26/27(k)"
 season: 2027
 gender: women
 format: cup
 
-# Season report colour (issue #77) — see cup_men_2027.yml's comment.
-color: "#ad1457"
+# NM cup family colour, a shade of red (#36); see the colour test in tests/report/test_render.py.
+color: "#a83000"
 
 # NFF-fixed, not scheduler-controlled — see cup_men_2027.yml and issue #31.
 movable: false

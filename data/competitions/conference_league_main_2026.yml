@@ -26,9 +26,8 @@ format: european
 movable: false
 is_main_tournament: true
 
-# Season report colour (issue #77) — same teal family as
-# champions_league_main_2026.yml, lightest shade.
-color: "#48c9b0"
+# UEFA family colour, the main tournament's shade (#36); see the colour test in tests/report/test_render.py.
+color: "#386000"
 
 team_count: 0
 teams: []

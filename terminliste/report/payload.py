@@ -10,9 +10,9 @@ view refers to fixtures by `uid` only.
 
 Wire shapes, one per fixture kind (short keys: league matches dominate the size):
 
-    league    {d, t?, c, h, a, v?, f?, q?}  date, kickoff, competition, home/away team,
-                                         venue if not the home team's own ground,
-                                         f=badges, q=quiet rewards (below)
+    league    {d, t?, c, r, h, a, v?, f?, q?}  date, kickoff, competition, round number,
+                                         home/away team, venue if not the home team's own
+                                         ground, f=badges, q=quiet rewards (below)
     cup       {k: "cup", d, c, n, t, vt, vl}
     european  {k: "eu",  d, c, n, t, vt, vl, o}
               round name, team, venue type (home/away/neutral/unknown), venue label,
@@ -90,6 +90,38 @@ def json_for_script(value: Any) -> str:
     return text
 
 
+def _channel(value: float) -> float:
+    c = value / 255
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _luminance(hex_colour: str) -> float:
+    r, g, b = (_channel(int(hex_colour[i : i + 2], 16)) for i in (1, 3, 5))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a: str, b: str) -> float:
+    light, dark = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def ink_for(fg: str, bg: str) -> str:
+    """The colour a competition's tag and label text is set in: its own colour,
+    darkened only as far as it takes to read at 4.5:1 on the tint behind it. A
+    light shade keeps its hue as a dot while its text stays legible (#36)."""
+    if not (fg.startswith("#") and len(fg) == 7 and bg.startswith("#") and len(bg) == 7):
+        return fg
+    if _contrast(fg, bg) >= 4.5:
+        return fg
+    r, g, b = (int(fg[i : i + 2], 16) for i in (1, 3, 5))
+    for step in range(1, 101):
+        k = 1 - step / 100
+        candidate = f"#{round(r * k):02x}{round(g * k):02x}{round(b * k):02x}"
+        if _contrast(candidate, bg) >= 4.5:
+            return candidate
+    return "#000000"
+
+
 def palette_css(club_colors: dict[str, str], competitions: dict[str, dict]) -> str:
     """One rule per club and competition setting its colour custom properties;
     the stylesheet's marker/tag/dot rules read them, so no element carries an
@@ -100,7 +132,8 @@ def palette_css(club_colors: dict[str, str], competitions: dict[str, dict]) -> s
         if color
     ]
     rules += [
-        f".{competition_class(cid)}{{--comp-fg:{c['fg']};--comp-bg:{c['bg']}}}"
+        f".{competition_class(cid)}{{--comp-fg:{c['fg']};--comp-bg:{c['bg']};"
+        f"--comp-ink:{ink_for(c['fg'], c['bg'])}}}"
         for cid, c in sorted(competitions.items())
     ]
     return "\n".join(rules)
@@ -234,6 +267,7 @@ def league_entry_wire(
     wire: dict[str, Any] = {
         "d": entry["date"].isoformat(),
         "c": entry["competition_id"],
+        "r": entry["round_index"] + 1,
         "h": entry["home_team"],
         "a": entry["away_team"],
     }
@@ -266,6 +300,7 @@ def by_competition_wire(views: list[dict]) -> list[dict]:
         wire.append(
             {
                 "id": view["id"],
+                "kind": view["kind"],
                 "name": view["name"],
                 "meta": view["meta"],
                 "rounds": [

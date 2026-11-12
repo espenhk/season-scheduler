@@ -49,6 +49,13 @@
     return weekday(iso) + ' ' + iso.slice(8, 10) + ' ' + MONTHS[+iso.slice(5, 7) - 1] + ' ' + iso.slice(0, 4);
   }
 
+  // The same date in full with no zero before the day, as the month view names it.
+  var WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  var MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  function longDateUnpadded(iso) {
+    return WEEKDAY_NAMES[dayIndex(iso)] + ' ' + (+iso.slice(8, 10)) + ' ' + MONTH_NAMES[+iso.slice(5, 7) - 1] + ' ' + iso.slice(0, 4);
+  }
+
   // ---------------------------------------------------------- fixture model
   //
   // Every wire entry (league match, cup round, European leg) is turned into one
@@ -112,7 +119,7 @@
     var home = side(m.h, 'square');
     var away = side(m.a, 'diamond');
     return withFlags({
-      uid: uid, kind: 'league', date: m.d, time: m.t || '', comp: m.c,
+      uid: uid, kind: 'league', date: m.d, time: m.t || '', comp: m.c, roundNo: m.r,
       clubs: [home.club, away.club], teams: [m.h, m.a], home: home, away: away, versus: '', round: '',
       venue: DATA.venues[m.v || DATA.teams[m.h].venue]
     }, m.f, notes, groups);
@@ -267,14 +274,14 @@
     return cell;
   }
 
-  // The pill used in "By competition" and "Combined · calendar".
+  // The pill used in "By competition" and "Combined · calendar"; the day heading above it gives the date.
   function fixtureCard(fx, showCompetition) {
     var card = tag(el('span', 'fx' + edgeClass(fx)), fx);
     card.title = fx.venue;
     card.setAttribute('data-competition', fx.comp);
     var main = append(
       el('span', 'fx-main'),
-      el('span', 'd', shortDate(fx.date) + (fx.time ? ' ' + fx.time : '')),
+      fx.time ? el('span', 'd', fx.time) : null,
       showCompetition ? competitionTag(fx) : null,
       marker(fx.home),
       named(fx.home, 'h')
@@ -287,37 +294,50 @@
     return append(card, main, flagBox(fx));
   }
 
-  // A row of "Combined · list".
+  // Round text: a league's round number, or a cup or European round's name.
+  function roundText(fx) {
+    return fx.kind === 'league' ? 'R' + fx.roundNo : fx.round;
+  }
+
+  // What the list's text filter matches against, lower-cased.
+  function searchText(fx) {
+    var comp = DATA.competitions[fx.comp];
+    var parts = [fx.home.full, fx.away ? fx.away.full : fx.versus, comp.name, comp.short, fx.venue, roundText(fx), longDate(fx.date)];
+    fx.flags.forEach(function (flag) { parts.push(flag.rule.name); });
+    return parts.join(' ').toLowerCase();
+  }
+
+  // A row of "Combined · list": time, round, competition, team / opponent, venue,
+  // rules, score. Every row has this shape, so a single-team cup row reads like a
+  // league row with its opponent still to be drawn.
   function fixtureRow(fx) {
     var row = tag(el('tr', 'fx-row' + edgeClass(fx)), fx);
     row.setAttribute('data-competition', fx.comp);
+    row.setAttribute('data-search', searchText(fx));
     // The text-node space after a marker is part of the cell's inline layout.
     var space = function () { return document.createTextNode(' '); };
-    var homeCell = append(el('td'), marker(fx.home), space(), named(fx.home, ''));
-    var awayCell = el('td');
+    var team = append(el('td', 'fx-team'), marker(fx.home), space(), named(fx.home, ''), space());
     if (fx.away) {
-      append(awayCell, marker(fx.away), space(), named(fx.away, ''));
+      append(team, el('span', 'vs', 'v'), space(), marker(fx.away), space(), named(fx.away, ''));
     } else {
-      awayCell.className = 'muted';
-      awayCell.textContent = fx.versus + ' (' + fx.round + ')';
+      append(team, el('span', 'vs', versusText(fx)));
     }
     return append(
       row,
-      el('td', '', longDate(fx.date) + (fx.time ? ' ' + fx.time : '')),
+      el('td', 'fx-time', fx.time || '–'),
+      el('td', 'fx-round', roundText(fx)),
       append(el('td'), competitionTag(fx)),
-      homeCell,
-      el('td', 'muted', 'v'),
-      awayCell,
-      el('td', '', fx.venue),
+      team,
+      el('td', 'fx-venue', fx.venue),
       append(el('td'), flagBox(fx)),
       scoreCell(fx)
     );
   }
 
   // A line of the month calendar's day detail.
-  function dayRow(fx) {
+  function dayRow(fx, inGroup) {
     var row = tag(el('div', 'day-row' + edgeClass(fx)), fx);
-    append(row, competitionTag(fx), marker(fx.home), el('span', '', fx.home.name));
+    append(row, inGroup ? null : competitionTag(fx), marker(fx.home), el('span', '', fx.home.name));
     if (fx.away) {
       append(row, el('span', 'vs', 'v'), marker(fx.away), el('span', '', fx.away.name));
     } else {
@@ -432,15 +452,129 @@
   // empty collapse.
 
   function noMatches() {
-    return el('div', 'desc', 'No fixtures match the club and rule selected.');
+    return el('div', 'desc', 'No fixtures match the filters selected.');
   }
 
-  function fixturesOf(ctx, ids, showCompetition) {
-    var box = el('div', 'fixtures');
+  // Competitions by fixture kind: league matches, cup rounds, European ties. Cups and
+  // Europe start hidden, so the calendar opens on the two leagues.
+  var ALL_KINDS = ['league', 'cup', 'european'];
+  var DEFAULT_KINDS = ['league'];
+  var KIND_LABEL = { league: 'Leagues', cup: 'Cups', european: 'Europe' };
+
+  function kindsText(kinds) {
+    return kinds.length ? kinds.map(function (kind) { return KIND_LABEL[kind]; }).join(' + ') : 'none';
+  }
+
+  function sameKinds(a, b) {
+    return a.join() === b.join();
+  }
+
+  // A cup or European round date: one team entry per team, all sharing this key.
+  function groupKey(fx) {
+    return fx.comp + '|' + fx.round + '|' + fx.date;
+  }
+
+  // The visible fixtures of a view as the items it draws, in reading order: by date,
+  // then kickoff (untimed last), then the wire's order. A round date with more than
+  // one team showing is one group, drawn as a chip; a lone team is an ordinary card.
+  function drawItems(ctx, ids) {
+    var items = [];
+    var groups = {};
     ctx.visible(ids).forEach(function (uid) {
-      box.appendChild(fixtureCard(ctx.fx[uid], showCompetition));
+      var fx = ctx.fx[uid];
+      if (fx.kind === 'league') {
+        items.push({ fxs: [fx] });
+        return;
+      }
+      var key = groupKey(fx);
+      if (!groups[key]) {
+        groups[key] = { fxs: [] };
+        items.push(groups[key]);
+      }
+      groups[key].fxs.push(fx);
+    });
+    items.forEach(function (item) {
+      item.date = item.fxs[0].date;
+      item.time = item.fxs[0].time;
+      item.group = item.fxs.length > 1;
+    });
+    items.sort(function (a, b) {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      var ta = a.time || '99:99';
+      var tb = b.time || '99:99';
+      if (ta !== tb) return ta < tb ? -1 : 1;
+      return a.fxs[0].uid - b.fxs[0].uid;
+    });
+    return items;
+  }
+
+  function dayName(iso) {
+    return weekday(iso) + ' ' + (+iso.slice(8, 10)) + ' ' + MONTHS[+iso.slice(5, 7) - 1];
+  }
+
+  // "Sun 15 Mar — 14:00 ×4 · 18:00 ×1 · cup/UEFA ×2" (lone teams; chips are not counted)
+  function dayHeading(date, items) {
+    var timed = {};
+    var untimed = {};
+    items.forEach(function (item) {
+      var n = item.fxs.length;
+      if (item.time) {
+        timed[item.time] = (timed[item.time] || 0) + n;
+      } else if (!item.group) {
+        // A chip says how many teams it holds, so it is not counted again here.
+        var label = item.fxs[0].kind === 'league' ? 'no kickoff' : 'cup/UEFA';
+        untimed[label] = (untimed[label] || 0) + 1;
+      }
+    });
+    var parts = Object.keys(timed).sort().map(function (time) { return time + ' ×' + timed[time]; });
+    Object.keys(untimed).forEach(function (label) { parts.push(label + ' ×' + untimed[label]); });
+    return dayName(date) + (parts.length ? ' — ' + parts.join(' · ') : '');
+  }
+
+  function itemsByDay(items) {
+    var days = [];
+    items.forEach(function (item) {
+      var last = days[days.length - 1];
+      if (last && last.date === item.date) last.items.push(item);
+      else days.push({ date: item.date, items: [item] });
+    });
+    return days;
+  }
+
+  // Appends each item: a card or row from `rowOf`, or a group chip that opens to one per team
+  // (`rowOf(fx, true)` for those, whose chip already names the competition).
+  function appendItems(box, items, rowOf) {
+    items.forEach(function (item) {
+      if (!item.group) {
+        box.appendChild(rowOf(item.fxs[0]));
+        return;
+      }
+      var chip = el('details', 'fx-group');
+      var body = el('div', 'fx-group-body fixtures');
+      item.fxs.forEach(function (fx) { body.appendChild(rowOf(fx, true)); });
+      chip.appendChild(el('summary', '', DATA.competitions[item.fxs[0].comp].name + ' · ' + item.fxs[0].round + ' · ' + plural(item.fxs.length, 'team', 'teams')));
+      box.appendChild(append(chip, body));
     });
     return box;
+  }
+
+  // The drawn fixtures of `ids`, under a heading per date.
+  function fixturesOf(ctx, ids, showCompetition) {
+    var box = el('div', 'fixtures');
+    itemsByDay(drawItems(ctx, ids)).forEach(function (day) {
+      box.appendChild(el('h4', 'day-head', dayHeading(day.date, day.items)));
+      appendItems(box, day.items, function (fx, inGroup) { return fixtureCard(fx, showCompetition && !inGroup); });
+    });
+    return box;
+  }
+
+  // Opens the collapsed sections a drawn node sits in, so it can be seen and scrolled to.
+  function openAround(node) {
+    var section = node.closest('details');
+    while (section && section.closest('.pane-body')) {
+      section.open = true;
+      section = section.parentElement.closest('details');
+    }
   }
 
   // `sum` is the round's or week's `totals`; its edge takes the net's colour.
@@ -455,27 +589,61 @@
     return label;
   }
 
+  var KIND_GROUPS = [['league', 'Leagues'], ['cup', 'Cups'], ['european', 'Europe']];
+
+  function competitionSection(ctx, view, rounds) {
+    var state = ctx.opt.state;
+    var section = el('details', 'comp');
+    section.open = !state.closed[view.id];
+    section.addEventListener('toggle', function () {
+      state.closed[view.id] = !section.open;
+    });
+    var head = el('summary', 'comp-head');
+    append(head, el('h3', 'comp-name', view.name), el('span', 'meta', view.meta));
+    section.appendChild(head);
+    rounds.forEach(function (round) {
+      section.appendChild(append(
+        el('div', 'round'),
+        roundLabel(round.title, round.text, round.note, totals(ctx.fx, ctx.visible(round.ids))),
+        fixturesOf(ctx, round.ids, false)
+      ));
+    });
+    return section;
+  }
+
+  // Leagues, then cups, then Europe: each competition a collapsible section whose
+  // heading sticks under the bar, with a jump list above them all.
   function byCompetitionView(ctx) {
     var root = document.createDocumentFragment();
+    var jumpState = ctx.opt.state;
+    var shown = [];
     ctx.opt.data.byCompetition.concat(DATA.sharedByCompetition).forEach(function (view) {
-      // Under a filter a round (or a whole competition) with nothing left
-      // collapses rather than leaving a bare heading.
+      // Under a filter a round (or a whole competition) with nothing left collapses rather than leaving a bare heading.
       var rounds = view.rounds.filter(function (round) {
         return !ctx.filtering || !round.ids.length || ctx.visible(round.ids).length;
       });
       if (ctx.filtering && view.rounds.length && !rounds.length) return;
-      var comp = append(el('div', 'comp'), el('h3', '', view.name), el('div', 'meta', view.meta));
-      rounds.forEach(function (round) {
-        append(
-          comp,
-          append(
-            el('div', 'round'),
-            roundLabel(round.title, round.text, round.note, totals(ctx.fx, ctx.visible(round.ids))),
-            fixturesOf(ctx, round.ids, false)
-          )
-        );
+      shown.push({ view: view, section: competitionSection(ctx, view, rounds) });
+    });
+    if (!shown.length) return root;
+    var jump = el('nav', 'comp-jump');
+    jump.setAttribute('aria-label', 'Jump to a competition');
+    shown.forEach(function (entry) {
+      var button = el('button', 'comp-jump-btn', entry.view.name);
+      button.type = 'button';
+      button.addEventListener('click', function () {
+        entry.section.open = true;
+        jumpState.closed[entry.view.id] = false;
+        entry.section.scrollIntoView({ block: 'start', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
       });
-      root.appendChild(comp);
+      jump.appendChild(button);
+    });
+    root.appendChild(jump);
+    KIND_GROUPS.forEach(function (group) {
+      var sections = shown.filter(function (entry) { return entry.view.kind === group[0]; });
+      if (!sections.length) return;
+      root.appendChild(el('h2', 'group-head', group[1]));
+      sections.forEach(function (entry) { root.appendChild(entry.section); });
     });
     return root;
   }
@@ -493,20 +661,112 @@
     return root;
   }
 
-  function combinedListView(ctx) {
-    var head = el('tr');
-    ['Date', 'Competition', 'Home', '', 'Away', 'Venue', 'Rules', 'Score'].forEach(function (name) {
-      head.appendChild(el('th', name === 'Score' ? 'fx-score' : '', name));
-    });
-    var body = el('tbody');
-    var shown = ctx.visible(ctx.opt.data.list);
-    if (!shown.length) return noMatches();
-    shown.forEach(function (uid) {
-      body.appendChild(fixtureRow(ctx.fx[uid]));
-    });
-    return append(el('table'), append(el('thead'), head), body);
+  var LIST_COLUMNS = ['Time', 'Round', 'Competition', 'Team / Opponent', 'Venue', 'Rules', 'Score'];
+
+  function dateRow(date) {
+    var th = el('th', '', longDate(date));
+    th.colSpan = LIST_COLUMNS.length;
+    return append(el('tr', 'date-row'), th);
   }
 
+  // Whether a list chip is open: the reader's choice once made, else open while a text query is on.
+  function listGroupOpen(state, key) {
+    return state.open[key] === undefined ? !!state.query.trim() : state.open[key];
+  }
+
+  // A cup or European round date in the list: a chip row that opens to its team rows.
+  function groupRows(body, item, state, refresh) {
+    var first = item.fxs[0];
+    var key = groupKey(first);
+    var toggle = el('button', 'fx-group-toggle', DATA.competitions[first.comp].name + ' · ' + first.round + ' · ' + plural(item.fxs.length, 'team', 'teams'));
+    toggle.type = 'button';
+    toggle.addEventListener('click', function () {
+      state.open[key] = !listGroupOpen(state, key);
+      refresh();
+    });
+    var cell = append(el('td'), toggle);
+    cell.colSpan = LIST_COLUMNS.length;
+    var row = el('tr', 'fx-group-row');
+    row.setAttribute('data-group', key);
+    row.setAttribute('data-search', item.fxs.map(searchText).join(' '));
+    body.appendChild(append(row, cell));
+    item.fxs.forEach(function (fx) {
+      var member = fixtureRow(fx);
+      member.classList.add('fx-member');
+      member.setAttribute('data-group', key);
+      body.appendChild(member);
+    });
+  }
+
+  // Hides the rows the text filter does not match. A chip whose teams match opens
+  // while the filter is on; a date row shows only with a row under it.
+  function applyListFilter(table, state) {
+    var q = state.query.trim().toLowerCase();
+    var matches = function (row) { return !q || row.getAttribute('data-search').indexOf(q) !== -1; };
+    var open = {};
+    var dateRowNode = null;
+    var dateShown = false;
+    Array.prototype.forEach.call(table.tBodies[0].rows, function (row) {
+      if (row.classList.contains('date-row')) {
+        if (dateRowNode) dateRowNode.hidden = !dateShown;
+        dateRowNode = row;
+        dateShown = false;
+        return;
+      }
+      var key = row.getAttribute('data-group');
+      var show;
+      if (row.classList.contains('fx-group-row')) {
+        show = matches(row);
+        var expanded = listGroupOpen(state, key);
+        open[key] = expanded;
+        row.querySelector('.fx-group-toggle').setAttribute('aria-expanded', String(expanded));
+      } else if (row.classList.contains('fx-member')) {
+        show = !!open[key] && matches(row);
+      } else {
+        show = matches(row);
+      }
+      row.hidden = !show;
+      if (show) dateShown = true;
+    });
+    if (dateRowNode) dateRowNode.hidden = !dateShown;
+  }
+
+  // "Combined · list": a sticky header over one table, a date row above each day, a row
+  // per fixture, and a cup or European round date folded into one chip row.
+  function combinedListView(ctx) {
+    var state = ctx.opt.state;
+    var items = drawItems(ctx, ctx.opt.data.list);
+    if (!items.length) return noMatches();
+    var body = el('tbody');
+    var head = el('tr');
+    LIST_COLUMNS.forEach(function (name) { head.appendChild(el('th', name === 'Score' ? 'fx-score' : '', name)); });
+    var table = append(el('table', 'fx-table'), append(el('thead'), head), body);
+    var refresh = function () { applyListFilter(table, state); };
+    var filter = el('input', 'list-filter');
+    filter.type = 'search';
+    filter.placeholder = 'Filter by team, competition, round, venue or rule';
+    filter.setAttribute('aria-label', 'Filter the list');
+    filter.value = state.query;
+    filter.addEventListener('input', function () {
+      state.query = filter.value;
+      refresh();
+    });
+    itemsByDay(items).forEach(function (day) {
+      body.appendChild(dateRow(day.date));
+      day.items.forEach(function (item) {
+        if (item.group) groupRows(body, item, state, refresh);
+        else body.appendChild(fixtureRow(item.fxs[0]));
+      });
+    });
+    refresh();
+    var root = el('div');
+    append(root, append(el('div', 'list-tools'), filter), table);
+    return root;
+  }
+
+  // The month calendar. One button per date. Months with a league fixture get a
+  // week grid; the rest are listed under "Other dates". The day detail opens as
+  // a block directly under the week row (or other-dates row) that holds the day.
   function monthCalendarView(ctx) {
     var data = ctx.opt.data;
     var state = ctx.opt.state;
@@ -514,16 +774,93 @@
     data.days.forEach(function (day) { days[day.date] = day; });
     if (!data.months.length) return el('div', 'desc', 'Nothing scheduled yet.');
     var root = el('div');
+    var cells = {};
 
-    // Competitions with something visible that day, for the dots.
-    function dotsOf(day) {
-      if (!day) return [];
-      return day.comps.filter(function (comp) {
-        return ctx.visible(day.ids).some(function (uid) { return ctx.fx[uid].comp === comp; });
+    // The visible games of a day, counted per competition (in the day's own competition order).
+    function countsOf(day) {
+      var counts = {};
+      ctx.visible(day.ids).forEach(function (uid) {
+        var comp = ctx.fx[uid].comp;
+        counts[comp] = (counts[comp] || 0) + 1;
+      });
+      return day.comps.filter(function (comp) { return counts[comp]; }).map(function (comp) {
+        return { comp: comp, n: counts[comp] };
       });
     }
 
-    data.months.forEach(function (month) {
+    // A date button: the day number (grid cells only), a dot and count per
+    // competition, and the day's figure. The label names the counts.
+    function dayButton(iso, className, withNumber) {
+      var day = days[iso];
+      var comps = day ? countsOf(day) : [];
+      var shownToday = day ? ctx.visible(day.ids) : [];
+      var sum = shownToday.length ? totals(ctx.fx, shownToday) : null;
+      var button = el('button', className);
+      button.type = 'button';
+      button.setAttribute('data-date', iso);
+      button.setAttribute('aria-expanded', 'false');
+      var label = longDateUnpadded(iso) +
+        (comps.length ? ': ' + comps.map(function (c) {
+          return DATA.competitions[c.comp].name + ' ' + c.n;
+        }).join(', ') : '') +
+        (sum ? '; ' + plural(sum.games, 'game', 'games') + (sum.badged ? '; net ' + netText(sum.net) + ' pts' : '') : '');
+      button.setAttribute('aria-label', label);
+      button.setAttribute('data-label', label);
+      if (withNumber) append(button, el('span', 'cal-daynum', String(+iso.slice(8))));
+      var box = el('span', 'cal-comps');
+      comps.forEach(function (c) {
+        var meta = DATA.competitions[c.comp];
+        var item = el('span', 'cal-comp ' + meta.cls);
+        var dot = el('span', 'cal-dot ' + meta.cls);
+        dot.setAttribute('aria-hidden', 'true');
+        dot.title = meta.name;
+        item.appendChild(dot);
+        item.appendChild(el('span', 'cal-lbl', meta.short));
+        if (c.n > 1) item.appendChild(el('span', 'cal-n', String(c.n)));
+        box.appendChild(item);
+      });
+      button.appendChild(box);
+      if (sum) button.appendChild(dayFigure(sum));
+      cells[iso] = button;
+      return button;
+    }
+
+    // A month with a league fixture is drawn as a grid, whatever the filters hide.
+    function hasLeague(month) {
+      return month.weeks.some(function (week) {
+        return week.some(function (iso) {
+          return iso && days[iso] && days[iso].ids.some(function (uid) { return ctx.fx[uid].kind === 'league'; });
+        });
+      });
+    }
+
+    // Short label for the jump bar: the year is added to January and the first month.
+    function shortLabel(month, first) {
+      var name = MONTHS[+month.key.slice(5) - 1].slice(0, 3);
+      return (first || month.key.slice(5) === '01') ? name + ' ' + month.key.slice(0, 4) : name;
+    }
+
+    var jump = el('nav', 'month-jump');
+    jump.setAttribute('aria-label', 'Jump to a month');
+    var details = el('div', 'day-details');
+    details.id = 'cal-day-detail';
+    details.setAttribute('role', 'region');
+    var others = [];
+
+    data.months.forEach(function (month, index) {
+      var dated = month.weeks.some(function (week) {
+        return week.some(function (iso) { return iso && days[iso]; });
+      });
+      if (!dated) return;
+      var jumpButton = el('button', '', shortLabel(month, index === 0));
+      jumpButton.type = 'button';
+      jumpButton.setAttribute('aria-label', month.label);
+      jumpButton.setAttribute('data-jump', month.key);
+      jump.appendChild(jumpButton);
+      if (!hasLeague(month)) { others.push(month); return; }
+
+      var wrap = el('div', 'month');
+      wrap.setAttribute('data-month-key', month.key);
       var grid = el('div', 'month-grid');
       var head = el('div', 'month-grid-row month-grid-head');
       WEEKDAYS.slice(1).concat(WEEKDAYS[0]).forEach(function (name) { head.appendChild(el('span', '', name)); });
@@ -531,72 +868,155 @@
       month.weeks.forEach(function (week) {
         var row = el('div', 'month-grid-row');
         week.forEach(function (iso) {
-          var dots = dotsOf(days[iso]);
-          var button = el('button', 'cal-day' + (iso.slice(0, 7) === month.key ? '' : ' out-month'));
-          button.type = 'button';
-          button.setAttribute('data-date', iso);
-          var selected = iso === state.date;
-          if (selected) button.classList.add('selected');
-          button.setAttribute('aria-pressed', String(selected));
-          var shownToday = days[iso] ? ctx.visible(days[iso].ids) : [];
-          var sum = shownToday.length ? totals(ctx.fx, shownToday) : null;
-          var label = iso + (dots.length ? ': ' + dots.map(function (c) { return DATA.competitions[c].name; }).join(', ') : '') +
-            (sum ? '; ' + plural(sum.games, 'game', 'games') + (sum.badged ? '; net ' + netText(sum.net) + ' pts' : '') : '');
-          button.setAttribute('aria-label', label);
-          button.setAttribute('data-label', label);
-          var dotBox = el('span', 'cal-dots');
-          dots.forEach(function (comp) {
-            var dot = el('span', 'cal-dot ' + DATA.competitions[comp].cls);
-            dot.title = DATA.competitions[comp].name;
-            dot.setAttribute('aria-hidden', 'true');
-            dotBox.appendChild(dot);
-          });
-          append(button, el('span', 'cal-daynum', String(+iso.slice(8))), dotBox);
-          if (sum) button.appendChild(dayFigure(sum));
-          row.appendChild(button);
+          // A neighbouring month's day: empty space, so the date is not listed twice.
+          if (!iso) {
+            var pad = el('span', 'cal-day cal-pad');
+            pad.setAttribute('aria-hidden', 'true');
+            row.appendChild(pad);
+            return;
+          }
+          row.appendChild(dayButton(iso, 'cal-day', true));
         });
         grid.appendChild(row);
       });
-      append(root, append(el('div', 'month'), el('h4', '', month.label), grid));
+      append(wrap, el('h4', '', month.label), grid);
+      root.appendChild(wrap);
     });
 
-    var details = el('div', 'day-details');
-    root.appendChild(details);
+    if (others.length) {
+      var section = el('section', 'other-dates');
+      append(section, el('h4', '', 'Other dates'));
+      others.forEach(function (month) {
+        var row = el('div', 'other-row');
+        row.setAttribute('data-month-key', month.key);
+        var chips = el('div', 'other-chips');
+        var placed = 0;
+        month.weeks.forEach(function (week) {
+          week.forEach(function (iso) {
+            if (!iso || !days[iso]) return;
+            var chip = dayButton(iso, 'cal-day other-date', false);
+            chip.insertBefore(el('span', 'other-day', weekday(iso).slice(0, 3) + ' ' + String(+iso.slice(8))), chip.firstChild);
+            chips.appendChild(chip);
+            placed++;
+          });
+        });
+        if (!placed) return;
+        append(row, el('span', 'other-month', month.label), chips);
+        section.appendChild(row);
+      });
+      if (section.querySelector('.other-row')) root.appendChild(section);
+    }
+    root.insertBefore(jump, root.firstChild);
 
-    // Tapping a day only redraws the detail block, not the grid.
-    function showDay() {
+    // Previous and next match day: the nearest dates with a visible game.
+    function matchDayFrom(iso, step) {
+      var found = null;
+      data.days.forEach(function (day) {
+        if (day.date === iso) return;
+        var inRange = step < 0 ? day.date < iso : day.date > iso;
+        if (inRange && ctx.visible(day.ids).length && (found === null || (step < 0 ? day.date > found : day.date < found))) {
+          found = day.date;
+        }
+      });
+      return found;
+    }
+
+    // The date `n` days from `iso`, as an ISO string.
+    function shiftDate(iso, n) {
+      var d = new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10) + n));
+      return d.toISOString().slice(0, 10);
+    }
+
+    // Redraws the detail for `iso` (or closes it when `iso` is ''), under the row
+    // holding that date. Returns the block, or null when none is open.
+    function placeDetails(iso) {
+      details.remove();
       details.textContent = '';
-      var day = state.date && days[state.date];
+      root.querySelectorAll('button[data-date]').forEach(function (button) {
+        var open = button.dataset.date === iso;
+        button.classList.toggle('selected', open);
+        button.setAttribute('aria-expanded', String(open));
+        if (open) button.setAttribute('aria-controls', details.id);
+        else button.removeAttribute('aria-controls');
+      });
+      var anchor = iso && cells[iso];
+      if (!anchor) return null;
+      var day = days[iso];
       var ids = day ? ctx.visible(day.ids) : [];
+      var head = append(el('div', 'rlabel'), el('b', '', day ? day.label : longDateUnpadded(iso)));
+      var body = append(el('div', 'day-detail'), head);
       if (ids.length) {
-        var box = el('div', 'fixtures');
-        ids.forEach(function (uid) { box.appendChild(dayRow(ctx.fx[uid])); });
-        var head = append(el('div', 'rlabel'), el('b', '', day.label));
-        append(details, append(el('div', 'day-detail'), head, summaryNode(totals(ctx.fx, ids), false), box));
+        var box = appendItems(el('div', 'fixtures'), drawItems(ctx, day.ids), dayRow);
+        append(body, summaryNode(totals(ctx.fx, ids), false), box);
       } else {
-        details.appendChild(el('div', 'day-detail-empty', state.date ? 'No games on this day.' : 'Tap a day above to see its games here.'));
+        append(body, el('div', 'day-detail-empty', 'No games on this day.'));
       }
-      return details.firstChild;
+      append(details, body, dayStep(iso));
+      anchor.closest('.month-grid-row, .other-row').insertAdjacentElement('afterend', details);
+      return details;
+    }
+
+    // "‹ Previous match day" and "Next match day ›" in the open detail.
+    function dayStep(iso) {
+      var box = el('div', 'day-step');
+      [[-1, '‹ Previous match day'], [1, 'Next match day ›']].forEach(function (pair) {
+        var target = matchDayFrom(iso, pair[0]);
+        var button = el('button', '', pair[1]);
+        button.type = 'button';
+        button.disabled = target === null;
+        button.setAttribute('data-step', String(pair[0]));
+        if (target !== null) button.addEventListener('click', function () { openDay(target, true); });
+        box.appendChild(button);
+      });
+      return box;
+    }
+
+    function openDay(iso, moveFocus) {
+      state.date = iso;
+      var shown = placeDetails(iso);
+      if (!shown) return;
+      ctx.opt.markLens(shown);
+      if (moveFocus) cells[iso].focus({ preventScroll: true });
+      shown.scrollIntoView({ block: 'nearest', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
     }
 
     root.addEventListener('click', function (event) {
-      var button = event.target.closest('.cal-day');
+      var jumpTo = event.target.closest('[data-jump]');
+      if (jumpTo) {
+        var target = root.querySelector('[data-month-key="' + jumpTo.getAttribute('data-jump') + '"]');
+        if (target) target.scrollIntoView({ block: 'start', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
+        return;
+      }
+      var button = event.target.closest('button[data-date]');
       if (!button) return;
-      state.date = button.dataset.date;
-      root.querySelectorAll('.cal-day').forEach(function (other) {
-        // A date can appear twice: in its month and as the next month's padding.
-        var isSelected = other.dataset.date === state.date;
-        other.classList.toggle('selected', isSelected);
-        other.setAttribute('aria-pressed', String(isSelected));
-      });
-      // The calendar can span well over a year (cup rounds run into next
-      // spring), so the detail block sits far below a day tapped in an early
-      // month; bring it into view.
-      var shown = showDay();
-      ctx.opt.markLens(details);
-      shown.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      var iso = button.dataset.date;
+      if (state.date === iso) {
+        state.date = '';
+        placeDetails('');
+        return;
+      }
+      openDay(iso, false);
     });
-    showDay();
+
+    // Arrow keys walk the date buttons: left and right by a day, up and down by a
+    // week, skipping empty days and crossing months.
+    root.addEventListener('keydown', function (event) {
+      var steps = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+      var step = steps[event.key];
+      if (!step || !event.target.matches || !event.target.matches('button[data-date]')) return;
+      var start = event.target.dataset.date;
+      var target = null;
+      // Enough steps to reach across the whole calendar, far past its last date.
+      for (var k = 1; k <= 1000 && !target; k++) {
+        var candidate = shiftDate(start, k * step);
+        if (cells[candidate]) target = candidate;
+      }
+      if (!target) return;
+      event.preventDefault();
+      cells[target].focus();
+    });
+
+    placeDetails(state.date);
     return root;
   }
 
@@ -804,7 +1224,10 @@
     // The date last read off the calendar, kept as the reader scrolls: switching
     // tabs means scrolling up to them, when no fixture is on screen any more.
     this.anchor = '';
-    this.state = { view: panel.querySelector('.view-btn').dataset.view, club: '', team: '', date: '', rule: '', only: false };
+    this.state = {
+      view: panel.querySelector('.view-btn').dataset.view, club: '', team: '', date: '', rule: '', only: false,
+      kinds: DEFAULT_KINDS.slice(), query: '', open: {}, closed: {}
+    };
     this.clubSelect = panel.querySelector('.club-select');
     this.lensSelect = panel.querySelector('.lens-select');
     this.lensOnly = panel.querySelector('.lens-only-box');
@@ -819,6 +1242,24 @@
     this.scopeCount = panel.querySelector('.scope-count');
     this.lensCount = panel.querySelector('.lens-count');
     var self = this;
+    // Each competition button toggles its kind; the chip in the bar resets them.
+    panel.querySelectorAll('.kind-btn').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var kind = button.dataset.kind;
+        var kinds = self.state.kinds;
+        self.setKinds(kinds.indexOf(kind) !== -1 ? kinds.filter(function (k) { return k !== kind; }) : kinds.concat(kind));
+      });
+    });
+    panel.querySelectorAll('.kind-hint-btn').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var missing = button.parentNode.getAttribute('data-missing').split(' ');
+        self.setKinds(self.state.kinds.concat(missing));
+      });
+    });
+    panel.querySelector('.kind-clear').addEventListener('click', function () {
+      self.setKinds(DEFAULT_KINDS);
+      self.focusFilter(panel.querySelector('.kind-btn'));
+    });
     panel.querySelectorAll('.view-btn').forEach(function (button) {
       button.addEventListener('click', function () {
         self.state.view = button.dataset.view;
@@ -857,6 +1298,35 @@
     this.render();
   };
 
+  Option.prototype.setKinds = function (kinds) {
+    this.state.kinds = ALL_KINDS.filter(function (kind) { return kinds.indexOf(kind) !== -1; });
+    this.render();
+  };
+
+  // The line above each view naming the competitions that are hidden, with a button to show them.
+  Option.prototype.renderHints = function () {
+    var kinds = this.state.kinds;
+    var missing = ALL_KINDS.filter(function (kind) { return kinds.indexOf(kind) === -1; });
+    var names = missing.map(function (kind) { return KIND_LABEL[kind]; });
+    var list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0];
+    var plural = missing.length > 1 || missing[0] !== 'european';
+    var text = list + (plural ? ' are hidden' : ' is hidden');
+    var button = plural ? 'Show them' : 'Show it';
+    this.panel.querySelectorAll('.kind-hint').forEach(function (hint) {
+      hint.hidden = !missing.length;
+      hint.querySelector('.kind-hint-text').textContent = text;
+      hint.querySelector('.kind-hint-btn').textContent = button;
+      hint.setAttribute('data-missing', missing.join(' '));
+    });
+  };
+
+  Option.prototype.renderKinds = function () {
+    var kinds = this.state.kinds;
+    this.panel.querySelectorAll('.kind-btn').forEach(function (button) {
+      button.setAttribute('aria-pressed', String(kinds.indexOf(button.dataset.kind) !== -1));
+    });
+  };
+
   Option.prototype.setTeam = function (team) {
     this.state.team = team || '';
     this.render();
@@ -871,6 +1341,10 @@
     this.state.rule = shared.rule;
     this.state.only = shared.only;
     this.state.date = shared.date;
+    this.state.kinds = shared.kinds.slice();
+    this.state.query = shared.query;
+    this.state.open = Object.assign({}, shared.open);
+    this.state.closed = Object.assign({}, shared.closed);
     this.clubSelect.value = shared.club;
   };
 
@@ -913,11 +1387,12 @@
     var team = this.state.team;
     var rule = this.state.rule;
     var only = this.state.only;
+    var kinds = this.state.kinds;
     var fx = this.fx;
     function matches(f) { return !rule || f.rules.indexOf(rule) !== -1; }
     function show(f) {
-      return (!club || f.clubs.indexOf(club) !== -1) && (!team || f.teams.indexOf(team) !== -1) &&
-        (!only || matches(f));
+      return kinds.indexOf(f.kind) !== -1 && (!club || f.clubs.indexOf(club) !== -1) &&
+        (!team || f.teams.indexOf(team) !== -1) && (!only || matches(f));
     }
     return {
       opt: this,
@@ -925,7 +1400,7 @@
       club: club,
       team: team,
       rule: rule,
-      filtering: !!club || !!team || only,
+      filtering: !!club || !!team || only || kinds.length !== ALL_KINDS.length,
       matches: matches,
       show: show,
       visible: function (ids) { return ids.filter(function (uid) { return show(fx[uid]); }); }
@@ -1326,7 +1801,7 @@
     var ctx = this.context();
     var days = this.dayIndex();
     var name = rule ? ruleName(DATA.rules.filter(function (r) { return r.id === rule; })[0]) : '';
-    root.querySelectorAll('.cal-day').forEach(function (button) {
+    root.querySelectorAll('.cal-day[data-date]').forEach(function (button) {
       var day = days[button.dataset.date];
       var n = rule && day ? ctx.visible(day.ids).filter(function (uid) { return ctx.matches(ctx.fx[uid]); }).length : 0;
       button.classList.toggle('lens-hit', n > 0);
@@ -1348,20 +1823,25 @@
     var state = this.state;
     var clubChip = this.panel.querySelector('.club-clear');
     var lensChip = this.panel.querySelector('.lens-clear');
+    var kindChip = this.panel.querySelector('.kind-clear');
     var clubName = state.club ? this.clubSelect.options[this.clubSelect.selectedIndex].text : '';
     var lensName = stats ? ruleName(stats.rule) + (state.only ? ' (only)' : '') : '';
     var teamChip = this.panel.querySelector('.team-clear');
     var teamName = state.team ? this.teamSelect.options[this.teamSelect.selectedIndex].text : '';
+    var changedKinds = !sameKinds(state.kinds, DEFAULT_KINDS);
     teamChip.hidden = !state.team;
     teamChip.querySelector('.chip-text').textContent = teamName;
     teamChip.setAttribute('aria-label', 'Remove team filter: ' + teamName);
     clubChip.hidden = !state.club;
     lensChip.hidden = !stats;
+    kindChip.hidden = !changedKinds;
     clubChip.querySelector('.chip-text').textContent = clubName;
     lensChip.querySelector('.chip-text').textContent = lensName;
+    kindChip.querySelector('.chip-text').textContent = 'Shown: ' + kindsText(state.kinds);
     clubChip.setAttribute('aria-label', 'Remove club filter: ' + clubName);
     lensChip.setAttribute('aria-label', 'Clear highlighted rule: ' + lensName);
-    var count = (state.club ? 1 : 0) + (state.team ? 1 : 0) + (stats ? 1 : 0);
+    kindChip.setAttribute('aria-label', 'Reset competitions shown to ' + kindsText(DEFAULT_KINDS));
+    var count = (state.club ? 1 : 0) + (state.team ? 1 : 0) + (stats ? 1 : 0) + (changedKinds ? 1 : 0);
     this.panel.querySelector('.filters-toggle').textContent = count ? 'Filters ' + count : 'Filters';
   };
 
@@ -1405,6 +1885,20 @@
       state.only = false;
       redraw = true;
     }
+    // So is a competition the reader has switched off, and a list filter that hides it.
+    if (state.kinds.indexOf(fx.kind) === -1) {
+      state.kinds = ALL_KINDS.filter(function (kind) { return kind === fx.kind || state.kinds.indexOf(kind) !== -1; });
+      redraw = true;
+    }
+    if (state.query && searchText(fx).indexOf(state.query.trim().toLowerCase()) === -1) {
+      state.query = '';
+      redraw = true;
+    }
+    // In the list a cup or European team may sit in a closed round-date chip.
+    if (fx.kind !== 'league' && state.view === 'combined-list' && !state.open[groupKey(fx)]) {
+      state.open[groupKey(fx)] = true;
+      redraw = true;
+    }
     if (state.view === 'month-calendar' && state.date !== fx.date) {
       state.date = fx.date;
       redraw = true;
@@ -1412,6 +1906,7 @@
     if (redraw) this.render();
     var node = this.activeBody().querySelector('[data-uid="' + uid + '"]');
     if (!node) return;
+    openAround(node);
     node.classList.remove('flash');
     void node.offsetWidth;
     node.classList.add('flash');
@@ -1485,6 +1980,7 @@
     var nodes = this.activeBody().querySelectorAll('[data-uid]');
     for (var i = 0; i < nodes.length; i++) {
       if (wanted[nodes[i].getAttribute('data-uid')]) {
+        openAround(nodes[i]);
         nodes[i].closest('.round').scrollIntoView({ block: 'start', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
         return;
       }
@@ -1521,6 +2017,8 @@
       }
     });
     this.renderHeadlines();
+    this.renderKinds();
+    this.renderHints();
     this.renderTeamUi();
     this.renderScope();
     this.renderLensUi();
