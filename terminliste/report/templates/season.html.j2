@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }}</title>
 <style>
+  /* Global: the page's own `display` rules (grids, flex rows) would otherwise win over the hidden attribute. */
+  [hidden] { display: none !important; }
   :root {
     --bg: #f7f7f5;
     --panel: #ffffff;
@@ -15,9 +17,16 @@
     --bad: #c0392b;
     --warn: #b9770e;
     --accent: #2471a3;
+    /* Text in the cost colour: --warn stays for edges, this one clears 4.5:1 on the panel and page. */
+    --warn-ink: #94620a;
+    --panel-pad: 24px;
   }
   * { box-sizing: border-box; }
-  html, body { overflow-x: hidden; }
+  /* `hidden` on <html> alone is taken by the viewport; on <body> too it would become a scroll container and break the sticky bar, hence `clip` there. */
+  html { overflow-x: hidden; }
+  body { overflow-x: clip; }
+  /* --bar-h is the sticky controls bar's height, kept current by report.js, so every scroll target clears it. */
+  html { --bar-h: 0px; scroll-padding-top: calc(var(--bar-h) + 8px); }
   body {
     margin: 0;
     background: var(--bg);
@@ -55,7 +64,7 @@
   .tab[aria-selected="true"] .score { color: #c9c9c4; }
   .panel {
     background: var(--panel); border: 1px solid var(--line);
-    border-radius: 0 8px 8px 8px; padding: 24px;
+    border-radius: 0 8px 8px 8px; padding: var(--panel-pad);
   }
   .panel[hidden] { display: none; }
 
@@ -73,8 +82,6 @@
   .headlines { display: flex; gap: 28px; margin: 20px 0 4px; flex-wrap: wrap; }
   .headline .v { font-size: 24px; font-weight: 700; }
   .headline .l { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .headline-scope { font-size: 12.5px; color: var(--muted); font-style: italic; margin: 0 0 4px; }
-  .headline-scope:empty { display: none; }
 
   /* -- upsides / problems --
      Each entry is a <details> so the per-team occurrence list stays out of
@@ -98,6 +105,7 @@
     font-size: 10px; transition: transform 0.12s ease;
   }
   details.item[open] > summary.top::before { transform: rotate(90deg); }
+  details.item > summary.top .name-row { margin-right: auto; }
   .item-body { padding: 0 8px 10px 16px; }
   .item .name { font-weight: 600; font-size: 14px; }
   .item .delta { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; white-space: nowrap; }
@@ -136,7 +144,8 @@
   }
   .info-wrap:hover .tooltip,
   .info-wrap:focus-within .tooltip,
-  .info-wrap.open .tooltip {
+  .info-wrap.open .tooltip,
+  .tooltip.show {
     opacity: 1; visibility: visible; transform: translateY(0); pointer-events: auto;
   }
 
@@ -176,20 +185,138 @@
   .fairness-bar .ffill { display: block; background: var(--accent); height: 100%; border-radius: 4px; }
   .fairness-bar .fcount { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
 
-  /* -- calendar controls: view toggle + club filter -- */
-  .controls { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin-top: 26px; }
-  .view-toggle { display: flex; gap: 6px; flex-wrap: wrap; }
+  /* -- sticky bar: option summary, view toggle, filters, legend --
+     Stacking order: bar (10) < tooltips (20). The legend popover lives inside the bar. */
+  .controls {
+    position: sticky; top: 0; z-index: 10;
+    margin: 26px calc(-1 * var(--panel-pad)) 0; padding: 8px var(--panel-pad);
+    background: var(--panel); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.06);
+    display: grid; gap: 6px 14px; align-items: center;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-areas: "sum actions views" "filt filt filt";
+  }
+  .bar-summary { grid-area: sum; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; min-width: 0; }
+  .bar-opt { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; }
+  .bar-score { font-weight: 700; font-size: 16px; font-variant-numeric: tabular-nums; }
+  .bar-score small { font-size: 11.5px; font-weight: 400; color: var(--muted); }
+  .bar-summary .badge { font-size: 10.5px; padding: 2px 8px; }
+  .bar-actions { grid-area: actions; display: flex; gap: 6px; align-items: center; }
+  .bar-btn {
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    padding: 4px 10px; border-radius: 14px;
+  }
+  .bar-btn:hover, .bar-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+  .bar-btn:focus-visible, .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .filters-toggle { display: none; }
+  .bar-filters { grid-area: filt; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  .bar-fields { display: contents; }
+  .bar-chips { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+  .chip {
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; max-width: 100%;
+    border: 1px solid var(--accent); background: #eaf2f8; color: var(--accent);
+    padding: 2px 10px; border-radius: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chip:hover { background: var(--accent); color: #fff; }
+  .chip[hidden] { display: none; }
+  .jump-cal { margin-left: auto; align-self: center; }
+  .legend-wrap { display: contents; }
+  .legend-panel {
+    position: absolute; left: var(--panel-pad); top: calc(100% + 6px); width: min(720px, calc(100% - 2 * var(--panel-pad)));
+    max-height: min(70vh, 520px); overflow-y: auto; padding: 4px 14px 14px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  }
+  .legend-panel[hidden] { display: none; }
+  .legend-panel h4 { margin: 12px 0 0; font-size: 12.5px; }
+  .legend-panel .legend { margin-top: 8px; }
+  .legend-panel .flag-legend { margin-top: 0; }
+  .panel[data-current-view="month-calendar"] .legend-cards { display: none; }
+  .view-toggle { grid-area: views; display: flex; gap: 6px; flex-wrap: wrap; justify-self: start; min-width: 0; max-width: 100%; }
   .view-btn {
     border: 1px solid var(--line); background: var(--panel); color: var(--ink);
     padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 12.5px; font-weight: 600;
   }
+  .view-short { display: none; }
   .view-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
   .club-filter { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
   .club-filter select {
     font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line);
     background: var(--panel); color: var(--ink);
   }
-  .club-hidden { display: none !important; }
+
+  .lens-filter select { max-width: 260px; }
+  .lens-only { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .lens-only:has(input:disabled) { opacity: 0.55; }
+  .lens-caption {
+    margin-top: 12px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
+    padding: 8px 12px; border-left: 3px solid var(--accent); background: #eaf2f8;
+    border-radius: 0 6px 6px 0; font-size: 13px;
+  }
+  .lens-caption[hidden] { display: none; }
+  .lens-text { flex: 1 1 320px; min-width: 0; }
+  .lens-text b { font-weight: 700; }
+  .lens-link {
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    border: 1px solid var(--accent); color: var(--accent); background: var(--panel);
+    padding: 2px 10px; border-radius: 14px;
+  }
+  .lens-link:hover { background: var(--accent); color: #fff; }
+  .lens-link:focus-visible, .occ-row:focus-visible,
+  .lens-select:focus-visible, .lens-only input:focus-visible, .club-select:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .view-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* -- rule lens: what a rule's fixtures look like among the rest --
+     Dimmed fixtures stay legible (faded, not hidden); hits get a ring or band
+     so the state is not carried by colour alone. */
+  .lens-dim { opacity: 0.5; }
+  .fx.lens-hit, .day-row.lens-hit { box-shadow: 0 0 0 2px var(--accent); }
+  .day-row.lens-hit { background: #eaf2f8; }
+  .fx-row.lens-hit td { background: #eaf2f8; box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent); }
+  .flag.lens-rule { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .cal-day.lens-hit { border: 2px solid var(--accent); background: #eaf2f8; }
+  .cal-day.lens-dim { opacity: 0.4; }
+  .cal-hits {
+    font-size: 10.5px; font-weight: 700; line-height: 1; padding: 2px 5px; border-radius: 8px;
+    background: var(--accent); color: #fff;
+  }
+  /* Jump target: a ring that fades, so the eye finds the fixture after the scroll. */
+  .flash { outline: 3px solid #d35400; outline-offset: 2px; animation: flash-fade 2.2s ease-out; }
+  .fx-row.flash td { background: #fde9cf; }
+  @keyframes flash-fade { 0% { background-color: #ffd9a8; } 100% { background-color: transparent; } }
+  @media (prefers-reduced-motion: reduce) { .flash { animation: none; } }
+
+  /* A rule's fixtures, listed under the scorecard entry that names it. */
+  .rule-actions { margin: 2px 0 6px; }
+  .rule-fixtures { margin-top: 6px; }
+  details.fx-list { margin-top: 6px; }
+  details.fx-list > summary { font-size: 12.5px; font-weight: 600; color: var(--accent); }
+  .occ-summary { margin: 4px 0 6px; font-size: 12.5px; color: #45453f; }
+  .occ-groups { max-height: 380px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; background: #fcfcfb; }
+  .occ-groups:focus-visible { outline: 2px solid var(--accent); }
+  details.occ-group { margin: 0; border-bottom: 1px solid var(--line); }
+  details.occ-group:last-child { border-bottom: none; }
+  details.occ-group > summary { padding: 5px 10px; font-size: 13px; background: #f3f3ef; position: sticky; top: 0; }
+  .occ-groups ul { list-style: none; margin: 0; padding: 0; }
+  .occ-row {
+    display: grid; grid-template-columns: 74px minmax(110px, 150px) 1fr auto; gap: 2px 10px; width: 100%;
+    align-items: baseline; text-align: left; font: inherit; font-size: 12.5px; color: var(--ink);
+    background: none; border: none; border-top: 1px solid var(--line); padding: 5px 10px; cursor: pointer;
+  }
+  li:first-child > .occ-row { border-top: none; }
+  .occ-row:hover { background: #eaf2f8; }
+  .occ-groups .occ-count { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 400; }
+  .occ-date { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .occ-fx { font-weight: 600; }
+  .occ-detail { color: #45453f; min-width: 0; overflow-wrap: anywhere; }
+  .occ-delta { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; text-align: right; }
+  .occ-delta.good { color: var(--good); }
+  .occ-delta.cost, .occ-delta.broken { color: var(--bad); }
+  .occ-delta.none { color: var(--muted); font-weight: 400; }
+  .tooltip.show { pointer-events: none; }
+  .tooltip .tt-hint { display: block; margin-top: 5px; color: #c9c9c4; font-size: 11.5px; }
 
   /* -- calendar -- */
   .cal-wrap { overflow-x: auto; }
@@ -197,29 +324,67 @@
   .comp { margin-top: 30px; }
   .comp h3 { font-size: 16px; margin: 0 0 2px; }
   .comp .meta { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
-  .round { border-top: 1px solid var(--line); padding: 10px 0; display: grid; grid-template-columns: 130px 1fr; gap: 14px; }
+  .round { border-top: 1px solid var(--line); padding: 10px 0; display: grid; grid-template-columns: 200px 1fr; gap: 14px; }
   .round .rlabel { font-size: 12px; color: var(--muted); }
   .round .rlabel b { display: block; color: var(--ink); font-size: 14px; }
+  /* Round and week totals: the label's edge takes the net's colour, the text says the figure. */
+  .round .rlabel.rl-good { border-left: 3px solid var(--good); padding-left: 8px; }
+  .round .rlabel.rl-cost { border-left: 3px solid var(--warn); padding-left: 8px; }
+  .rsum { margin-top: 3px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .rsum .rnet { font-weight: 700; color: var(--ink); }
+  .rsum .rnet.good { color: var(--good); }
+  .rsum .rnet.cost { color: var(--warn-ink); }
+  .rtag {
+    display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
+  }
   .fixtures { display: flex; flex-wrap: wrap; gap: 8px; }
   /* `gap` alone spaces every child of the card (date, tag, swatches, names,
      the "v" separator, the pair dot) evenly — issue #61 asked for more
      breathing room here, so this replaced a set of per-element margins that
      made the card read as one cramped run of text. */
   .fx {
-    display: inline-flex; align-items: center; gap: 5px;
-    border: 1px solid var(--line); border-radius: 7px; padding: 7px 12px;
-    font-size: 13px; background: #fcfcfb; white-space: nowrap;
+    display: inline-flex; flex-direction: column; align-items: flex-start; gap: 5px;
+    border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 7px;
+    padding: 7px 12px 7px 10px; font-size: 13px; background: #fcfcfb; white-space: nowrap;
   }
+  .fx-main { display: inline-flex; align-items: center; gap: 5px; }
   .fx .d { color: var(--muted); font-variant-numeric: tabular-nums; }
   .fx .h { font-weight: 600; }
   .fx .vs { color: var(--muted); }
-  .fx.paired { border-color: var(--good); background: #f1f9f4; }
+  /* Card edge by net points: green gains, amber costs, red a broken hard rule. */
+  .edge-good { border-left-color: var(--good); }
+  .edge-cost { border-left-color: var(--warn); }
+  .edge-broken { border-left-color: var(--bad); }
+  .fx.edge-good { background: #f1f9f4; }
+  .fx.edge-cost { background: #fdf8ee; }
+  .fx.edge-broken { background: #fdf0ee; }
+  .fx-row td:first-child, .day-row { border-left: 4px solid transparent; }
+  .fx-row.edge-good td:first-child, .day-row.edge-good { border-left-color: var(--good); }
+  .fx-row.edge-cost td:first-child, .day-row.edge-cost { border-left-color: var(--warn); }
+  .fx-row.edge-broken td:first-child, .day-row.edge-broken { border-left-color: var(--bad); }
+
+  /* Scoring badges: one per rule a fixture triggers. Also the tooltip anchor. */
+  .flags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .flag {
+    font: 600 10.5px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0.01em;
+    padding: 0 7px; border-radius: 9px; border: 1px solid transparent; cursor: pointer;
+    white-space: nowrap; text-align: left; text-transform: none;
+  }
+  .flag-good { background: #e4f3ea; color: var(--good); border-color: #bfe0cc; }
+  .flag-cost { background: #fbefd5; color: #8a5a06; border-color: #ecd199; }
+  .flag-broken { background: var(--bad); color: #fff; }
+  .flag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .tooltip { white-space: normal; text-align: left; }
+  .tooltip .tt-head { display: block; font-weight: 700; }
+  .tooltip .tt-detail { display: block; margin-top: 3px; }
+  .fx-row .flags { flex-wrap: wrap; min-width: 120px; }
   .comp-tag {
     /* Short names (e.g. "NM(m)") carry their own deliberate case, so no
        text-transform here — unlike a full competition name, which would
        read fine either way. */
     font-size: 10px; padding: 1px 6px; border-radius: 10px;
-    background: #eeeee9; color: var(--muted); letter-spacing: 0.03em;
+    background: var(--comp-bg, #eeeee9); color: var(--comp-fg, var(--muted)); letter-spacing: 0.03em;
   }
   /* Home = square, away = diamond, both filled with the club's own colour
      (data/clubs.yml). Fixed pixel sizes rather than a text glyph — a
@@ -228,23 +393,29 @@
      some fixtures look like they had "bigger text" than others. */
   .swatch, .swatch-diamond, .swatch-neutral {
     display: inline-block; width: 8px; height: 8px;
-    vertical-align: middle; flex: none;
+    vertical-align: middle; flex: none; background: var(--club, var(--ink));
   }
+  /* A European leg whose home/away is not yet confirmed. */
+  .swatch-dim { opacity: 0.4; }
+  .fx-row .swatch, .fx-row .swatch-diamond, .fx-row .swatch-neutral { margin-right: 5px; }
+  .fx-row .muted { color: var(--muted); }
   .swatch { border-radius: 2px; }
   .swatch-diamond { border-radius: 1px; transform: rotate(45deg); }
   /* Cup final only: neutral ground, so neither the square (home) nor the
      diamond (away) marker applies. */
   .swatch-neutral { border-radius: 50%; }
-  .pair-badge {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 13px; height: 13px; border-radius: 50%; vertical-align: middle;
-    background: var(--good); flex: none;
-  }
-  .fx-demo {
+  .edge-demo {
     display: inline-block; width: 22px; height: 14px; margin-right: 5px;
-    border: 1px solid var(--good); background: #f1f9f4; border-radius: 4px;
+    border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 4px;
     vertical-align: middle;
   }
+  .edge-demo.edge-good { background: #f1f9f4; border-left-color: var(--good); }
+  .edge-demo.edge-cost { background: #fdf8ee; border-left-color: var(--warn); }
+  .edge-demo.edge-broken { background: #fdf0ee; border-left-color: var(--bad); }
+  .flag-legend { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
+  .flag-legend ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px 24px; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); }
+  .flag-legend li { display: flex; gap: 8px; align-items: baseline; }
+  .flag-legend .flag { cursor: default; flex: none; }
   .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin: 14px 0 0; align-items: center; }
   footer { margin-top: 40px; color: var(--muted); font-size: 12.5px; }
 
@@ -267,28 +438,202 @@
   .cal-day.out-month { color: var(--muted); background: #fbfbfa; }
   .cal-daynum { font-size: 12.5px; font-variant-numeric: tabular-nums; }
   .cal-dots { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; min-height: 8px; }
-  .cal-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
+  .cal-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--comp-fg, var(--muted)); }
   .day-details { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 14px; }
   .day-detail-empty { color: var(--muted); font-size: 13.5px; }
   .day-detail .rlabel { margin-bottom: 8px; }
   .day-detail .rlabel b { display: block; color: var(--ink); font-size: 14px; }
   .day-detail .fixtures { display: flex; flex-direction: column; }
-  .day-row { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .day-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; padding: 5px 0 5px 8px; border-bottom: 1px solid var(--line); }
   .day-row:last-child { border-bottom: none; }
   .day-row .vs { color: var(--muted); margin: 0 1px; }
+  .day-row .flags { flex-basis: 100%; }
   .day-row .d { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* The count and the net each sit on their own line, so a narrow cell wraps nowhere. */
+  .cal-net { display: flex; flex-direction: column; align-items: center; font-size: 10.5px; line-height: 1.15; font-variant-numeric: tabular-nums; color: var(--muted); max-width: 100%; }
+  .cal-count, .cal-value { white-space: nowrap; }
+  .cal-value { font-weight: 600; }
+  .cal-value.good { color: var(--good); }
+  .cal-value.cost { color: var(--warn-ink); }
+
+  /* Season strip: one button per round; each league row scrolls inside itself. */
+  .season-strip { margin: 14px 0 0; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .season-strip[hidden] { display: none; }
+  .strip-row { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px; align-items: center; margin-top: 6px; }
+  .strip-name { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .strip-caption { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .strip-cells { display: flex; gap: 2px; min-width: 0; overflow-x: auto; padding: 8px 4px 4px 0; }
+  .strip-cell {
+    position: relative; flex: 1 1 0; min-width: 30px; max-width: 46px; display: flex; flex-direction: column; align-items: center; gap: 1px;
+    padding: 3px 2px 4px; font: inherit; font-size: 11px; line-height: 1.2; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 5px; cursor: pointer;
+  }
+  .strip-cell:hover { border-color: var(--accent); }
+  .strip-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .strip-cell.sc-good { border-left-color: var(--good); }
+  .strip-cell.sc-cost { border-left-color: var(--warn); }
+  .strip-cell.sc-cost .strip-net { color: var(--warn-ink); }
+  .strip-cell:disabled { opacity: 0.4; cursor: default; }
+  .strip-round { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .strip-net { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .strip-cell.sc-good .strip-net { color: var(--good); }
+  .strip-hard {
+    position: absolute; top: -6px; right: -6px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
+    background: var(--bad); color: #fff; font-size: 9.5px; font-weight: 700; line-height: 15px; text-align: center;
+  }
+
+  /* Combined list's score column, right-aligned so the signs line up. */
+  .fx-score { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .fx-score.good { color: var(--good); font-weight: 600; }
+  .fx-score.cost { color: var(--warn-ink); }
+
+  /* -- club scope: the scorecard restated for one club -- */
+  .scope-banner {
+    display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between;
+    margin: 18px 0 0; padding: 8px 12px; border-left: 3px solid var(--accent); background: #eaf2f8;
+    border-radius: 0 6px 6px 0; font-size: 13px;
+  }
+  .scope-text { flex: 1 1 280px; min-width: 0; }
+  .scope-clear {
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    border: 1px solid var(--accent); color: var(--accent); background: var(--panel);
+    padding: 2px 10px; border-radius: 14px;
+  }
+  .scope-clear:hover { background: var(--accent); color: #fff; }
+  .scope-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .scope-card .cols { margin-top: 14px; }
+  .scope-breakdown { margin-top: 18px; }
+  .scope-count { font-weight: 600; white-space: nowrap; }
+  .scope-count[hidden] { display: none; }
+  .lens-count { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+
+  /* -- club timeline: a row per date, a lane per team -- */
+  .tl-legend { margin-top: 8px; }
+  .tl-choose { margin-top: 8px; }
+  .tl-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tl-club-btn {
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--accent); color: var(--accent); background: var(--panel);
+    padding: 3px 11px; border-radius: 14px;
+  }
+  .tl-club-btn:hover { background: var(--accent); color: #fff; }
+  .tl-club-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tl-grid { --lanes: 2; margin-top: 12px; }
+  .tl-head, .tl-row {
+    display: grid; grid-template-columns: 96px repeat(var(--lanes), minmax(0, 1fr)); gap: 10px;
+  }
+  .tl-head { font-size: 11.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .tl-row { padding: 8px 0; border-bottom: 1px solid var(--line); align-items: start; }
+  .tl-row.tl-clash { background: #fbf1f0; }
+  .tl-date { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; font-size: 12.5px; }
+  .tl-tag {
+    font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 4px;
+    background: #eeeee9; color: var(--ink); border: 1px solid var(--line);
+  }
+  .tl-tag-bad { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .tl-cell { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+  .tl-cell:empty::before { content: "—"; color: var(--muted); font-size: 12.5px; }
+  .tl-fx {
+    display: block; min-width: 0; padding: 5px 7px; font-size: 12.5px;
+    background: var(--panel); border: 1px solid var(--line); border-left: 4px solid transparent; border-radius: 6px;
+  }
+  .tl-fx.edge-good { border-left-color: var(--good); }
+  .tl-fx.edge-cost { border-left-color: var(--warn); }
+  .tl-fx.edge-broken { border-left-color: var(--bad); }
+  .tl-top { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+  .tl-ha { font-size: 10.5px; font-weight: 700; padding: 0 4px; border: 1px solid var(--muted); border-radius: 3px; color: var(--muted); }
+  .tl-opp { font-weight: 600; overflow-wrap: anywhere; margin-top: 2px; }
+  .tl-gap { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+  .tl-fx .flags { margin-top: 4px; }
+
+  @media print { .controls { position: static; box-shadow: none; } .legend-wrap, .filters-toggle, .back-to-score, .jump-cal { display: none; } }
 
   @media (max-width: 480px) {
     .round { grid-template-columns: 1fr; gap: 4px; }
-    .fx { white-space: normal; }
+    .fx { white-space: normal; max-width: 100%; }
+    .fx-main { flex-wrap: wrap; }
+    /* The list's seven columns do not fit; each row becomes a small card so the
+       Rules badges are not scrolled out of sight. */
+    .view-pane[data-view="combined-list"] table, .view-pane[data-view="combined-list"] tbody { display: block; }
+    .view-pane[data-view="combined-list"] thead { display: none; }
+    .fx-row {
+      display: grid; grid-template-columns: 1fr auto 1fr; gap: 2px 8px; align-items: center;
+      grid-template-areas: "date score comp" "home vs away" "venue venue venue" "rules rules rules";
+      padding: 8px 0 8px 8px; border-bottom: 1px solid var(--line); border-left: 4px solid transparent;
+    }
+    .fx-row td { padding: 0; border: none; }
+    .fx-row td:nth-child(1) { grid-area: date; }
+    .fx-row td:nth-child(2) { grid-area: comp; justify-self: end; }
+    .fx-row td:nth-child(3) { grid-area: home; }
+    .fx-row td:nth-child(4) { grid-area: vs; }
+    .fx-row td:nth-child(5) { grid-area: away; }
+    .fx-row td:nth-child(6) { grid-area: venue; color: var(--muted); font-size: 12px; }
+    .fx-row td:nth-child(7) { grid-area: rules; }
+    .fx-row td:nth-child(7):empty { display: none; }
+    /* No column header on a card, so the score carries its unit. */
+    .fx-row td:nth-child(8) { grid-area: score; text-align: left; }
+    .fx-row td.fx-score::after { content: " pts"; color: var(--muted); font-weight: 400; }
+    .strip-row { grid-template-columns: 84px minmax(0, 1fr); }
+    /* Phone: fixed-width cells that scroll; the fade says the row goes on. */
+    .strip-cells {
+      padding-right: 26px;
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+      mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+    }
+    .strip-cell { flex: 0 0 auto; width: 40px; max-width: none; }
+    .cal-net { font-size: 9.5px; }
+    .fx-row td:first-child { border-left: none; }
+    .fx-row.lens-hit { background: #eaf2f8; box-shadow: inset 0 0 0 2px var(--accent); }
+    .fx-row.lens-hit td { background: none; box-shadow: none; }
+    .fx-row.edge-good { border-left-color: var(--good); }
+    .fx-row.edge-cost { border-left-color: var(--warn); }
+    .fx-row.edge-broken { border-left-color: var(--bad); }
     .fairness-bar { grid-template-columns: 110px 1fr 24px; }
+    :root { --panel-pad: 12px; }
+    .controls {
+      padding: 6px 12px; gap: 4px 8px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "sum actions" "views views" "filt filt";
+    }
+    .bar-opt { font-size: 12.5px; }
+    .bar-score { font-size: 14px; }
+    .bar-summary { gap: 5px; }
+    .bar-summary .badge { text-transform: none; letter-spacing: 0; font-size: 11px; padding: 1px 6px; }
+    .bar-actions { gap: 3px; }
+    .bar-btn { padding: 3px 7px; font-size: 11.5px; }
+    .bar-btn-text, .legend-toggle .caret { display: none; }
+    .controls.filters-open .bar-chips { display: none; }
+    .filters-toggle { display: inline-block; }
+    /* Short labels so all four views fit one row. */
+    .view-toggle { flex-wrap: nowrap; gap: 4px; width: 100%; }
+    .view-btn { flex: 1 1 auto; padding: 4px 6px; font-size: 12px; white-space: nowrap; }
+    .view-full { display: none; }
+    .view-short { display: inline; }
+    .bar-fields { display: none; }
+    .controls.filters-open .bar-fields { display: grid; gap: 6px; width: 100%; }
+    .club-filter { min-width: 0; display: grid; grid-template-columns: 96px minmax(0, 1fr); }
+    .club-filter select, .lens-filter select { max-width: none; min-width: 0; width: 100%; }
+    .occ-row { grid-template-columns: auto 1fr auto; }
+    .occ-detail { grid-column: 1 / -1; }
     .month-grid { min-width: 0; }
     .cal-day { min-height: 40px; padding: 4px 1px; }
+    .scope-banner { padding: 8px 10px; }
+    .tl-head, .tl-row { grid-template-columns: 64px repeat(var(--lanes), minmax(0, 1fr)); gap: 6px; }
+    .tl-fx { padding: 4px 5px; font-size: 12px; }
+    .tl-date { font-size: 12px; }
+    .tl-tag { font-size: 10px; }
   }
+</style>
+<style id="palette">
+{{ palette_css }}
 </style>
 </head>
 <body>
 {% set ns = namespace(tooltip_id=0) %}
+{# A rule's fixtures are listed by report.js from the fixture flags, so only a rule with some (`row.pinned`) gets a mount and a calendar link. #}
+{% macro lens_link(row) %}{% if row.pinned %}<button type="button" class="lens-link" data-rule="{{ row.id }}">Show in calendar</button>{% else %}<span class="desc">Not tied to one fixture, so nothing to show in the calendar.</span>{% endif %}{% endmacro %}
+{% macro fixture_list(row) %}{% if row.pinned %}<details class="fx-list" data-rule="{{ row.id }}"><summary>{{ row.pinned }} fixture{{ '' if row.pinned == 1 else 's' }}, by team</summary><div class="rule-fixtures"></div></details>{% endif %}{% endmacro %}
 <div class="wrap">
 
 <header>
@@ -424,91 +769,10 @@
   {% endfor %}
 </div>
 
-{% macro fx_card(match, show_competition=False) %}
-<span class="fx {% if match.paired %}paired{% endif %}"
-      data-clubs="{{ match.home_club }} {{ match.away_club }}"
-      data-competition="{{ match.competition_id }}"
-      title="{{ match.venue }}">
-  <span class="d">{{ match.weekday }} {{ match.date.strftime('%d/%m') }}{% if match.kickoff_time %} {{ match.kickoff_time }}{% endif %}</span>
-  {% if show_competition %}
-  <span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span>
-  {% endif %}
-  <span class="swatch" style="background:{{ match.color }}" aria-hidden="true"></span>
-  <span class="h" title="{{ match.home }}">{{ match.home_short }}</span>
-  <span class="vs">v</span>
-  <span class="swatch-diamond" style="background:{{ match.away_color }}" aria-hidden="true"></span>
-  <span title="{{ match.away }}">{{ match.away_short }}</span>
-  {% if match.paired %}
-  <span class="pair-badge" role="img" aria-label="back-to-back home day with the club's other team"></span>
-  {% endif %}
-</span>
-{% endmacro %}
-
-{% macro cup_fx_card(fixture, show_competition=False) %}
-<span class="fx" data-clubs="{{ fixture.club_id }}" title="{{ fixture.venue_label }}">
-  <span class="d">{{ fixture.weekday }} {{ fixture.date.strftime('%d/%m') }}</span>
-  {% if show_competition %}
-  <span class="comp-tag" style="background:{{ fixture.comp_bg }};color:{{ fixture.comp_fg }}" title="{{ fixture.competition_name }}">{{ fixture.competition_short }}</span>
-  {% endif %}
-  {% if fixture.venue_type == 'home' %}
-  <span class="swatch" style="background:{{ fixture.color }}" aria-hidden="true"></span>
-  {% elif fixture.venue_type == 'away' %}
-  <span class="swatch-diamond" style="background:{{ fixture.color }}" aria-hidden="true"></span>
-  {% else %}
-  <span class="swatch-neutral" style="background:{{ fixture.color }}" aria-hidden="true"></span>
-  {% endif %}
-  <span class="h" title="{{ fixture.team_full }}">{{ fixture.team }}</span>
-  <span class="vs">v TBD</span>
-</span>
-{% endmacro %}
-
-{% macro european_fx_card(fixture, show_competition=False) %}
-<span class="fx" data-clubs="{{ fixture.club_id }}" title="{{ fixture.venue_label }}">
-  <span class="d">{{ fixture.weekday }} {{ fixture.date.strftime('%d/%m') }}</span>
-  {% if show_competition %}
-  <span class="comp-tag" style="background:{{ fixture.comp_bg }};color:{{ fixture.comp_fg }}" title="{{ fixture.competition_name }}">{{ fixture.competition_short }}</span>
-  {% endif %}
-  {% if fixture.venue_type == 'home' %}
-  <span class="swatch" style="background:{{ fixture.color }}" aria-hidden="true"></span>
-  {% elif fixture.venue_type == 'away' %}
-  <span class="swatch-diamond" style="background:{{ fixture.color }}" aria-hidden="true"></span>
-  {% else %}
-  <span class="swatch" style="background:{{ fixture.color }};opacity:0.4" aria-hidden="true"></span>
-  {% endif %}
-  <span class="h" title="{{ fixture.team_full }}">{{ fixture.team }}</span>
-  <span class="vs">v {{ fixture.opponent }}</span>
-</span>
-{% endmacro %}
-
-{% macro day_row(match) %}
-{# Compact one-line row for the month calendar's day-detail blocks (issue
-   #77) — a drill-down list, not the primary view, so it skips the full
-   fx_card/cup_fx_card/european_fx_card markup (date text, venue tooltip) to
-   keep the per-day blocks the report duplicates three times over (once per
-   candidate option) from bloating the page. #}
-<div class="day-row"
-     data-clubs="{{ (match.home_club ~ ' ' ~ match.away_club) if match.home_club is defined else match.club_id }}">
-  <span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span>
-  {% if match.is_cup %}
-  <span class="swatch{{ '-diamond' if match.venue_type == 'away' else ('-neutral' if match.venue_type == 'neutral' else '') }}"
-        style="background:{{ match.color }}" aria-hidden="true"></span>
-  <span>{{ match.team }}</span><span class="vs">v TBD</span>
-  {% elif match.is_european %}
-  <span class="swatch{{ '-diamond' if match.venue_type == 'away' else '' }}"
-        style="background:{{ match.color }}{{ ';opacity:0.4' if match.venue_type == 'unknown' else '' }}" aria-hidden="true"></span>
-  <span>{{ match.team }}</span><span class="vs">v {{ match.opponent }}</span>
-  {% else %}
-  <span class="swatch" style="background:{{ match.color }}" aria-hidden="true"></span>
-  <span>{{ match.home_short }}</span><span class="vs">v</span>
-  <span class="swatch-diamond" style="background:{{ match.away_color }}" aria-hidden="true"></span>
-  <span>{{ match.away_short }}</span>
-  {% endif %}
-  {% if match.kickoff_time %}<span class="d">{{ match.kickoff_time }}</span>{% endif %}
-</div>
-{% endmacro %}
-
 {% for option in options %}
 <section class="panel" id="panel-{{ loop.index }}" role="tabpanel" {% if not loop.first %}hidden{% endif %}>
+{# Panels other than the first stay inert in a <template> until their tab is opened (#42). #}
+{% if not loop.first %}<template>{% endif %}
 
   <div class="scoreline">
     <div class="total">{{ '%.0f'|format(option.points) }}<small>/ 100 · raw soft score {{ '%.1f'|format(option.soft_total) }}</small></div>
@@ -517,10 +781,10 @@
     {% else %}
       <span class="badge fail">{{ option.hard_violations }} hard violation{{ '' if option.hard_violations == 1 else 's' }}</span>
     {% endif %}
+    <button type="button" class="bar-btn jump-cal">Jump to calendar ↓</button>
   </div>
 
-  <div class="headline-scope"></div>
-  <div class="headlines" data-global="{{ option.headlines_json }}" data-club="{{ option.club_headlines_json }}">
+  <div class="headlines">
     {% for headline in option.headlines %}
     <div class="headline">
       <div class="v">{{ headline.value }}</div>
@@ -545,6 +809,8 @@
         </span>
         <span class="delta">{{ row.count }} violation{{ '' if row.count == 1 else 's' }}</span>
       </div>
+      <div class="rule-actions">{{ lens_link(row) }}</div>
+      {{ fixture_list(row) }}
       {% if row.examples %}
       <ul class="examples">{% for example in row.examples %}<li>{{ example }}</li>{% endfor %}</ul>
       {% if row.more %}<div class="more">…and {{ row.more }} more</div>{% endif %}
@@ -554,11 +820,17 @@
   </div>
   {% endif %}
 
-  <div class="cols">
+  <div class="scope-banner" hidden>
+    <span class="scope-text"></span>
+    <span class="scope-count" aria-live="polite" hidden></span>
+    <button type="button" class="chip scope-clear">All clubs</button>
+  </div>
+
+  <div class="cols season-part">
     <div class="col">
       <h3>{{ 'Every upside' if option.full else 'Biggest upsides' }}</h3>
       {% for row in option.upsides %}
-      <details class="item up">
+      <details class="item up"{% if row.pinned %} data-rule="{{ row.id }}"{% endif %}>
         <summary class="top">
           <span class="name-row">
             <span class="name">{{ row.id.replace('_', ' ') }}</span>
@@ -571,11 +843,14 @@
           <span class="delta">+{{ '%.0f'|format(row.total) }}</span>
         </summary>
         <div class="item-body">
+          <div class="rule-actions">{{ lens_link(row) }}</div>
+          {% if row.pinned %}<div class="rule-fixtures"></div>{% endif %}
           {% if row.occurrences %}
+          {% if row.pinned %}<div class="desc">Other events, not tied to one fixture:</div>{% endif %}
           <ul class="occurrences">
             {% for occ in row.occurrences %}<li>{{ occ.label }} <span class="occ-count">×{{ occ.count }}</span></li>{% endfor %}
           </ul>
-          {% else %}
+          {% elif not row.pinned %}
           <div class="desc">×{{ row.count }}</div>
           {% endif %}
         </div>
@@ -588,7 +863,7 @@
     <div class="col">
       <h3>{{ 'Every problem (including the hard rules above)' if option.full else 'Biggest problems' }}</h3>
       {% for row in option.problems %}
-      <details class="item down">
+      <details class="item down"{% if row.pinned %} data-rule="{{ row.id }}"{% endif %}>
         <summary class="top">
           <span class="name-row">
             <span class="name">{{ row.id.replace('_', ' ') }}</span>
@@ -601,11 +876,14 @@
           <span class="delta">{{ '%.0f'|format(row.total) }}</span>
         </summary>
         <div class="item-body">
+          <div class="rule-actions">{{ lens_link(row) }}</div>
+          {% if row.pinned %}<div class="rule-fixtures"></div>{% endif %}
           {% if row.occurrences %}
+          {% if row.pinned %}<div class="desc">Other events, not tied to one fixture:</div>{% endif %}
           <ul class="occurrences">
             {% for occ in row.occurrences %}<li>{{ occ.label }} <span class="occ-count">×{{ occ.count }}</span></li>{% endfor %}
           </ul>
-          {% else %}
+          {% elif not row.pinned %}
           <div class="desc">×{{ row.count }}</div>
           {% endif %}
         </div>
@@ -616,7 +894,10 @@
     </div>
   </div>
 
-  <details>
+  {# With a club selected, report.js draws the club's upsides, problems and breakdown here. #}
+  <div class="scope-card"></div>
+
+  <details class="season-part">
     <summary>Full score breakdown — every rule</summary>
     <div class="cal-wrap">
     <table>
@@ -640,12 +921,13 @@
           <td class="num">{{ '%+.1f'|format(row.total) if row.total else '—' }}</td>
           <td class="num">{{ row.count }}</td>
           <td>
+            {% if row.pinned %}<div class="rule-actions">{{ lens_link(row) }}</div>{{ fixture_list(row) }}{% endif %}
             {% if row.examples %}
             <ul class="examples" style="margin:0;padding-left:16px">
               {% for example in row.examples %}<li>{{ example }}</li>{% endfor %}
             </ul>
             {% if row.more %}<span class="more">…and {{ row.more }} more</span>{% endif %}
-            {% else %}—{% endif %}
+            {% elif not row.pinned %}—{% endif %}
           </td>
         </tr>
       {% endfor %}
@@ -684,149 +966,116 @@
   </details>
   {% endif %}
 
+  <noscript><div class="warnings">This report draws its fixtures with JavaScript; enable it to see them.</div></noscript>
+
   <div class="controls">
-    <div class="view-toggle">
-      <button type="button" class="view-btn" data-view="by-competition">By competition</button>
-      <button type="button" class="view-btn" data-view="month-calendar">Month calendar</button>
-      <button type="button" class="view-btn" data-view="combined-calendar">Combined · calendar</button>
-      <button type="button" class="view-btn" data-view="combined-list">Combined · list</button>
-    </div>
-    <label class="club-filter">
-      Club
-      <select class="club-select">
-        <option value="">All clubs</option>
-        {% for club in all_clubs %}
-        <option value="{{ club.id }}">{{ club.name }}</option>
-        {% endfor %}
-      </select>
-    </label>
-  </div>
-
-  <div class="legend">
-    <span><span class="fx-demo" aria-hidden="true"></span>green = back-to-back home day for a dual club</span>
-    <span><span class="pair-badge" style="margin-right:5px" aria-hidden="true"></span>dot = this fixture is one of that back-to-back pair</span>
-    <span><span class="swatch" style="background:var(--ink);margin-right:5px" aria-hidden="true"></span>square = home club colour</span>
-    <span><span class="swatch-diamond" style="background:var(--ink);margin-right:5px" aria-hidden="true"></span>diamond = away club colour</span>
-    <span><span class="swatch-neutral" style="background:var(--ink);margin-right:5px" aria-hidden="true"></span>circle = cup final, neutral ground</span>
-  </div>
-
-  <div class="cal-wrap view-pane" data-view="by-competition">
-  {% for competition in option.by_competition %}
-    <div class="comp">
-      <h3>{{ competition.name }}</h3>
-      {% if competition.is_cup %}
-      <div class="meta">
-        {{ competition.match_count }} teams entered · opponent drawn closer to each round, so dates
-        are per-team, not fixtures · home/away assumed per NM rules (away for the first three
-        rounds, then alternating; final always neutral)
-      </div>
-      {% for round in competition.rounds %}
-      <div class="round">
-        <div class="rlabel" {% if round.note %}title="{{ round.note }}"{% endif %}>
-          <b>{{ round.name }}</b>
-          {{ round.dates }} · {{ round.venue_summary }}
-        </div>
-        <div class="fixtures">
-          {% for fixture in round.fixtures %}{{ cup_fx_card(fixture) }}{% endfor %}
-        </div>
-      </div>
-      {% endfor %}
-      {% elif competition.is_european %}
-      <div class="meta">
-        {% if competition.is_main_tournament %}
-        {{ competition.match_count }} matchday(s)/round(s) tracked · every reachable team shown
-        with opponent "TBD" — pairings aren't drawn this far ahead
-        {% else %}
-        {{ competition.match_count }} qualifying round(s) tracked · opponent and home/away shown
-        where UEFA has confirmed them, "TBD" where the tie is still conditional on another result
-        {% endif %}
-      </div>
-      {% for round in competition.rounds %}
-      <div class="round">
-        <div class="rlabel" {% if round.note %}title="{{ round.note }}"{% endif %}>
-          <b>{{ round.name }}</b>
-          {{ round.dates }}
-        </div>
-        <div class="fixtures">
-          {% for fixture in round.fixtures %}{{ european_fx_card(fixture) }}{% endfor %}
-        </div>
-      </div>
-      {% endfor %}
+    <div class="bar-summary">
+      <span class="bar-opt">{{ option.label }}</span>
+      <span class="bar-score">{{ '%.0f'|format(option.points) }}<small>/100</small></span>
+      {% if option.feasible %}
+        <span class="badge ok">feasible</span>
       {% else %}
-      <div class="meta">
-        {{ competition.match_count }} matches over {{ competition.rounds|length }} rounds ·
-        prefers {{ competition.preferred_weekday }}
-      </div>
-      {% for round in competition.rounds %}
-      <div class="round">
-        <div class="rlabel">
-          <b>Round {{ round.index }}</b>
-          {{ round.dates }} · leg {{ round.leg }}
-        </div>
-        <div class="fixtures">
-          {% for match in round.matches %}{{ fx_card(match) }}{% endfor %}
-        </div>
-      </div>
-      {% endfor %}
+        <span class="badge fail">{{ option.hard_violations }} hard violation{{ '' if option.hard_violations == 1 else 's' }}</span>
       {% endif %}
     </div>
-  {% endfor %}
+    <div class="bar-actions">
+      <button type="button" class="bar-btn back-to-score" aria-label="Back to score"><span aria-hidden="true">↑</span><span class="bar-btn-text"> Score</span></button>
+      <div class="legend-wrap">
+        <button type="button" class="bar-btn legend-toggle" aria-expanded="false" aria-controls="legend-{{ loop.index }}">Legend<span class="caret"> ▾</span></button>
+        <div class="legend-panel" id="legend-{{ loop.index }}" hidden>
+          <div class="legend-cards">
+            <h4>Fixture cards</h4>
+            <div class="legend">
+              <span><span class="edge-demo edge-good" aria-hidden="true"></span>green edge: nets +{{ '%g' % tint_good }} or more</span>
+              <span><span class="edge-demo edge-cost" aria-hidden="true"></span>amber edge: costs {{ '%g' % tint_cost }} or more</span>
+              <span><span class="edge-demo edge-broken" aria-hidden="true"></span>red edge: breaks a hard rule</span>
+              <span><span class="swatch" style="margin-right:5px" aria-hidden="true"></span>square = home club colour</span>
+              <span><span class="swatch-diamond" style="margin-right:5px" aria-hidden="true"></span>diamond = away club colour</span>
+              <span><span class="swatch-neutral" style="margin-right:5px" aria-hidden="true"></span>circle = cup final, neutral ground</span>
+              <span>round, week and day totals: net points of the badges on the games shown; midweek means all games Mon–Thu</span>
+            </div>
+          </div>
+          {% if flag_legend %}
+          <div class="flag-legend">
+            <h4>What the badges mean (tap any badge on a fixture for details)</h4>
+            <ul>
+              {% for rule in flag_legend %}
+              <li>
+                <span>{% for polarity in rule.polarities %}<span class="flag flag-{{ polarity }}" style="margin-right:4px">{{ rule.label }}</span>{% endfor %}</span>
+                <span>{{ rule.description }}</span>
+              </li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      <button type="button" class="bar-btn filters-toggle" aria-expanded="false" aria-controls="filters-{{ loop.index }}">Filters</button>
+    </div>
+    <div class="view-toggle">
+      <button type="button" class="view-btn" data-view="by-competition" aria-label="By competition"><span class="view-full">By competition</span><span class="view-short" aria-hidden="true">Rounds</span></button>
+      <button type="button" class="view-btn" data-view="month-calendar" aria-label="Month calendar"><span class="view-full">Month calendar</span><span class="view-short" aria-hidden="true">Month</span></button>
+      <button type="button" class="view-btn" data-view="combined-calendar" aria-label="Combined calendar"><span class="view-full">Combined · calendar</span><span class="view-short" aria-hidden="true">Calendar</span></button>
+      <button type="button" class="view-btn" data-view="combined-list" aria-label="Combined list"><span class="view-full">Combined · list</span><span class="view-short" aria-hidden="true">List</span></button>
+      <button type="button" class="view-btn" data-view="club-timeline" aria-label="Club timeline"><span class="view-full">Club timeline</span><span class="view-short" aria-hidden="true">Timeline</span></button>
+    </div>
+    <div class="bar-filters">
+      <div class="bar-fields" id="filters-{{ loop.index }}">
+        <label class="club-filter">
+          Club
+          <select class="club-select">
+            <option value="">All clubs</option>
+            {% for club in all_clubs %}
+            <option value="{{ club.id }}">{{ club.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {# Shown by report.js for a dual club only: all of its fixtures, or one team's. #}
+        <label class="club-filter team-filter" hidden>
+          Team
+          <select class="team-select"><option value="">All</option></select>
+        </label>
+        {# Options are filled in by report.js from the rules this option has fixtures for. #}
+        <label class="club-filter lens-filter">
+          Highlight rule
+          <select class="lens-select"><option value="">No rule</option></select>
+        </label>
+        <label class="lens-only"><input type="checkbox" class="lens-only-box" disabled> Only show matching</label>
+      </div>
+      <div class="bar-chips">
+        <button type="button" class="chip club-clear" hidden><span class="chip-text"></span> <span aria-hidden="true">×</span></button>
+        <button type="button" class="chip team-clear" hidden><span class="chip-text"></span> <span aria-hidden="true">×</span></button>
+        <button type="button" class="chip lens-clear" hidden><span class="chip-text"></span> <span aria-hidden="true">×</span></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="lens-caption" hidden>
+    <span class="lens-text" role="status"></span>
+    <span class="lens-count" aria-live="polite" hidden></span>
+  </div>
+
+  {# Drawn by report.js for the views that list rounds. #}
+  <div class="season-strip" role="group" aria-label="Season overview: one button per round" hidden></div>
+
+  {# Fixtures are drawn into each `.pane-body` by report.js from #report-data. #}
+  <div class="cal-wrap view-pane" data-view="by-competition" hidden>
+    <div class="pane-body"></div>
   </div>
 
   <div class="cal-wrap view-pane" data-view="month-calendar" hidden>
     <div class="desc" style="margin-top:8px">
       One dot per competition with something on that day (a match, cup round, or European leg) —
-      tap a day to see its games below.
+      tap a day to see its games below. A figure under a day is the net rule points of its games shown.
     </div>
-    {% if option.month_calendar %}
-    {% if option.calendar_legend %}
+    {% if calendar_legend %}
     <div class="legend">
-      {% for comp in option.calendar_legend %}
-      <span><span class="cal-dot" style="background:{{ comp.color }}" aria-hidden="true"></span><b>{{ comp.short }}</b> {{ comp.name }}</span>
+      {% for comp in calendar_legend %}
+      <span><span class="cal-dot {{ comp.cls }}" aria-hidden="true"></span><b>{{ comp.short }}</b> {{ comp.name }}</span>
       {% endfor %}
     </div>
     {% endif %}
-    {% for month in option.month_calendar %}
-    <div class="month">
-      <h4>{{ month.label }}</h4>
-      <div class="month-grid">
-        <div class="month-grid-row month-grid-head">
-          <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
-        </div>
-        {% for week in month.weeks %}
-        <div class="month-grid-row">
-          {% for day in week %}
-          <button type="button" class="cal-day {{ '' if day.in_month else 'out-month' }}"
-                  data-date="{{ day.date_iso }}" aria-pressed="false"
-                  aria-label="{{ day.date_iso }}{% if day.dots %}: {{ day.dots | map(attribute='name') | join(', ') }}{% endif %}">
-            <span class="cal-daynum">{{ day.day_num }}</span>
-            <span class="cal-dots">
-              {% for dot in day.dots %}
-              <span class="cal-dot" data-clubs="{{ dot.club_ids | join(' ') }}"
-                    style="background:{{ dot.color }}" title="{{ dot.name }}" aria-hidden="true"></span>
-              {% endfor %}
-            </span>
-          </button>
-          {% endfor %}
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-    {% endfor %}
-    <div class="day-details">
-      <div class="day-detail-empty">Tap a day above to see its games here.</div>
-      {% for day in option.month_calendar_details %}
-      <div class="day-detail" data-date="{{ day.date_iso }}" hidden>
-        <div class="rlabel"><b>{{ day.label }}</b></div>
-        <div class="fixtures">
-          {% for match in day.matches %}{{ day_row(match) }}{% endfor %}
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <div class="desc">Nothing scheduled yet.</div>
-    {% endif %}
+    <div class="pane-body"></div>
   </div>
 
   <div class="cal-wrap view-pane" data-view="combined-calendar" hidden>
@@ -836,87 +1085,18 @@
       drawn closer to each round), so those cards show "v TBD" — see
       "By competition" for the venue rule behind each round.
     </div>
-    {% for week in option.combined_calendar %}
-    <div class="round">
-      <div class="rlabel">
-        <b>{{ week.label }}</b>
-        {{ week.dates }}
-      </div>
-      <div class="fixtures">
-        {% for match in week.matches %}
-          {% if match.is_cup %}{{ cup_fx_card(match, show_competition=True) }}
-          {% elif match.is_european %}{{ european_fx_card(match, show_competition=True) }}
-          {% else %}{{ fx_card(match, show_competition=True) }}{% endif %}
-        {% endfor %}
-      </div>
-    </div>
-    {% endfor %}
+    <div class="pane-body"></div>
   </div>
 
   <div class="cal-wrap view-pane" data-view="combined-list" hidden>
-    <table>
-      <thead>
-        <tr><th>Date</th><th>Competition</th><th>Home</th><th></th><th>Away</th><th>Venue</th></tr>
-      </thead>
-      <tbody>
-      {% for match in option.combined_list %}
-      {% if match.is_cup %}
-      <tr class="fx-row" data-clubs="{{ match.club_id }}" data-competition="{{ match.competition_id }}">
-        <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}</td>
-        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span></td>
-        <td>
-          {% if match.venue_type == 'home' %}
-          <span class="swatch" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
-          {% elif match.venue_type == 'away' %}
-          <span class="swatch-diamond" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
-          {% else %}
-          <span class="swatch-neutral" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
-          {% endif %}
-          <span title="{{ match.team_full }}">{{ match.team }}</span>
-        </td>
-        <td style="color:var(--muted)">v</td>
-        <td style="color:var(--muted)">TBD ({{ match.round_name }})</td>
-        <td>{{ match.venue_label }}</td>
-      </tr>
-      {% elif match.is_european %}
-      <tr class="fx-row" data-clubs="{{ match.club_id }}" data-competition="{{ match.competition_id }}">
-        <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}</td>
-        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span></td>
-        <td>
-          {% if match.venue_type == 'home' %}
-          <span class="swatch" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
-          {% elif match.venue_type == 'away' %}
-          <span class="swatch-diamond" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
-          {% else %}
-          <span class="swatch" style="background:{{ match.color }};opacity:0.4;margin-right:5px" aria-hidden="true"></span>
-          {% endif %}
-          <span title="{{ match.team_full }}">{{ match.team }}</span>
-        </td>
-        <td style="color:var(--muted)">v</td>
-        <td style="color:var(--muted)">{{ match.opponent }} ({{ match.round_name }})</td>
-        <td>{{ match.venue_label }}</td>
-      </tr>
-      {% else %}
-      <tr class="fx-row" data-clubs="{{ match.home_club }} {{ match.away_club }}" data-competition="{{ match.competition_id }}">
-        <td>{{ match.weekday }} {{ match.date.strftime('%d %b %Y') }}{% if match.kickoff_time %} {{ match.kickoff_time }}{% endif %}</td>
-        <td><span class="comp-tag" style="background:{{ match.comp_bg }};color:{{ match.comp_fg }}" title="{{ match.competition_name }}">{{ match.competition_short }}</span></td>
-        <td>
-          <span class="swatch" style="background:{{ match.color }};margin-right:5px" aria-hidden="true"></span>
-          <span title="{{ match.home }}">{{ match.home_short }}</span>
-        </td>
-        <td style="color:var(--muted)">v</td>
-        <td>
-          <span class="swatch-diamond" style="background:{{ match.away_color }};margin-right:5px" aria-hidden="true"></span>
-          <span title="{{ match.away }}">{{ match.away_short }}</span>
-        </td>
-        <td>{{ match.venue }}</td>
-      </tr>
-      {% endif %}
-      {% endfor %}
-      </tbody>
-    </table>
+    <div class="pane-body"></div>
   </div>
 
+  <div class="cal-wrap view-pane" data-view="club-timeline" hidden>
+    <div class="pane-body"></div>
+  </div>
+
+{% if not loop.first %}</template>{% endif %}
 </section>
 {% endfor %}
 
@@ -927,242 +1107,9 @@
 
 </div>
 
+<script type="application/json" id="report-data">{{ report_data_json }}</script>
 <script>
-  document.querySelectorAll('.tab').forEach(function (tab) {
-    tab.addEventListener('click', function () {
-      document.querySelectorAll('.tab').forEach(function (other) {
-        other.setAttribute('aria-selected', String(other === tab));
-      });
-      document.querySelectorAll('.panel').forEach(function (panel) {
-        panel.hidden = panel.id !== tab.dataset.panel;
-      });
-    });
-  });
-
-  // Per-panel view toggle (by competition / combined calendar / combined
-  // list) and club filter. Scoped to `panel` throughout — with more than one
-  // schedule option on the page, each panel needs its own independent view
-  // and filter state, or switching the outer option tabs would leak one
-  // panel's selection into another.
-  document.querySelectorAll('.panel').forEach(function (panel) {
-    var viewButtons = panel.querySelectorAll('.view-btn');
-    var clubSelect = panel.querySelector('.club-select');
-    if (!viewButtons.length) return;
-
-    // Headline numbers (matches on preferred weekday, back-to-back home
-    // days, ...) restated for the selected club, in place of the season-wide
-    // totals — the JSON payloads are rendered server-side once per option
-    // (see `club_headlines_json` in report/render.py) and swapped in here so
-    // filtering never needs a page reload.
-    var headlinesEl = panel.querySelector('.headlines');
-    var headlineScope = panel.querySelector('.headline-scope');
-    var globalHeadlines = headlinesEl ? JSON.parse(headlinesEl.dataset.global || '[]') : [];
-    var clubHeadlines = headlinesEl ? JSON.parse(headlinesEl.dataset.club || '{}') : {};
-
-    function renderHeadlines(rows) {
-      if (!headlinesEl) return;
-      headlinesEl.innerHTML = '';
-      rows.forEach(function (row) {
-        var tile = document.createElement('div');
-        tile.className = 'headline';
-        var v = document.createElement('div');
-        v.className = 'v';
-        v.textContent = row.value;
-        var l = document.createElement('div');
-        l.className = 'l';
-        l.textContent = row.label;
-        tile.appendChild(v);
-        tile.appendChild(l);
-        headlinesEl.appendChild(tile);
-      });
-    }
-
-    function applyClubFilter() {
-      var value = clubSelect ? clubSelect.value : '';
-      panel.querySelectorAll('[data-clubs]').forEach(function (el) {
-        var clubs = el.dataset.clubs ? el.dataset.clubs.split(' ') : [];
-        var visible = !value || clubs.indexOf(value) !== -1;
-        el.classList.toggle('club-hidden', !visible);
-      });
-      // Hide now-empty round/week groups and competitions rather than
-      // leaving blank labels behind. Cup fixtures carry `data-clubs` too
-      // (one entry per entered team, not per pairing), so the same filter
-      // reaches them.
-      panel.querySelectorAll('.round').forEach(function (round) {
-        var fixtures = round.querySelectorAll('.fx[data-clubs]');
-        if (!fixtures.length) return;
-        var anyVisible = round.querySelector('.fx[data-clubs]:not(.club-hidden)');
-        round.classList.toggle('club-hidden', !anyVisible);
-      });
-      panel.querySelectorAll('.comp').forEach(function (comp) {
-        var rounds = comp.querySelectorAll('.round');
-        if (!rounds.length) return;
-        var anyVisible = comp.querySelector('.round:not(.club-hidden)');
-        comp.classList.toggle('club-hidden', !anyVisible);
-      });
-      // Same rollup for the month calendar's day-detail blocks — a club's
-      // dots and rows carry `data-clubs` too (via the generic sweep above),
-      // so a day with nothing for the selected club collapses rather than
-      // showing an empty heading (issue #77 review).
-      updateDayDetailEmptyState();
-      if (value && clubHeadlines[value]) {
-        renderHeadlines(clubHeadlines[value]);
-        if (headlineScope) {
-          var label = clubSelect.options[clubSelect.selectedIndex].text;
-          headlineScope.textContent = label + '’s matches only:';
-        }
-      } else {
-        renderHeadlines(globalHeadlines);
-        if (headlineScope) headlineScope.textContent = '';
-      }
-    }
-
-    function setView(name) {
-      viewButtons.forEach(function (btn) {
-        var active = btn.dataset.view === name;
-        btn.classList.toggle('active', active);
-        btn.setAttribute('aria-pressed', String(active));
-      });
-      panel.querySelectorAll('.view-pane').forEach(function (pane) {
-        pane.hidden = pane.dataset.view !== name;
-      });
-    }
-
-    viewButtons.forEach(function (btn) {
-      btn.addEventListener('click', function () { setView(btn.dataset.view); });
-    });
-    if (clubSelect) {
-      clubSelect.addEventListener('change', applyClubFilter);
-    }
-
-    // Month calendar: tapping a day cell shows that day's games in the
-    // per-day detail blocks rendered below the grid (issue #77) — every
-    // block starts hidden, and a tap shows the one matching the clicked
-    // date while re-hiding whichever was shown before.
-    var calDays = panel.querySelectorAll('.cal-day[data-date]');
-    var dayDetails = panel.querySelectorAll('.day-detail[data-date]');
-    var dayDetailEmpty = panel.querySelector('.day-detail-empty');
-
-    // Re-derives whether the currently *selected* day still has anything to
-    // show once the club filter (which hides individual `.day-row`s, same
-    // as it hides `.fx` cards elsewhere) has run — a day with nothing left
-    // for the chosen club collapses to the empty-state message instead of
-    // showing a bare date heading. Shared between the day-tap handler and
-    // `applyClubFilter` since either one can change what's visible.
-    function updateDayDetailEmptyState() {
-      var visibleDetail = null;
-      dayDetails.forEach(function (detail) {
-        var rows = detail.querySelectorAll('.day-row[data-clubs]');
-        if (rows.length) {
-          var anyRowVisible = detail.querySelector('.day-row[data-clubs]:not(.club-hidden)');
-          detail.classList.toggle('club-hidden', !anyRowVisible);
-        }
-        if (!detail.hidden && !detail.classList.contains('club-hidden')) {
-          visibleDetail = detail;
-        }
-      });
-      if (!dayDetailEmpty) return visibleDetail;
-      var daySelected = panel.querySelector('.cal-day.selected');
-      if (!daySelected) {
-        dayDetailEmpty.hidden = false;
-        dayDetailEmpty.textContent = 'Tap a day above to see its games here.';
-      } else if (visibleDetail) {
-        dayDetailEmpty.hidden = true;
-      } else {
-        dayDetailEmpty.hidden = false;
-        dayDetailEmpty.textContent = 'No games on this day.';
-      }
-      return visibleDetail;
-    }
-
-    calDays.forEach(function (dayBtn) {
-      dayBtn.addEventListener('click', function () {
-        var chosenDate = dayBtn.dataset.date;
-        calDays.forEach(function (other) {
-          var isSelected = other.dataset.date === chosenDate;
-          other.classList.toggle('selected', isSelected);
-          other.setAttribute('aria-pressed', String(isSelected));
-        });
-        dayDetails.forEach(function (detail) {
-          detail.hidden = detail.dataset.date !== chosenDate;
-        });
-        var shownDetail = updateDayDetailEmptyState();
-        // The calendar can span well over a year (cup rounds run into next
-        // spring), so the shared detail block sits far below a day tapped in
-        // an early month — scroll it into view rather than leaving the
-        // reader to hunt for it themselves.
-        (shownDetail || dayDetailEmpty).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      });
-    });
-
-    setView(viewButtons[0].dataset.view);
-    applyClubFilter();
-  });
-
-  // Rule-description tooltips: hover/focus works via CSS alone; this adds
-  // tap-to-toggle for touch devices (no hover state), positions the
-  // (position:fixed) tooltip against its icon so it can't be clipped by
-  // an ancestor's overflow, and keeps it from overflowing the viewport
-  // or drifting from its icon while the page scrolls.
-  function positionTooltip(wrap) {
-    var icon = wrap.querySelector('.info-icon');
-    var tooltip = wrap.querySelector('.tooltip');
-    if (!icon || !tooltip) return;
-    var iconRect = icon.getBoundingClientRect();
-    tooltip.style.left = iconRect.left + 'px';
-    tooltip.style.top = (iconRect.bottom + 6) + 'px';
-    var rect = tooltip.getBoundingClientRect();
-    var rightOverflow = rect.right - (window.innerWidth - 8);
-    var leftOverflow = 8 - rect.left;
-    if (rightOverflow > 0) {
-      tooltip.style.left = (iconRect.left - rightOverflow) + 'px';
-    } else if (leftOverflow > 0) {
-      tooltip.style.left = leftOverflow + 'px';
-    }
-  }
-  function repositionVisibleTooltips() {
-    document.querySelectorAll('.info-wrap:hover, .info-wrap:focus-within, .info-wrap.open').forEach(positionTooltip);
-  }
-  document.querySelectorAll('.info-wrap').forEach(function (wrap) {
-    wrap.addEventListener('mouseenter', function () { positionTooltip(wrap); });
-    wrap.addEventListener('focusin', function () { positionTooltip(wrap); });
-  });
-  document.querySelectorAll('.info-icon').forEach(function (icon) {
-    icon.addEventListener('click', function (e) {
-      e.stopPropagation();
-      // Some icons now sit inside a <summary> (the collapsible "Biggest
-      // upsides"/"Biggest problems" entries) — without this, a click here
-      // would also trigger the browser's default toggle of the enclosing
-      // <details>, expanding/collapsing it every time someone reads a rule's
-      // description.
-      e.preventDefault();
-      var wrap = icon.closest('.info-wrap');
-      var wasOpen = wrap.classList.contains('open');
-      document.querySelectorAll('.info-wrap.open').forEach(function (w) {
-        w.classList.remove('open');
-      });
-      if (!wasOpen) {
-        wrap.classList.add('open');
-        positionTooltip(wrap);
-      }
-    });
-  });
-  document.addEventListener('click', function () {
-    document.querySelectorAll('.info-wrap.open').forEach(function (w) {
-      w.classList.remove('open');
-    });
-  });
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') {
-      document.querySelectorAll('.info-wrap.open').forEach(function (w) {
-        w.classList.remove('open');
-      });
-    }
-  });
-  // Capture phase so this also fires for scrolling inside .cal-wrap, whose
-  // 'scroll' event doesn't bubble.
-  window.addEventListener('scroll', repositionVisibleTooltips, true);
-  window.addEventListener('resize', repositionVisibleTooltips);
+{{ client_js }}
 </script>
 </body>
 </html>

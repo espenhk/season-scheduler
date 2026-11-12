@@ -150,5 +150,42 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+# Short badge text for a fixture the rule fired on (#29); the full wording
+# stays in the fixture's tooltip.
+BADGE_LABELS: dict[str, str] = {
+    "one_match_per_team_per_day": "double-booked",
+    "min_rest_days": "rest below minimum",
+    "blackout_dates": "blackout",
+    "venue_double_booking": "venue clash",
+    "club_home_clash": "club home clash",
+    "leg_ordering": "leg order",
+    "fixed_requirement": "fixed date",
+    "cup_round_conflict": "cup clash",
+    "european_commitment_conflict": "Europe clash",
+    "contingent_commitment_conflict": "likely clash",
+    "fixed_requirement_preferred": "preferred date",
+    "preferred_weekday": "off-day",
+    "consecutive_home_days": "home pair",
+    "consecutive_away_days": "away pair",
+    "home_away_breaks": "long run",
+    "home_away_balance": "imbalance",
+    "rest_comfort": "short rest",
+    "soft_venue_preference": "discouraged date",
+    "final_round_same_slot": "final-round slot",
+    "fixed_round_dates": "off TV date",
+    "round_day_quota": "day over quota",
+    "full_round_on_date": "round date",
+    "grass_away_round_one": "grass: away R1",
+    "grass_season_edge": "cold grass",
+    "late_kickoff_long_travel": "late + long trip",
+    "rivalry_fixture_on_date": "rivalry date",
+    "tv_time_spread": "TV slots",
+}
+
+
+def badge_label(constraint_id: str) -> str:
+    return BADGE_LABELS.get(constraint_id, constraint_id.replace("_", " "))
+
+
 def describe(constraint_id: str) -> str:
     return CONSTRAINT_DESCRIPTIONS.get(constraint_id, "")

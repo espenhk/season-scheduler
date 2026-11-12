@@ -16,11 +16,15 @@ tests/
 ├── rounds/              # round-robin pairing, cup/European resolution, kickoff assignment
 ├── scoring/              # the hard/soft constraint framework and its scoring math
 ├── solvers/               # the local-search and CP-SAT backends, and the contract both must satisfy
-├── report/                 # the Jinja2 → HTML report renderer
+├── report/                 # the Jinja2 → HTML report renderer; test_report_page.py drives it in Chromium via Playwright
 ├── refdata/                  # the optional reference-data and travel-time refresh/cache layer
 ├── scripts/                    # scripts/fetch_real_schedule.py's CSV conversion
 └── integration/                 # whole-pipeline tests: baselines, external schedules, generate+score
 ```
+
+`tests/report/test_report_page.py` needs a browser: `poetry run playwright install chromium`
+once (CI does this for the `report` suite). It skips itself when Playwright or a Chromium is
+unavailable; set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to point it at an existing binary.
 
 Run one area in isolation, e.g. `poetry run python -m pytest tests/scoring/`.
 Every folder passes standalone — none of them depend on another folder's

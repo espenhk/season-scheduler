@@ -52,7 +52,8 @@ class PreferredWeekday:
             if config is None:
                 continue
             weekday_index, weight = config
-            on_day = sum(1 for m in matches if m.date.weekday() == weekday_index)
+            on_day_matches = [m for m in matches if m.date.weekday() == weekday_index]
+            on_day = len(on_day_matches)
             total += weight * on_day
             count += on_day
             if ctx.detail and matches:
@@ -65,6 +66,8 @@ class PreferredWeekday:
                             f"{competition.name}: {on_day}/{len(matches)} matches "
                             f"({share:.0f}%) on {competition.preferred_weekday.capitalize()}"
                         ),
+                        # Only the rewarded matches; the report badges the rest.
+                        match_keys=tuple(m.key for m in on_day_matches),
                     )
                 )
 
@@ -119,6 +122,10 @@ class ConsecutiveHomeDays:
                         count += 1
                         if ctx.detail:
                             first_day = min(day, other_day)
+                            pair = (
+                                index.match_on(earlier, first_day, home=True),
+                                index.match_on(later, first_day + _ONE_DAY, home=True),
+                            )
                             events.append(
                                 Event(
                                     delta=weight,
@@ -127,6 +134,7 @@ class ConsecutiveHomeDays:
                                         f"{first_day}, {ctx.world.team_label(later)} home "
                                         f"{first_day + _ONE_DAY}"
                                     ),
+                                    match_keys=tuple(m.key for m in pair if m is not None),
                                     team_ids=(earlier, later),
                                 )
                             )
@@ -201,6 +209,14 @@ class ConsecutiveAwayDays:
                                         f"{ctx.world.venue(venue_b).name} "
                                         f"{first_day + _ONE_DAY} ({hours:.1f}h apart)"
                                     ),
+                                    match_keys=tuple(
+                                        m.key
+                                        for m in (
+                                            index.match_on(earlier, first_day, home=False),
+                                            index.match_on(later, first_day + _ONE_DAY, home=False),
+                                        )
+                                        if m is not None
+                                    ),
                                     team_ids=(earlier, later),
                                 )
                             )
@@ -234,31 +250,27 @@ class HomeAwayBreaks:
             weight = self._weight_by_team.get(team_id)
             if weight is None:
                 continue
-            run_length = 0
+            run: list[Match] = []
             run_is_home: bool | None = None
-            run_start: date | None = None
 
             for match in matches:
                 is_home = match.home_team == team_id
                 if is_home == run_is_home:
-                    run_length += 1
+                    run.append(match)
                 else:
                     total, count = self._close_run(
-                        run_length, run_is_home, run_start, weight, team_id, ctx, events, total, count
+                        run, run_is_home, weight, team_id, ctx, events, total, count
                     )
-                    run_is_home, run_length, run_start = is_home, 1, match.date
+                    run_is_home, run = is_home, [match]
 
-            total, count = self._close_run(
-                run_length, run_is_home, run_start, weight, team_id, ctx, events, total, count
-            )
+            total, count = self._close_run(run, run_is_home, weight, team_id, ctx, events, total, count)
 
         return ConstraintResult(self.id, "soft", total, count, events)
 
     def _close_run(
         self,
-        run_length: int,
+        run: list[Match],
         run_is_home: bool | None,
-        run_start: date | None,
         weight: float,
         team_id: str,
         ctx: EvalContext,
@@ -266,6 +278,7 @@ class HomeAwayBreaks:
         total: float,
         count: int,
     ) -> tuple[float, int]:
+        run_length = len(run)
         if run_is_home is None or run_length <= self.max_run:
             return total, count
         excess = run_length - self.max_run
@@ -278,8 +291,10 @@ class HomeAwayBreaks:
                     delta=-weight * excess,
                     detail=(
                         f"{ctx.world.team_label(team_id)} plays {run_length} consecutive "
-                        f"{where} matches from {run_start}"
+                        f"{where} matches from {run[0].date}"
                     ),
+                    # The matches extending the run past what is tolerated.
+                    match_keys=tuple(m.key for m in run[self.max_run :]),
                     team_ids=(team_id,),
                 )
             )
@@ -336,6 +351,7 @@ class HomeAwayBalance:
                                 f"{ctx.world.team_label(team_id)} plays {home} home and "
                                 f"{len(half) - home} away in the {label} half"
                             ),
+                            # Half-season drift has no culprit fixture, so it stays unpinned.
                             team_ids=(team_id,),
                         )
                     )
@@ -391,7 +407,7 @@ class RestComfort:
                                 f"{ctx.world.team_label(team_id)} gets {rest_days} days' rest "
                                 f"before {later.date} (comfortable is {comfortable})"
                             ),
-                            match_keys=(earlier.key, later.key),
+                            match_keys=(later.key,),
                             team_ids=(team_id,),
                         )
                     )
@@ -638,13 +654,17 @@ class RivalryFixtureOnDate:
             even_year = self.season_year % 2 == 0
             home_team = fixture.team_even_year_home if even_year else fixture.team_odd_year_home
             away_team = fixture.team_odd_year_home if even_year else fixture.team_even_year_home
-            satisfied = any(
-                m.competition_id == fixture.competition
-                and m.home_team == home_team
-                and m.away_team == away_team
-                for m in index.by_date.get(fixture.date, ())
+            satisfied = next(
+                (
+                    m
+                    for m in index.by_date.get(fixture.date, ())
+                    if m.competition_id == fixture.competition
+                    and m.home_team == home_team
+                    and m.away_team == away_team
+                ),
+                None,
             )
-            if not satisfied:
+            if satisfied is None:
                 continue
             total += fixture.weight
             count += 1
@@ -656,7 +676,7 @@ class RivalryFixtureOnDate:
                             f"{ctx.world.team_label(home_team)} host "
                             f"{ctx.world.team_label(away_team)} on {fixture.date}"
                         ),
-                        match_keys=(),
+                        match_keys=(satisfied.key,),
                         team_ids=(home_team, away_team),
                     )
                 )

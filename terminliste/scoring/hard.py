@@ -67,7 +67,7 @@ class MinRestDays:
                                 f"{ctx.world.team_label(team_id)} has {rest_days} rest day(s) "
                                 f"between {earlier.date} and {later.date} — needs {minimum}"
                             ),
-                            match_keys=(earlier.key, later.key),
+                            match_keys=(later.key,),
                         )
                     )
 
@@ -238,11 +238,12 @@ class ClubHomeClash:
                 penalty -= self.weight * clashes
                 if ctx.detail:
                     labels = " and ".join(ctx.world.team_label(t) for t in teams_at_home)
+                    clash_matches = [index.match_on(t, day, home=True) for t in teams_at_home]
                     events.append(
                         Event(
                             delta=-self.weight * clashes,
                             detail=f"{club.name}: {labels} both at home on {day}",
-                            match_keys=(),
+                            match_keys=tuple(m.key for m in clash_matches if m is not None),
                         )
                     )
 
@@ -372,7 +373,7 @@ class OneMatchPerTeamPerDay:
                         Event(
                             delta=-self.weight * (total - 1),
                             detail=f"{ctx.world.team_label(team_id)} plays {total} matches on {day}",
-                            match_keys=(),
+                            match_keys=tuple(m.key for m in matches if m.date == day),
                         )
                     )
 
