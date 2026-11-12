@@ -23,6 +23,7 @@ sync_api = pytest.importorskip("playwright.sync_api")
 from terminliste.report.render import render_report  # noqa: E402
 from terminliste.scoring.base import EvalContext, evaluate  # noqa: E402
 from terminliste.scoring.hard import OneMatchPerTeamPerDay  # noqa: E402
+from terminliste.scoring.registry import rule_name  # noqa: E402
 from terminliste.scoring.soft import (  # noqa: E402
     ConsecutiveHomeDays,
     PreferredWeekday,
@@ -307,7 +308,7 @@ def test_hovering_a_badge_shows_the_events_detail_and_points(page):
     tooltip = page.locator("#flag-tooltip")
     tooltip.wait_for(state="visible")
     text = " ".join(tooltip.inner_text().split())
-    assert "home pair" in text and "+12.5 pts" in text
+    assert "Back-to-back home days" in text and "+12.5 pts" in text
     assert "split over 2 fixtures" in text
     assert "home 2026-06-06" in text  # the event's own detail
 
@@ -374,9 +375,9 @@ def test_lens_selector_lists_only_rules_with_fixtures_and_their_totals(page):
     options = page.locator("#panel-1 .lens-select option")
     assert [o.get_attribute("value") for o in options.all()] == ["", PAIR, OFF_DAY]
     texts = _texts(options)
-    assert texts[1].startswith("consecutive home days (+25") and texts[1].endswith(", 2)")
+    assert texts[1].startswith("Back-to-back home days (+25") and texts[1].endswith(", 2)")
     # The off-day rule is shown inversely: its fixtures are the ones that missed the reward.
-    assert texts[2] == "preferred weekday (2 off-day)"
+    assert texts[2] == "Preferred weekday (2 off-day)"
 
 
 def test_lens_dims_other_fixtures_and_emphasises_matching_ones_in_every_view(page):
@@ -668,7 +669,7 @@ def test_the_bar_controls_drive_the_view_club_and_rule_filters_and_chips_clear_t
     page.select_option("#panel-1 .lens-select", PAIR)
     assert _rect(page, "#panel-1 .controls")["top"] == 0
     assert page.inner_text("#panel-1 .club-clear .chip-text") == "Club B"
-    assert PAIR.replace("_", " ") in page.inner_text("#panel-1 .lens-clear .chip-text")
+    assert rule_name(PAIR) in page.inner_text("#panel-1 .lens-clear .chip-text")
 
     page.click("#panel-1 .lens-clear")
     assert page.input_value("#panel-1 .lens-select") == "" and not page.locator("#panel-1 .lens-clear").is_visible()
@@ -959,9 +960,9 @@ def test_round_labels_count_costs_and_repeated_badges_and_flag_hard_breaks(rules
     body = _view(rules_page, "by-competition")
     round_four = body.locator(".round").nth(3)  # Eliteserien round 4: two short-rest games
     summary = " ".join(round_four.locator(".rsum").inner_text().split())
-    assert summary.startswith("−") and " pts · 2 games · 2 with costs · 2 × short rest" in summary
+    assert summary.startswith("−") and " pts · 2 games · 2 with costs · 2 × Comfortable rest" in summary
     assert round_four.locator(".rnet.cost").count() == 1  # a net below zero reads amber
-    assert page_label(rules_page, 3) == "Round 4: −24 pts · 2 games · 2 with costs · 2 × short rest · midweek"
+    assert page_label(rules_page, 3) == "Round 4: −24 pts · 2 games · 2 with costs · 2 × Comfortable rest · midweek"
     # Hard breaks show as a count in the label and as a badge on the season strip.
     assert body.locator(".rsum", has_text="hard break").count() >= 1
     strip = rules_page.locator("#panel-1 .season-strip")
@@ -1018,15 +1019,6 @@ def _signed(total):
     return text.replace("-", "−")
 
 
-def _points_text(total):
-    """The page's points text: one decimal under 10, whole numbers above."""
-    if abs(total) < 10:
-        text = f"{abs(total):.1f}"
-    else:
-        text = str(int(abs(total) + 0.5))
-    return ("+" if total > 0 else "−" if total < 0 else "") + text
-
-
 def _club_teams(data, club):
     return [tid for tid, team in data["teams"].items() if team["club"] == club]
 
@@ -1061,6 +1053,16 @@ def _club_fixture_count(data, club):
     return league + cup, len(data["options"][0]["matches"]) + len(data["shared"])
 
 
+def _share_text(total, gross):
+    """A rule's share of the season's movement, rounded half up as the page does."""
+    share = int(100 * abs(total) / gross + 0.5) if gross else 0
+    return ("+" if total > 0 else "−" if total < 0 else "") + f"{share}%"
+
+
+def _raw_text(total):
+    return "0.0" if round(total, 1) == 0 else _signed(total)
+
+
 def test_selecting_a_club_restates_the_breakdown_as_its_own_share(page):
     data = _wire(page)
     option = data["options"][0]
@@ -1071,11 +1073,16 @@ def test_selecting_a_club_restates_the_breakdown_as_its_own_share(page):
     rows = page.locator("#panel-1 .scope-breakdown tbody tr")
     assert rows.count() == len(option["order"])
     for i, index in enumerate(option["order"]):
-        rule_id = data["rules"][index]["id"]
+        rule = data["rules"][index]
         row = rows.nth(i)
-        assert row.locator(".name").inner_text() == rule_id.replace("_", " ")
-        total = round(expected[rule_id], 1)
-        assert row.locator("td").nth(2).inner_text() == (_signed(total) if total else "—"), rule_id
+        assert row.locator(".name").inner_text() == rule_name(rule["id"])
+        total = expected[rule["id"]]
+        cell = row.locator("td").nth(2)
+        if rule.get("hard"):
+            assert cell.inner_text() == (_signed(total) if round(total, 1) else "—"), rule["id"]
+        else:
+            assert cell.locator(".share-text").inner_text() == _share_text(total, option["gross"]), rule["id"]
+            assert cell.locator(".raw").inner_text() == _raw_text(total), rule["id"]
 
 
 def test_the_club_scorecard_lists_its_biggest_upsides_and_problems_from_its_share(page):
@@ -1086,16 +1093,10 @@ def test_the_club_scorecard_lists_its_biggest_upsides_and_problems_from_its_shar
 
     ups = page.locator("#panel-1 .scope-card .col").nth(0).locator("details.item")
     downs = page.locator("#panel-1 .scope-card .col").nth(1).locator("details.item")
-    got_ups = {(ups.nth(i).locator(".name").inner_text(), ups.nth(i).locator(".delta").inner_text()) for i in range(ups.count())}
-    got_downs = {(downs.nth(i).locator(".name").inner_text(), downs.nth(i).locator(".delta").inner_text()) for i in range(downs.count())}
-    want_ups = {
-        (rule.replace("_", " "), _points_text(total))
-        for rule, total in expected.items() if total > 0
-    }
-    want_downs = {
-        (rule.replace("_", " "), _points_text(total))
-        for rule, total in expected.items() if total < 0
-    }
+    got_ups = {(ups.nth(i).locator(".name").inner_text(), ups.nth(i).locator(".share-text").inner_text()) for i in range(ups.count())}
+    got_downs = {(downs.nth(i).locator(".name").inner_text(), downs.nth(i).locator(".share-text").inner_text()) for i in range(downs.count())}
+    want_ups = {(rule_name(rule), _share_text(total, option["gross"])) for rule, total in expected.items() if total > 0}
+    want_downs = {(rule_name(rule), _share_text(total, option["gross"])) for rule, total in expected.items() if total < 0}
     assert got_ups == want_ups
     assert got_downs == want_downs
 
@@ -1321,3 +1322,41 @@ def test_the_club_scorecard_and_timeline_fit_a_phone_without_overflow(touch_page
     _view(touch_page, "club-timeline")
     assert touch_page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     assert touch_page.locator("#panel-1 .tl-grid").bounding_box()["width"] <= 390 - 32
+
+
+_SHARE_TEXT = re.compile(r"^[+−]?\d+%$")
+
+
+def test_the_scorecard_names_rules_and_weighs_each_as_a_share_of_the_movement(page):
+    cols = page.locator("#panel-1 .cols")
+    names = _texts(cols.locator(".name"))
+    shares = _texts(cols.locator(".share-text"))
+    assert names and shares
+    assert all("_" not in name for name in names), names
+    assert all(_SHARE_TEXT.match(share) for share in shares), shares
+    assert rule_name(PAIR) in names
+
+
+def test_how_is_this_scored_explains_the_score_in_words(page):
+    page.click("#panel-1 .how-scored > summary")
+    text = " ".join(page.locator("#panel-1 .how-body").inner_text().split())
+    assert "20 + 80 × s" in text
+    assert "per match" in text
+    assert "Zero soft points would sit at 60" in text
+
+
+def test_the_score_explanation_and_club_breakdown_fit_a_phone_without_overflow(browser, report_url):
+    context = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
+    page = context.new_page()
+    problems = []
+    page.on("console", lambda m: problems.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: problems.append(str(e)))
+    page.goto(report_url)
+    _open_filters(page)
+    page.select_option("#panel-1 .club-select", "club_a")
+    page.click("#panel-1 .how-scored > summary")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.locator("#panel-1 .scope-breakdown > summary").click()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert problems == []
+    context.close()

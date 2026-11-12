@@ -233,7 +233,7 @@
     hideFlagTip();
     flagTip.textContent = '';
     var points = flag.rule.hard ? 'broken rule' : flag.delta === 0 ? 'reward forgone' : signed(flag.delta) + ' pts';
-    append(flagTip, el('b', 'tt-head', flag.rule.label + ' · ' + points));
+    append(flagTip, el('b', 'tt-head', flag.rule.name + ' · ' + points));
     flag.items.forEach(function (item) {
       var text = item.detail;
       if (item.n > 1) text += ' (this fixture’s share of ' + signed(item.delta * item.n) + ', split over ' + item.n + ' fixtures)';
@@ -385,7 +385,7 @@
     if (sum.badged) parts.push({ text: netText(sum.net) + ' pts', net: true, cls: netClass(sum.net) });
     parts.push({ text: plural(sum.games, 'game', 'games') });
     if (sum.costs) parts.push({ text: sum.costs + ' with costs' });
-    if (sum.top && sum.top.n >= 2) parts.push({ text: sum.top.n + ' × ' + sum.top.rule.label });
+    if (sum.top && sum.top.n >= 2) parts.push({ text: sum.top.n + ' × ' + sum.top.rule.name });
     if (sum.broken) parts.push({ text: plural(sum.broken, 'hard break', 'hard breaks') });
     return parts;
   }
@@ -786,7 +786,7 @@
 
   var REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  function ruleName(rule) { return rule.id.replace(/_/g, ' '); }
+  function ruleName(rule) { return rule.name; }
 
   function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
 
@@ -953,6 +953,7 @@
     var loose = {};
     (this.data.clubUnpinned[club] || []).forEach(function (row) { loose[row[0]] = row; });
     var ranks = this.data.clubRanks[club] || [];
+    var self = this;
     return this.data.order.map(function (index) {
       var rule = DATA.rules[index];
       var total = 0;
@@ -968,10 +969,12 @@
         total += extra[1];
         count += extra[2];
       }
+      total = Math.round(total * 100) / 100;
       return {
         rule: rule,
         ranks: ranks.filter(function (row) { return row.id === rule.id; }),
-        total: Math.round(total * 100) / 100,
+        total: total,
+        share: rule.hard ? null : (self.data.gross ? 100 * Math.abs(total) / self.data.gross : 0),
         count: Math.round(count),
         fixtures: Object.keys(fixtures).length,
         loose: extra ? extra[2] : 0
@@ -1035,12 +1038,28 @@
     return list;
   }
 
+  // A rule's share of the season's movement as a bar with its signed share as
+  // text, drawn the same way the server draws it; hard rules are counted instead.
+  function contributionNode(total, share, count) {
+    if (share === null) return el('span', 'delta', plural(count, 'violation', 'violations'));
+    var polarity = total > 0 ? 'gain' : total < 0 ? 'cost' : 'neutral';
+    var track = el('span', 'share-track');
+    track.setAttribute('aria-hidden', 'true');
+    var fill = el('span', 'share-fill');
+    fill.style.width = (Math.round(share * 10) / 10) + '%';
+    append(track, fill);
+    var sign = Math.round(share) === 0 ? '' : total > 0 ? '+' : '\u2212';
+    return append(el('span', 'contrib ' + polarity), track, el('span', 'share-text', sign + Math.round(share) + '%'));
+  }
+
   function scopeItem(score, kind) {
     var item = el('details', 'item ' + kind);
     if (score.fixtures) item.setAttribute('data-rule', score.rule.id);
     var summary = el('summary', 'top');
-    append(summary, ruleNameRow(score.rule), el('span', 'delta', points(score.total)));
-    var body = append(el('div', 'item-body'), ruleActions(score));
+    append(summary, ruleNameRow(score.rule), contributionNode(score.total, score.share, score.count));
+    var body = append(el('div', 'item-body'));
+    if (score.share !== null) body.appendChild(el('div', 'desc', 'Raw score change ' + signed(score.total) + '.'));
+    body.appendChild(ruleActions(score));
     if (score.fixtures) body.appendChild(el('div', 'rule-fixtures'));
     if (score.loose) body.appendChild(el('div', 'desc', 'Includes ' + plural(score.loose, 'event', 'events') + ' not tied to one fixture.'));
     if (score.ranks.length) body.appendChild(el('div', 'desc', 'Rank by events, 1st = most: ' + rankText(score.ranks) + '.'));
@@ -1052,6 +1071,16 @@
     if (!scores.length) col.appendChild(el('div', 'desc', empty));
     scores.forEach(function (score) { col.appendChild(scopeItem(score, kind)); });
     return col;
+  }
+
+  function contributionCell(score) {
+    var cell = el('td', 'num');
+    if (score.share === null) {
+      cell.textContent = score.total ? signed(score.total) : '—';
+      return cell;
+    }
+    append(cell, contributionNode(score.total, score.share, score.count), el('div', 'raw', signed(score.total)));
+    return cell;
   }
 
   Option.prototype.scopeBreakdown = function (scores, club) {
@@ -1074,7 +1103,7 @@
         row,
         append(el('td'), ruleNameRow(rule)),
         append(el('td'), el('span', 'kind ' + (rule.hard ? 'hard' : 'soft'), rule.hard ? 'hard' : 'soft')),
-        el('td', 'num', score.total ? signed(score.total) : '—'),
+        contributionCell(score),
         el('td', 'num', String(score.count)),
         el('td', '', score.ranks.length ? rankText(score.ranks) : '—'),
         last

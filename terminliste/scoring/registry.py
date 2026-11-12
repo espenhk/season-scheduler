@@ -150,6 +150,39 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+# Display names for the report's scorecards, lens and fairness rows. The raw
+# constraint id is a code identifier; these are what a reader sees.
+RULE_NAMES: dict[str, str] = {
+    "one_match_per_team_per_day": "One match per team per day",
+    "min_rest_days": "Minimum rest between matches",
+    "blackout_dates": "Blackout dates",
+    "venue_double_booking": "Venue double-booking",
+    "club_home_clash": "Club home clash",
+    "leg_ordering": "Leg ordering",
+    "fixed_requirement": "Fixed home date",
+    "cup_round_conflict": "Cup round clash",
+    "european_commitment_conflict": "European clash",
+    "contingent_commitment_conflict": "Likely cup or European clash",
+    "fixed_requirement_preferred": "Preferred home date",
+    "preferred_weekday": "Preferred weekday",
+    "consecutive_home_days": "Back-to-back home days",
+    "consecutive_away_days": "Back-to-back away days",
+    "home_away_breaks": "Long home or away runs",
+    "home_away_balance": "Home and away balance",
+    "rest_comfort": "Comfortable rest",
+    "soft_venue_preference": "Discouraged dates",
+    "final_round_same_slot": "Final round in one slot",
+    "fixed_round_dates": "TV-fixed round dates",
+    "round_day_quota": "Weekday quota per round",
+    "full_round_on_date": "Full round on one date",
+    "grass_away_round_one": "Grass pitch away in round one",
+    "grass_season_edge": "Grass pitch at season edges",
+    "late_kickoff_long_travel": "Late kickoff on long trips",
+    "rivalry_fixture_on_date": "Rivalry fixture date",
+    "tv_time_spread": "TV kickoff spread",
+}
+
+
 # Short badge text for a fixture the rule fired on (#29); the full wording
 # stays in the fixture's tooltip.
 BADGE_LABELS: dict[str, str] = {
@@ -189,3 +222,7 @@ def badge_label(constraint_id: str) -> str:
 
 def describe(constraint_id: str) -> str:
     return CONSTRAINT_DESCRIPTIONS.get(constraint_id, "")
+
+
+def rule_name(constraint_id: str) -> str:
+    return RULE_NAMES.get(constraint_id, constraint_id.replace("_", " "))

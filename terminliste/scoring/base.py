@@ -33,6 +33,7 @@ HARD_PENALTY = 10_000.0
 # shipped Eliteserien + Toppserien data, netting 6-8 points/match after a
 # minute of search, lands in the low-to-mid 90s.
 INFEASIBLE_CEILING = 20.0
+INFEASIBLE_DECAY = 0.25
 SOFT_SCALE = 3.0
 
 # Keeps a feasible schedule strictly above INFEASIBLE_CEILING: `_sigmoid`
@@ -176,6 +177,15 @@ class Score:
         return (self.hard_violations, -self.soft_total)
 
     @property
+    def soft_per_match(self) -> float:
+        return self.soft_total / self.num_matches if self.num_matches else 0.0
+
+    @property
+    def soft_saturation(self) -> float:
+        """The soft score on a 0-1 curve: 0.5 at zero soft per match."""
+        return max(_sigmoid(self.soft_per_match / SOFT_SCALE), _MIN_SATURATION)
+
+    @property
     def points(self) -> float:
         """Overall schedule quality on a fixed 0-100 scale.
 
@@ -185,11 +195,8 @@ class Score:
         working one.
         """
         if self.hard_violations:
-            return INFEASIBLE_CEILING * math.exp(-0.25 * self.hard_violations)
-
-        per_match = self.soft_total / self.num_matches if self.num_matches else 0.0
-        saturation = max(_sigmoid(per_match / SOFT_SCALE), _MIN_SATURATION)
-        return INFEASIBLE_CEILING + (100.0 - INFEASIBLE_CEILING) * saturation
+            return INFEASIBLE_CEILING * math.exp(-INFEASIBLE_DECAY * self.hard_violations)
+        return INFEASIBLE_CEILING + (100.0 - INFEASIBLE_CEILING) * self.soft_saturation
 
     @property
     def search_cost(self) -> float:

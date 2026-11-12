@@ -27,8 +27,8 @@ from ..model.loader import World
 from ..model.schema import WEEKDAYS, Competition, Match, Season
 from ..rounds.cup_schedule import NEUTRAL_CUP_VENUE, CupRoundPlacement, CupSchedule
 from ..rounds.european_schedule import ResolvedLegs
-from ..scoring.base import ConstraintResult, Event, Score
-from ..scoring.registry import BADGE_LABELS, badge_label, describe
+from ..scoring.base import INFEASIBLE_CEILING, SOFT_SCALE, ConstraintResult, Event, Score
+from ..scoring.registry import BADGE_LABELS, badge_label, describe, rule_name
 from ..scoring.soft import PreferredWeekday
 from ..slot_planner import search_space_log10
 from ..solvers.base import Candidate, SearchStats, SolverResult
@@ -188,6 +188,7 @@ def _build_option(
     club_headlines = _club_headlines(world, candidate, dual_club_ids)
     fairness = _fairness_rows(world, candidate)
     month_calendar, month_calendar_details = _month_calendar_view(combined_entries)
+    gross = _gross_movement(score)
     return {
         "label": candidate.label,
         "seed": candidate.seed,
@@ -196,15 +197,22 @@ def _build_option(
         "hard_violations": score.hard_violations,
         "soft_total": score.soft_total,
         "points": score.points,
+        "scoring": _scoring_view(score, gross),
         "headlines": headlines,
         "hard_violation_detail": (
-            [_result_row(r, world, pinned, full=True) for r in score.hard_results() if r.count]
+            [_result_row(r, world, pinned, full=True, gross=gross) for r in score.hard_results() if r.count]
             if full_diagnostics
             else []
         ),
-        "problems": [_result_row(r, world, pinned, full=full_diagnostics) for r in score.biggest_problems(limit=limit)],
-        "upsides": [_result_row(r, world, pinned, full=full_diagnostics) for r in score.biggest_upsides(limit=limit)],
-        "breakdown": [_result_row(r, world, pinned, full=True) for r in _ordered_results(score)],
+        "problems": [
+            _result_row(r, world, pinned, full=full_diagnostics, gross=gross)
+            for r in score.biggest_problems(limit=limit)
+        ],
+        "upsides": [
+            _result_row(r, world, pinned, full=full_diagnostics, gross=gross)
+            for r in score.biggest_upsides(limit=limit)
+        ],
+        "breakdown": [_result_row(r, world, pinned, full=True, gross=gross) for r in _ordered_results(score)],
         "fairness": fairness,
         "league_entries": entries,
         "client": payload.option_wire(
@@ -219,6 +227,7 @@ def _build_option(
             month_calendar=month_calendar,
             month_calendar_details=month_calendar_details,
             rule_totals={r.constraint_id: r.total for r in score.results},
+            gross=gross,
             score_order=[rule_index[r.constraint_id] for r in _ordered_results(score)],
             club_unpinned=_club_unpinned(world, candidate, rule_index),
             club_ranks=_club_ranks(fairness),
@@ -352,6 +361,7 @@ def _search_stats_view(stats: SearchStats) -> dict | None:
     breakdown = [
         {
             "id": constraint_id,
+            "name": rule_name(constraint_id),
             "description": describe(constraint_id),
             "count": count,
             "pct": 100.0 * count / stats.hard_violation_scenarios if stats.hard_violation_scenarios else 0.0,
@@ -387,17 +397,47 @@ def _pinned_fixture_counts(entries: list[dict]) -> dict[str, int]:
     return counts
 
 
+def _gross_movement(score: Score) -> float:
+    """Total soft movement, the denominator of every rule's share (#34)."""
+    return sum(abs(r.total) for r in score.soft_results())
+
+
+def _scoring_view(score: Score, gross: float) -> dict:
+    """The numbers behind the 0-100 score, so the page can show its working."""
+    return {
+        "feasible": score.feasible,
+        "hard_violations": score.hard_violations,
+        "raw_soft": score.soft_total,
+        "num_matches": score.num_matches,
+        "soft_per_match": score.soft_per_match,
+        "soft_scale": SOFT_SCALE,
+        "saturation": score.soft_saturation,
+        "ceiling": INFEASIBLE_CEILING,
+        "points": score.points,
+        "gross": gross,
+    }
+
+
 def _result_row(
-    result: ConstraintResult, world: World, pinned: dict[str, int], full: bool = False
+    result: ConstraintResult,
+    world: World,
+    pinned: dict[str, int],
+    full: bool = False,
+    gross: float = 0.0,
 ) -> dict:
     # A rule's fixtures are listed by the page from the fixture flags, so only
     # the events that point at no fixture are spelled out here.
     if pinned.get(result.constraint_id):
         result = replace(result, events=[e for e in result.events if not e.match_keys])
+    # Soft rules are weighed as a share of the season's total movement, so rules
+    # sit on one scale; hard rules are counted, not weighed.
+    share = 100.0 * abs(result.total) / gross if result.kind == "soft" and gross else None
     return {
         "id": result.constraint_id,
+        "name": rule_name(result.constraint_id),
         "kind": result.kind,
         "total": result.total,
+        "share": share,
         "count": result.count,
         "description": describe(result.constraint_id),
         # A handful of concrete examples: enough to judge whether the number
@@ -1202,6 +1242,7 @@ def _fairness_row(constraint_id: str, entries: list[tuple[str, int, str]], by: s
     mean = sum(values) / len(values)
     return {
         "id": constraint_id,
+        "name": rule_name(constraint_id),
         "by": by,
         "description": describe(constraint_id),
         "entries": [{"label": label, "count": n, "club": club} for label, n, club in entries],
