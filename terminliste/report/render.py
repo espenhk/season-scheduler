@@ -260,7 +260,6 @@ def _build_option(
 # -- comparing the options (#35) ------------------------------------------------
 
 _COMPARE_LIST_LIMIT = 100
-_COMPARE_NAMES_LIMIT = 3
 
 
 def _score_marks(options: list[dict]) -> list[tuple[str, str | None]]:
@@ -283,27 +282,18 @@ def _score_marks(options: list[dict]) -> list[tuple[str, str | None]]:
     ]
 
 
-def _extremes(numbers: list[float | None], higher_is_better: bool) -> tuple[list[bool], list[bool]]:
-    """Which options hold the best and the weakest value on a row. A row where
-    every option is level has neither, so nothing is marked."""
+def _best(numbers: list[float | None], higher_is_better: bool) -> list[bool]:
+    """Which options hold the best value on a row. A row where every option is
+    level has none, so nothing is marked."""
     present = [value for value in numbers if value is not None]
     if len(set(present)) < 2:
-        return [False] * len(numbers), [False] * len(numbers)
+        return [False] * len(numbers)
     top = max(present) if higher_is_better else min(present)
-    bottom = min(present) if higher_is_better else max(present)
-    best = [value is not None and value == top for value in numbers]
-    weakest = [value is not None and value == bottom for value in numbers]
-    return best, weakest
+    return [value is not None and value == top for value in numbers]
 
 
 def _signed(value: float) -> str:
     return f"{value:+.1f}".replace("-", "−")
-
-
-def _listed(names: list[str]) -> str:
-    shown = ", ".join(names[:_COMPARE_NAMES_LIMIT])
-    extra = len(names) - _COMPARE_NAMES_LIMIT
-    return f"{shown} and {extra} more" if extra > 0 else shown
 
 
 def _fixture_identity(match: Match) -> tuple:
@@ -456,11 +446,11 @@ def _comparison_view(
         return None if result is None else round(result.total, 1)
 
     def row(label, numbers, texts, subs=None, higher_is_better=True) -> dict:
-        best, weakest = _extremes(numbers, higher_is_better)
+        best = _best(numbers, higher_is_better)
         cells = [
             {"text": texts[i], "sub": subs[i] if subs else "", "best": best[i]} for i in range(count)
         ]
-        return {"label": label, "cells": cells, "best": best, "weakest": weakest}
+        return {"label": label, "cells": cells, "best": best}
 
     score_row = row(
         "Score out of 100",
@@ -474,7 +464,6 @@ def _comparison_view(
         "cells": [{"text": "baseline", "sub": "", "best": False}]
         + [{"text": f"{diff['count']} of {diff['total']}", "sub": "", "best": False} for diff in diffs],
         "best": [False] * count,
-        "weakest": [False] * count,
     }
 
     headline_rules: list[str] = []
