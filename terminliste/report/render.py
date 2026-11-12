@@ -172,9 +172,6 @@ def render_report(
         flag_legend=_flag_legend(options, hard_ids),
         tint_good=TINT_GOOD,
         tint_cost=-TINT_COST,
-        calendar_legend=[
-            {**row, "cls": payload.competition_class(row["id"])} for row in calendar_legend
-        ],
         palette_css=payload.palette_css(club_colors, competitions),
         report_data_json=payload.json_for_script(report_data),
         client_js=(TEMPLATE_DIR / "report.js").read_text(encoding="utf-8"),
@@ -207,9 +204,14 @@ def _build_option(
     club_headlines = _club_headlines(world, candidate, dual_club_ids)
     fairness = _fairness_rows(world, candidate)
     month_calendar, month_calendar_details = _month_calendar_view(combined_entries)
+    shown_competitions = {entry["competition_id"] for entry in combined_entries}
     gross = _gross_movement(score)
     return {
         "label": candidate.label,
+        "calendar_legend": [
+            {**row, "cls": payload.competition_class(row["id"])}
+            for row in _calendar_legend(world, competition_colors, shown_competitions)
+        ],
         "seed": candidate.seed,
         "full": full_diagnostics,
         "feasible": score.feasible,
@@ -858,11 +860,13 @@ def _competition_colors(world: World) -> dict[str, dict]:
     }
 
 
-def _calendar_legend(world: World, competition_colors: dict[str, dict]) -> list[dict]:
+def _calendar_legend(
+    world: World, competition_colors: dict[str, dict], only: set[str] | None = None
+) -> list[dict]:
     """Competition name -> dot colour, for the month calendar's colour key
     (#77). A dot's `title` only surfaces on desktop hover, no help on the
     phone this view targets, so the legend is how a reader learns what a
-    colour means."""
+    colour means. `only` keeps the competitions that have a date in view."""
     return sorted(
         (
             {
@@ -873,7 +877,7 @@ def _calendar_legend(world: World, competition_colors: dict[str, dict]) -> list[
                 "bg": competition_colors[competition.id]["bg"],
             }
             for competition in world.competitions.values()
-            if competition.id in competition_colors
+            if competition.id in competition_colors and (only is None or competition.id in only)
         ),
         key=lambda row: row["name"],
     )
@@ -1252,7 +1256,7 @@ def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
     day_details = [
         {
             "date_iso": day.isoformat(),
-            "label": day.strftime("%A %d %B %Y"),
+            "label": f"{day:%A} {day.day} {day:%B %Y}",
             "competition_ids": _day_competitions(day_entries),
             # Earliest kickoff first; an entry without one — every cup and
             # European entry — sorts after the timed ones, not before them.
@@ -1271,10 +1275,11 @@ def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 def _month_grid(month_start: date) -> dict:
-    """One calendar month's Monday-first weeks as ISO dates. Padding days from
-    neighbouring months are kept so every week is a full row."""
+    """One calendar month's Monday-first weeks as ISO dates, with `None` for
+    the days of neighbouring months: every week is a full row, but a date
+    appears only once in the grid (as its own month's cell)."""
     weeks = [
-        [day.isoformat() for day in week]
+        [day.isoformat() if day.month == month_start.month else None for day in week]
         for week in calendar.Calendar(firstweekday=0).monthdatescalendar(month_start.year, month_start.month)
     ]
     return {"label": month_start.strftime("%B %Y"), "key": month_start.strftime("%Y-%m"), "weeks": weeks}

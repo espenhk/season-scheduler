@@ -17,7 +17,8 @@ season: 2026
 gender: men
 format: cup
 
-color: "#e67e22"
+# NM cup family colour, a shade of red (#36); see the colour test in tests/report/test_render.py.
+color: "#e82850"
 
 movable: false
 

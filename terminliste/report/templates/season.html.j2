@@ -492,7 +492,7 @@
        text-transform here — unlike a full competition name, which would
        read fine either way. */
     font-size: 10px; padding: 1px 6px; border-radius: 10px;
-    background: var(--comp-bg, #eeeee9); color: var(--comp-fg, var(--muted)); letter-spacing: 0.03em;
+    background: var(--comp-bg, #eeeee9); color: var(--comp-ink, var(--comp-fg, var(--muted))); letter-spacing: 0.03em;
   }
   /* Home = square, away = diamond, both filled with the club's own colour
      (data/clubs.yml). Fixed pixel sizes rather than a text glyph — a
@@ -543,11 +543,41 @@
   }
   .cal-day:hover, .cal-day:focus-visible { border-color: var(--accent); outline: none; }
   .cal-day.selected { border-color: var(--accent); background: #eaf2f8; }
-  .cal-day.out-month { color: var(--muted); background: #fbfbfa; }
+  /* Days of the neighbouring months: space in the grid, nothing to tap. */
+  .cal-day.cal-pad { border-color: transparent; background: none; }
   .cal-daynum { font-size: 12.5px; font-variant-numeric: tabular-nums; }
-  .cal-dots { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; min-height: 8px; }
+  .cal-comps { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 5px; min-height: 8px; font-size: 10.5px; line-height: 1.2; }
+  .cal-comp { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
+  .cal-comp .cal-lbl { display: none; font-weight: 600; color: var(--comp-ink, var(--ink)); }
+  .cal-comp .cal-n { color: var(--ink); }
+  @media (min-width: 720px) { .cal-comp .cal-lbl { display: inline; } }
+  .month-jump { display: flex; gap: 6px; overflow-x: auto; white-space: nowrap; padding: 2px 0 12px; }
+  .month-jump button {
+    font: inherit; font-size: 12.5px; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; cursor: pointer; flex: none;
+  }
+  .month-jump button:hover, .month-jump button:focus-visible { border-color: var(--accent); outline: none; }
+  .other-dates { margin-top: 26px; }
+  .other-dates h4 { margin: 0 0 8px; font-size: 15px; }
+  .other-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .other-month { min-width: 9.5em; font-size: 13px; font-weight: 600; }
+  .other-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .cal-day.other-date { flex-direction: row; align-items: center; gap: 6px; min-height: 0; padding: 4px 9px; border-radius: 999px; font-size: 12.5px; }
+  .other-day { white-space: nowrap; }
+  .cal-day .cal-count { display: none; } /* the competition counts already give the total */
+  .day-step { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .day-step button {
+    font: inherit; font-size: 13px; color: var(--accent); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer;
+  }
+  .day-step button:hover:not(:disabled), .day-step button:focus-visible { border-color: var(--accent); outline: none; }
+  .day-step button:disabled { color: var(--muted); cursor: default; }
   .cal-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--comp-fg, var(--muted)); }
-  .day-details { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .legend .cal-dot { margin-right: 5px; }
+  .day-details {
+    margin: 6px 0 4px; padding: 12px 14px; background: var(--panel);
+    border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: 8px;
+  }
   .day-detail-empty { color: var(--muted); font-size: 13.5px; }
   .day-detail .rlabel { margin-bottom: 8px; }
   .day-detail .rlabel b { display: block; color: var(--ink); font-size: 14px; }
@@ -1291,11 +1321,11 @@
   <div class="cal-wrap view-pane" data-view="month-calendar" hidden>
     <div class="desc" style="margin-top:8px">
       One dot per competition with something on that day (a match, cup round, or European leg) —
-      tap a day to see its games below. A figure under a day is the net rule points of its games shown.
+      tap a day to list its games under that week. A figure under a day is the net rule points of its games shown.
     </div>
-    {% if calendar_legend %}
+    {% if option.calendar_legend %}
     <div class="legend">
-      {% for comp in calendar_legend %}
+      {% for comp in option.calendar_legend %}
       <span><span class="cal-dot {{ comp.cls }}" aria-hidden="true"></span><b>{{ comp.short }}</b> {{ comp.name }}</span>
       {% endfor %}
     </div>
