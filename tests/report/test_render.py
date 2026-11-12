@@ -745,7 +745,7 @@ def test_render_report_month_calendar_has_a_pane_and_carries_days_comps_and_mont
     assert "2026-06-06" in [iso for week in month["weeks"] for iso in week]
     (day,) = option["days"]
     assert day["date"] == "2026-06-06"
-    assert day["label"] == "Saturday 06 June 2026"
+    assert day["label"] == "Saturday 6 June 2026"
     assert day["comps"] == ["elite"]
     assert [_fixtures(data)[uid]["h"] for uid in day["ids"]] == ["a_m"]
 
@@ -878,23 +878,26 @@ def _colour_family(competition) -> str:
 
 
 def test_competition_colours_form_four_families_that_read_apart_in_the_real_data(world):
-    """The month calendar tells competitions apart by their short label, so the
-    colours only need to group them: Eliteserien and Toppserien each a strong
-    colour of their own, all cups one hue (shades for men, women and editions),
-    all UEFA competitions one hue with the qualifiers a lighter tint of the main
-    tournament. Families must differ clearly (CIEDE2000 25 or more between any
-    two; the shipped minimum is about 30). Within a family, one hue spans no more
-    than 40 degrees. No neutral grey, and no competition colour repeats a club's.
-    The dot and its tag text must read on the page (dot 3:1 on white, tag text
-    4.5:1 on its tint)."""
+    """The month calendar tells competitions apart by a dot and, on a phone,
+    only a count, so the colours must be clearly distinct and must group the
+    competitions into four families: Eliteserien and Toppserien each their own,
+    the NM cups one red family, the UEFA competitions one green-olive family.
+
+    Checked on the real data: families at least 25 CIEDE2000 apart (the shipped
+    minimum is 25.6); every pair within a family at least 12 apart (shipped 16.8
+    for UEFA, 18.6 for NM); each UEFA qualifier at least 10 from its own main
+    tournament and 15 L* lighter than it; family hue spans within 90 degrees;
+    every colour at L* 25 or more, so none reads as near-black; no competition
+    colour repeats a club's. A dot reads at 3:1 on white, and the tag and label
+    text (the ink, see payload.ink_for) at 4.5:1 on its tint."""
     colours = {c.id: c.color for c in world.competitions.values()}
-    families: dict[str, list[str]] = {}
+    families: dict[str, list] = {}
     for competition in world.competitions.values():
-        families.setdefault(_colour_family(competition), []).append(competition.id)
+        families.setdefault(_colour_family(competition), []).append(competition)
     assert len(families) == 4
 
     cross = [
-        _ciede2000(colours[a], colours[b])
+        _ciede2000(colours[a.id], colours[b.id])
         for fa, fb in itertools.combinations(families, 2)
         for a in families[fa]
         for b in families[fb]
@@ -902,22 +905,28 @@ def test_competition_colours_form_four_families_that_read_apart_in_the_real_data
     assert min(cross) >= 25
 
     for members in families.values():
-        hues = [_hue(colours[m]) for m in members]
-        assert max(hues) - min(hues) <= 40, members
+        for a, b in itertools.combinations(members, 2):
+            assert _ciede2000(colours[a.id], colours[b.id]) >= 12, (a.id, b.id)
+        hues = [_hue(colours[m.id]) for m in members]
+        assert max(hues) - min(hues) <= 90, [m.id for m in members]
 
-    uefa = {c.id: c for c in world.competitions.values() if _colour_family(c) == "uefa"}
-    qualifiers = [colours[i] for i, c in uefa.items() if "qualifying" in c.name.lower()]
-    mains = [colours[i] for i, c in uefa.items() if "qualifying" not in c.name.lower()]
-    assert qualifiers and mains
-    assert min(_lab(q)[0] for q in qualifiers) - max(_lab(m)[0] for m in mains) >= 6
+    mains = {c.name: c for c in families["uefa"] if "qualifying" not in c.name.lower()}
+    qualifiers = [c for c in families["uefa"] if "qualifying" in c.name.lower()]
+    assert len(qualifiers) == len(mains) == 3
+    for qualifier in qualifiers:
+        main = mains[qualifier.name.replace(" qualifying", "")]
+        assert _ciede2000(colours[main.id], colours[qualifier.id]) >= 10, qualifier.id
+        assert _lab(colours[qualifier.id])[0] - _lab(colours[main.id])[0] >= 15, qualifier.id
+
+    assert min(_lab(c)[0] for c in colours.values()) >= 25
 
     club_colours = {club.color.lower() for club in world.clubs.values() if club.color}
     assert not club_colours & {colour.lower() for colour in colours.values()}
 
     for competition_id, colour in colours.items():
         assert _contrast(colour, "#ffffff") >= 3, competition_id
-        assert _contrast(colour, _tint(colour)) >= 4.5, competition_id
-        assert _lab(colour)[0] < 60, competition_id  # no neutral grey reading as disabled
+        ink = payload.ink_for(colour, _tint(colour))
+        assert _contrast(ink, _tint(colour)) >= 4.5, competition_id
 
 
 # -- embedded fixture payload (#42) ------------------------------------------

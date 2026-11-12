@@ -272,7 +272,7 @@ def test_tapping_a_day_lists_its_games_with_short_competition_tags(page, world):
     assert any(f"v {OPPONENT}" in t for t in texts)
     league_tag = rows.locator(".comp-tag", has_text=world.competition("elite").short_name).first
     assert league_tag.get_attribute("title") == world.competition("elite").name
-    assert body.locator(".day-detail .rlabel").inner_text().strip() == "Saturday 06 June 2026"
+    assert body.locator(".day-detail .rlabel").inner_text().strip() == "Saturday 6 June 2026"
     assert _under_week_of(body, DAY)
 
 
@@ -985,11 +985,12 @@ def test_the_club_filter_resets_the_round_and_week_totals(page):
 def test_month_days_show_their_net_and_the_day_detail_its_totals(page):
     body = _view(page, "month-calendar")
     day = body.locator(f'.cal-day[data-date="{DAY}"]')
-    assert _texts(day.locator(".cal-net > span")) == ["3", "+12.5"]  # the count and the net, each its own line
+    assert _texts(day.locator(".cal-value")) == ["+12.5"]  # the net; the total is in the label, not drawn
     assert "3 games; net +12.5 pts" in day.get_attribute("aria-label")
     day.click()
     assert _texts(body.locator(".day-detail .rsum")) == ["+12.5 pts · 3 games"]
-    assert _texts(body.locator('.cal-day[data-date="2026-06-13"] .cal-net > span')) == ["1", "0"]
+    assert _texts(body.locator('.cal-day[data-date="2026-06-13"] .cal-value')) == ["0"]
+    assert body.locator('.cal-day[data-date="2026-06-13"] .cal-count').first.is_hidden()
 
     page.select_option(".club-select", "club_b")
     assert body.locator(f'.cal-day[data-date="{DAY}"] .cal-net').count() == 0  # no club B game that day
@@ -1672,7 +1673,10 @@ def test_day_cells_count_each_competitions_games_under_the_club_filter(rules_pag
     # Club A's men play twice on 6 June, so Eliteserien shows a count of 2.
     assert _texts(cell.locator(".cal-comp .cal-n")) == ["2"]
     assert elite.short_name in _texts(cell.locator(".cal-comp .cal-lbl"))
-    assert f"{elite.name} 2" in cell.get_attribute("aria-label")
+    label = cell.get_attribute("aria-label")
+    assert label.startswith("Saturday 6 June 2026: ")  # full date, no zero before the day
+    assert f"{elite.name} 2" in label
+    assert "games" in label  # the total stays in the label, not drawn in the cell
 
     rules_page.select_option(".club-select", "club_b")
     assert body.locator(f'.cal-day[data-date="{DAY}"] .cal-comp').count() == 0
@@ -1713,7 +1717,7 @@ def test_months_without_a_league_fixture_are_listed_under_other_dates_and_open_i
 
     body.locator('.cal-day.other-date[data-date="2026-07-08"]').click()
     assert _detail_follows(body, "data-month-key", "2026-07")
-    assert body.locator(".day-detail .rlabel").inner_text().strip() == "Wednesday 08 July 2026"
+    assert body.locator(".day-detail .rlabel").inner_text().strip() == "Wednesday 8 July 2026"
     assert body.locator(".day-detail .day-row").count() == 1
 
 
@@ -1727,7 +1731,7 @@ def test_previous_and_next_match_day_skip_empty_days_and_disable_at_the_ends(oth
 
     next_btn.click()  # 7 June, a Toppserien game
     assert _under_week_of(body, "2026-06-07")
-    assert body.locator(".day-details .rlabel").inner_text().strip() == "Sunday 07 June 2026"
+    assert body.locator(".day-details .rlabel").inner_text().strip() == "Sunday 7 June 2026"
     assert body.locator(".cal-day.selected").get_attribute("data-date") == "2026-06-07"
     body.locator('.day-step button[data-step="1"]').click()  # 13 June: the days between are empty
     assert body.locator(".cal-day.selected").get_attribute("data-date") == "2026-06-13"

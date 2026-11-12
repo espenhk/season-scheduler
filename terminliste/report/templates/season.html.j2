@@ -492,7 +492,7 @@
        text-transform here — unlike a full competition name, which would
        read fine either way. */
     font-size: 10px; padding: 1px 6px; border-radius: 10px;
-    background: var(--comp-bg, #eeeee9); color: var(--comp-fg, var(--muted)); letter-spacing: 0.03em;
+    background: var(--comp-bg, #eeeee9); color: var(--comp-ink, var(--comp-fg, var(--muted))); letter-spacing: 0.03em;
   }
   /* Home = square, away = diamond, both filled with the club's own colour
      (data/clubs.yml). Fixed pixel sizes rather than a text glyph — a
@@ -548,7 +548,7 @@
   .cal-daynum { font-size: 12.5px; font-variant-numeric: tabular-nums; }
   .cal-comps { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 5px; min-height: 8px; font-size: 10.5px; line-height: 1.2; }
   .cal-comp { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
-  .cal-comp .cal-lbl { display: none; font-weight: 600; color: var(--comp-fg, var(--ink)); }
+  .cal-comp .cal-lbl { display: none; font-weight: 600; color: var(--comp-ink, var(--ink)); }
   .cal-comp .cal-n { color: var(--ink); }
   @media (min-width: 720px) { .cal-comp .cal-lbl { display: inline; } }
   .month-jump { display: flex; gap: 6px; overflow-x: auto; white-space: nowrap; padding: 2px 0 12px; }
@@ -564,7 +564,7 @@
   .other-chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .cal-day.other-date { flex-direction: row; align-items: center; gap: 6px; min-height: 0; padding: 4px 9px; border-radius: 999px; font-size: 12.5px; }
   .other-day { white-space: nowrap; }
-  .cal-day.other-date .cal-count { display: none; } /* the competition counts already give the total */
+  .cal-day .cal-count { display: none; } /* the competition counts already give the total */
   .day-step { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   .day-step button {
     font: inherit; font-size: 13px; color: var(--accent); background: var(--panel);

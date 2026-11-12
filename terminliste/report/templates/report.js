@@ -49,6 +49,13 @@
     return weekday(iso) + ' ' + iso.slice(8, 10) + ' ' + MONTHS[+iso.slice(5, 7) - 1] + ' ' + iso.slice(0, 4);
   }
 
+  // The same date in full with no zero before the day, as the month view names it.
+  var WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  var MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  function longDateUnpadded(iso) {
+    return WEEKDAY_NAMES[dayIndex(iso)] + ' ' + (+iso.slice(8, 10)) + ' ' + MONTH_NAMES[+iso.slice(5, 7) - 1] + ' ' + iso.slice(0, 4);
+  }
+
   // ---------------------------------------------------------- fixture model
   //
   // Every wire entry (league match, cup round, European leg) is turned into one
@@ -542,7 +549,7 @@
       button.type = 'button';
       button.setAttribute('data-date', iso);
       button.setAttribute('aria-expanded', 'false');
-      var label = longDate(iso) +
+      var label = longDateUnpadded(iso) +
         (comps.length ? ': ' + comps.map(function (c) {
           return DATA.competitions[c.comp].name + ' ' + c.n;
         }).join(', ') : '') +
@@ -686,7 +693,7 @@
       if (!anchor) return null;
       var day = days[iso];
       var ids = day ? ctx.visible(day.ids) : [];
-      var head = append(el('div', 'rlabel'), el('b', '', day ? day.label : longDate(iso)));
+      var head = append(el('div', 'rlabel'), el('b', '', day ? day.label : longDateUnpadded(iso)));
       var body = append(el('div', 'day-detail'), head);
       if (ids.length) {
         var box = el('div', 'fixtures');

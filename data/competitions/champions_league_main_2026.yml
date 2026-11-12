@@ -40,7 +40,7 @@ movable: false
 is_main_tournament: true
 
 # UEFA family colour, the main tournament's shade (#36); see the colour test in tests/report/test_render.py.
-color: "#14532d"
+color: "#006048"
 
 team_count: 0
 teams: []

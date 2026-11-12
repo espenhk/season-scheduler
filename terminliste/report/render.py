@@ -1256,7 +1256,7 @@ def _month_calendar_view(entries: list[dict]) -> tuple[list[dict], list[dict]]:
     day_details = [
         {
             "date_iso": day.isoformat(),
-            "label": day.strftime("%A %d %B %Y"),
+            "label": f"{day:%A} {day.day} {day:%B %Y}",
             "competition_ids": _day_competitions(day_entries),
             # Earliest kickoff first; an entry without one — every cup and
             # European entry — sorts after the timed ones, not before them.

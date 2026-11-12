@@ -28,7 +28,7 @@ gender: men
 format: cup
 
 # NM cup family colour, a shade of red (#36); see the colour test in tests/report/test_render.py.
-color: "#991b1b"
+color: "#880828"
 
 # NFF fixes these rounds' dates (forced or windowed) — issue #31 — never
 # something this project's solver proposes moving.

@@ -28,7 +28,7 @@ format: european
 movable: false
 
 # UEFA family colour; qualifying is a lighter tint (#36); see the colour test in tests/report/test_render.py.
-color: "#3c6a30"
+color: "#089878"
 
 team_count: 2
 teams:

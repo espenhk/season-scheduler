@@ -22,7 +22,7 @@ gender: women
 format: cup
 
 # NM cup family colour, a shade of red (#36); see the colour test in tests/report/test_render.py.
-color: "#5c1111"
+color: "#a83000"
 
 # NFF-fixed, not scheduler-controlled — see cup_men_2027.yml and issue #31.
 movable: false

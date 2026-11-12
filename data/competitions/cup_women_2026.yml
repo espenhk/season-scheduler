@@ -15,7 +15,7 @@ gender: women
 format: cup
 
 # NM cup family colour, a shade of red (#36); see the colour test in tests/report/test_render.py.
-color: "#7f1d1d"
+color: "#f05808"
 
 movable: false
 
