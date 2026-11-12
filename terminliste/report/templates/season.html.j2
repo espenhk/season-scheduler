@@ -15,6 +15,8 @@
     --bad: #c0392b;
     --warn: #b9770e;
     --accent: #2471a3;
+    /* Text in the cost colour: --warn stays for edges, this one clears 4.5:1 on the panel and page. */
+    --warn-ink: #94620a;
     --panel-pad: 24px;
   }
   * { box-sizing: border-box; }
@@ -322,9 +324,20 @@
   .comp { margin-top: 30px; }
   .comp h3 { font-size: 16px; margin: 0 0 2px; }
   .comp .meta { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
-  .round { border-top: 1px solid var(--line); padding: 10px 0; display: grid; grid-template-columns: 130px 1fr; gap: 14px; }
+  .round { border-top: 1px solid var(--line); padding: 10px 0; display: grid; grid-template-columns: 200px 1fr; gap: 14px; }
   .round .rlabel { font-size: 12px; color: var(--muted); }
   .round .rlabel b { display: block; color: var(--ink); font-size: 14px; }
+  /* Round and week totals: the label's edge takes the net's colour, the text says the figure. */
+  .round .rlabel.rl-good { border-left: 3px solid var(--good); padding-left: 8px; }
+  .round .rlabel.rl-cost { border-left: 3px solid var(--warn); padding-left: 8px; }
+  .rsum { margin-top: 3px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .rsum .rnet { font-weight: 700; color: var(--ink); }
+  .rsum .rnet.good { color: var(--good); }
+  .rsum .rnet.cost { color: var(--warn-ink); }
+  .rtag {
+    display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
+  }
   .fixtures { display: flex; flex-wrap: wrap; gap: 8px; }
   /* `gap` alone spaces every child of the card (date, tag, swatches, names,
      the "v" separator, the pair dot) evenly — issue #61 asked for more
@@ -437,6 +450,44 @@
   .day-row .flags { flex-basis: 100%; }
   .day-row .d { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+  /* The count and the net each sit on their own line, so a narrow cell wraps nowhere. */
+  .cal-net { display: flex; flex-direction: column; align-items: center; font-size: 10.5px; line-height: 1.15; font-variant-numeric: tabular-nums; color: var(--muted); max-width: 100%; }
+  .cal-count, .cal-value { white-space: nowrap; }
+  .cal-value { font-weight: 600; }
+  .cal-value.good { color: var(--good); }
+  .cal-value.cost { color: var(--warn-ink); }
+
+  /* Season strip: one button per round; each league row scrolls inside itself. */
+  .season-strip { margin: 14px 0 0; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .season-strip[hidden] { display: none; }
+  .strip-row { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px; align-items: center; margin-top: 6px; }
+  .strip-name { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .strip-caption { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .strip-cells { display: flex; gap: 2px; min-width: 0; overflow-x: auto; padding: 8px 4px 4px 0; }
+  .strip-cell {
+    position: relative; flex: 1 1 0; min-width: 30px; max-width: 46px; display: flex; flex-direction: column; align-items: center; gap: 1px;
+    padding: 3px 2px 4px; font: inherit; font-size: 11px; line-height: 1.2; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 5px; cursor: pointer;
+  }
+  .strip-cell:hover { border-color: var(--accent); }
+  .strip-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .strip-cell.sc-good { border-left-color: var(--good); }
+  .strip-cell.sc-cost { border-left-color: var(--warn); }
+  .strip-cell.sc-cost .strip-net { color: var(--warn-ink); }
+  .strip-cell:disabled { opacity: 0.4; cursor: default; }
+  .strip-round { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .strip-net { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .strip-cell.sc-good .strip-net { color: var(--good); }
+  .strip-hard {
+    position: absolute; top: -6px; right: -6px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
+    background: var(--bad); color: #fff; font-size: 9.5px; font-weight: 700; line-height: 15px; text-align: center;
+  }
+
+  /* Combined list's score column, right-aligned so the signs line up. */
+  .fx-score { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .fx-score.good { color: var(--good); font-weight: 600; }
+  .fx-score.cost { color: var(--warn-ink); }
+
   @media print { .controls { position: static; box-shadow: none; } .legend-wrap, .filters-toggle, .back-to-score, .jump-cal { display: none; } }
 
   @media (max-width: 480px) {
@@ -449,7 +500,7 @@
     .view-pane[data-view="combined-list"] thead { display: none; }
     .fx-row {
       display: grid; grid-template-columns: 1fr auto 1fr; gap: 2px 8px; align-items: center;
-      grid-template-areas: "date date comp" "home vs away" "venue venue venue" "rules rules rules";
+      grid-template-areas: "date score comp" "home vs away" "venue venue venue" "rules rules rules";
       padding: 8px 0 8px 8px; border-bottom: 1px solid var(--line); border-left: 4px solid transparent;
     }
     .fx-row td { padding: 0; border: none; }
@@ -461,6 +512,18 @@
     .fx-row td:nth-child(6) { grid-area: venue; color: var(--muted); font-size: 12px; }
     .fx-row td:nth-child(7) { grid-area: rules; }
     .fx-row td:nth-child(7):empty { display: none; }
+    /* No column header on a card, so the score carries its unit. */
+    .fx-row td:nth-child(8) { grid-area: score; text-align: left; }
+    .fx-row td.fx-score::after { content: " pts"; color: var(--muted); font-weight: 400; }
+    .strip-row { grid-template-columns: 84px minmax(0, 1fr); }
+    /* Phone: fixed-width cells that scroll; the fade says the row goes on. */
+    .strip-cells {
+      padding-right: 26px;
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+      mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+    }
+    .strip-cell { flex: 0 0 auto; width: 40px; max-width: none; }
+    .cal-net { font-size: 9.5px; }
     .fx-row td:first-child { border-left: none; }
     .fx-row.lens-hit { background: #eaf2f8; box-shadow: inset 0 0 0 2px var(--accent); }
     .fx-row.lens-hit td { background: none; box-shadow: none; }
@@ -837,6 +900,7 @@
               <span><span class="swatch" style="margin-right:5px" aria-hidden="true"></span>square = home club colour</span>
               <span><span class="swatch-diamond" style="margin-right:5px" aria-hidden="true"></span>diamond = away club colour</span>
               <span><span class="swatch-neutral" style="margin-right:5px" aria-hidden="true"></span>circle = cup final, neutral ground</span>
+              <span>round, week and day totals: net points of the badges on the games shown; midweek means all games Mon–Thu</span>
             </div>
           </div>
           {% if flag_legend %}
@@ -891,6 +955,9 @@
     <span class="lens-text" role="status"></span>
   </div>
 
+  {# Drawn by report.js for the views that list rounds. #}
+  <div class="season-strip" role="group" aria-label="Season overview: one button per round" hidden></div>
+
   {# Fixtures are drawn into each `.pane-body` by report.js from #report-data. #}
   <div class="cal-wrap view-pane" data-view="by-competition" hidden>
     <div class="pane-body"></div>
@@ -899,7 +966,7 @@
   <div class="cal-wrap view-pane" data-view="month-calendar" hidden>
     <div class="desc" style="margin-top:8px">
       One dot per competition with something on that day (a match, cup round, or European leg) —
-      tap a day to see its games below.
+      tap a day to see its games below. A figure under a day is the net rule points of its games shown.
     </div>
     {% if calendar_legend %}
     <div class="legend">
