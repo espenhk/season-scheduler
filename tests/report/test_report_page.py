@@ -318,7 +318,15 @@ def touch_page(browser, report_url):
     context.close()
 
 
+def _open_filters(page, panel="#panel-1"):
+    """Expands the phone bar's collapsed filter fields (the button is hidden on desktop)."""
+    toggle = page.locator(f"{panel} .filters-toggle")
+    if toggle.is_visible() and toggle.get_attribute("aria-expanded") != "true":
+        toggle.click()
+
+
 def _lens(page, rule, panel="#panel-1"):
+    _open_filters(page, panel)
     page.select_option(f"{panel} .lens-select", rule)
 
 
@@ -575,3 +583,178 @@ def test_a_click_without_pointer_type_still_shows_the_tooltip_first_on_a_no_hove
     badge.evaluate("b => b.dispatchEvent(new MouseEvent('click', {bubbles: true, detail: 0}))")
     assert page.input_value(".lens-select") == PAIR
     context.close()
+
+
+# -- sticky summary and controls bar (#31) ----------------------------------
+
+
+def _rect(page, selector):
+    return page.evaluate(
+        "s => { const r = document.querySelector(s).getBoundingClientRect(); return {top: r.top, bottom: r.bottom, h: r.height}; }",
+        selector,
+    )
+
+
+@pytest.fixture
+def short_page(browser, report_url):
+    # Short enough that the small test calendar can scroll past the bar.
+    page = browser.new_page(viewport={"width": 1280, "height": 420})
+    page.problems = []
+    page.on("console", lambda m: page.problems.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: page.problems.append(str(e)))
+    page.goto(report_url)
+    yield page
+    assert page.problems == []
+    page.close()
+
+
+def test_the_bar_stays_in_view_and_summarises_the_selected_option(short_page):
+    page = short_page
+    _view(page, "combined-calendar")
+    page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+    bar = _rect(page, "#panel-1 .controls")
+    assert bar["top"] == 0 and 0 < bar["h"] < 420 * 0.4
+    summary = " ".join(page.inner_text("#panel-1 .bar-summary").split())
+    total = page.inner_text("#panel-1 .total").split("/")[0].strip()
+    assert summary.startswith(f"Option 1 {total}/100") and "feasible" in summary.lower()
+
+    page.click('.tab[data-panel="panel-2"]')
+    page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+    assert not page.locator("#panel-1 .controls").is_visible()
+    assert _rect(page, "#panel-2 .controls")["top"] == 0
+    assert page.inner_text("#panel-2 .bar-opt") == "Option 2"
+
+
+def test_the_bar_controls_drive_the_view_club_and_rule_filters_and_chips_clear_them(short_page):
+    page = short_page
+    page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+    body = _view(page, "combined-calendar")
+    page.select_option("#panel-1 .club-select", "club_b")
+    page.select_option("#panel-1 .lens-select", PAIR)
+    assert _rect(page, "#panel-1 .controls")["top"] == 0
+    assert page.inner_text("#panel-1 .club-clear .chip-text") == "Club B"
+    assert PAIR.replace("_", " ") in page.inner_text("#panel-1 .lens-clear .chip-text")
+
+    page.click("#panel-1 .lens-clear")
+    assert page.input_value("#panel-1 .lens-select") == "" and not page.locator("#panel-1 .lens-clear").is_visible()
+    page.click("#panel-1 .club-clear")
+    assert page.input_value("#panel-1 .club-select") == "" and not page.locator("#panel-1 .club-clear").is_visible()
+    assert len(body.locator(".fx").all()) == 5
+    assert page.evaluate("document.activeElement.className") == "club-select"
+
+
+def test_scroll_targets_clear_the_sticky_bar(short_page):
+    page = short_page
+    item = page.locator(f'#panel-1 details.item[data-rule="{PAIR}"]')
+    item.locator("summary").click()
+    item.locator(".lens-link").click()
+    # The drawn view starts at, not under, the bar.
+    page.wait_for_function(
+        "() => { const b = document.querySelector('#panel-1 .controls').getBoundingClientRect(),"
+        " p = document.querySelector('#panel-1 .view-pane:not([hidden])').getBoundingClientRect();"
+        " return p.top >= b.bottom - 1 && p.top < b.bottom + 40; }"
+    )
+
+    page.evaluate("window.scrollTo(0, 0)")
+    item.locator(".occ-row").nth(1).click()
+    flashed = page.locator("#panel-1 .view-pane:not([hidden]) .flash")
+    flashed.wait_for()
+    page.wait_for_timeout(700)
+    bar, target = _rect(page, "#panel-1 .controls"), flashed.bounding_box()
+    assert target["y"] >= bar["bottom"] and target["y"] + target["height"] <= 420
+
+
+def test_the_legend_is_a_popover_that_hides_card_entries_in_the_month_view(page):
+    toggle = page.locator("#panel-1 .legend-toggle")
+    panel = page.locator("#panel-1 .legend-panel")
+    assert not panel.is_visible()
+    toggle.click()
+    assert panel.is_visible() and toggle.get_attribute("aria-expanded") == "true"
+    assert panel.locator(".legend-cards").is_visible() and panel.locator(".flag-legend .flag").count() > 0
+    page.keyboard.press("Escape")
+    assert not panel.is_visible() and toggle.get_attribute("aria-expanded") == "false"
+
+    _view(page, "month-calendar")
+    toggle.click()
+    assert not panel.locator(".legend-cards").is_visible() and panel.locator(".flag-legend").is_visible()
+    page.mouse.click(5, 5)
+    assert not panel.is_visible()
+
+
+def test_the_phone_bar_stays_compact_collapses_its_filters_and_never_overflows(touch_page):
+    page = touch_page
+    bar = _rect(page, "#panel-1 .controls")
+    assert bar["h"] < 844 * 0.15
+    fields = page.locator("#panel-1 .bar-fields")
+    toggle = page.locator("#panel-1 .filters-toggle")
+    assert not fields.is_visible() and toggle.get_attribute("aria-expanded") == "false"
+
+    toggle.tap()
+    assert fields.is_visible() and toggle.get_attribute("aria-expanded") == "true"
+    assert _rect(page, "#panel-1 .controls")["h"] < 844 * 0.25
+    page.select_option("#panel-1 .lens-select", PAIR)
+    # Picking a rule keeps the fields open, since it enables "Only show matching".
+    assert fields.is_visible()
+    page.check("#panel-1 .lens-only")
+    assert not fields.is_visible() and "1" in toggle.inner_text()
+    assert page.locator("#panel-1 .lens-clear").is_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+    page.tap("#panel-1 .lens-clear")
+    assert page.input_value("#panel-1 .lens-select") == ""
+    assert page.evaluate("document.activeElement.classList.contains('filters-toggle')")
+
+
+def test_focus_and_anchors_leave_room_for_the_bar(page):
+    height = _rect(page, "#panel-1 .controls")["h"]
+    padding = page.evaluate("parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop)")
+    assert padding >= height
+
+
+def test_all_four_phone_view_buttons_fit_the_bar_without_scrolling(browser, report_url):
+    for width in (390, 360):
+        context = browser.new_context(viewport={"width": width, "height": 800}, has_touch=True)
+        page = context.new_page()
+        page.goto(report_url)
+        boxes = [b.bounding_box() for b in page.locator("#panel-1 .view-btn").all()]
+        assert len(boxes) == 4
+        assert all(b["x"] >= 0 and b["x"] + b["width"] <= width for b in boxes)
+        assert len({round(b["y"]) for b in boxes}) == 1
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        strip = page.locator("#panel-1 .view-toggle")
+        assert strip.evaluate("e => e.scrollWidth <= e.clientWidth")
+        assert page.get_by_role("button", name="Combined calendar").count() >= 1
+        context.close()
+
+
+def _open_phone_filters(page):
+    page.evaluate("document.querySelector('#panel-1 .controls').scrollIntoView({block: 'start'})")
+    page.tap("#panel-1 .filters-toggle")
+    assert page.locator("#panel-1 .bar-fields").is_visible()
+
+
+def test_phone_filters_close_after_a_change_a_real_scroll_and_escape(touch_page):
+    page = touch_page
+    toggle = page.locator("#panel-1 .filters-toggle")
+    fields = page.locator("#panel-1 .bar-fields")
+
+    _open_phone_filters(page)
+    page.select_option("#panel-1 .club-select", "club_b")
+    assert not fields.is_visible() and toggle.get_attribute("aria-expanded") == "false"
+    assert page.locator("#panel-1 .club-clear").is_visible()
+    assert page.evaluate("document.activeElement.classList.contains('filters-toggle')")
+
+    # A small nudge (e.g. focus scrolling) keeps it open; a real scroll closes it.
+    toggle.tap()
+    page.evaluate("window.scrollBy(0, 5)")
+    page.wait_for_timeout(100)
+    assert fields.is_visible()
+    page.evaluate("window.scrollBy(0, -200)")
+    page.wait_for_function("() => !document.querySelector('#panel-1 .bar-fields').offsetParent")
+    assert toggle.get_attribute("aria-expanded") == "false"
+
+    toggle.tap()
+    page.focus("#panel-1 .lens-select")
+    page.keyboard.press("Escape")
+    assert not fields.is_visible() and toggle.get_attribute("aria-expanded") == "false"
+    assert page.evaluate("document.activeElement.classList.contains('filters-toggle')")

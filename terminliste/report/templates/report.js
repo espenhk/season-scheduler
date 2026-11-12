@@ -523,9 +523,21 @@
     this.lensOnly.addEventListener('change', function () { self.setLens(self.state.rule, self.lensOnly.checked); });
     panel.querySelector('.lens-clear').addEventListener('click', function () {
       self.setLens('');
-      self.lensSelect.focus();
+      self.focusFilter(self.lensSelect);
+    });
+    panel.querySelector('.club-clear').addEventListener('click', function () {
+      self.state.club = '';
+      self.clubSelect.value = '';
+      self.render();
+      self.focusFilter(self.clubSelect);
     });
   }
+
+  // Focus goes to the filter's own select, or to the Filters button while a
+  // narrow bar keeps the selects collapsed, so removing a chip never drops focus.
+  Option.prototype.focusFilter = function (select) {
+    (select.offsetParent ? select : this.panel.querySelector('.filters-toggle')).focus();
+  };
 
   Option.prototype.context = function () {
     var club = this.state.club;
@@ -670,9 +682,28 @@
     });
   };
 
+  // Active filters as removable chips, so a collapsed or scrolled-away control
+  // never hides the state of the calendar.
+  Option.prototype.renderChips = function (stats) {
+    var state = this.state;
+    var clubChip = this.panel.querySelector('.club-clear');
+    var lensChip = this.panel.querySelector('.lens-clear');
+    var clubName = state.club ? this.clubSelect.options[this.clubSelect.selectedIndex].text : '';
+    var lensName = stats ? ruleName(stats.rule) + (state.only ? ' (only)' : '') : '';
+    clubChip.hidden = !state.club;
+    lensChip.hidden = !stats;
+    clubChip.querySelector('.chip-text').textContent = clubName;
+    lensChip.querySelector('.chip-text').textContent = lensName;
+    clubChip.setAttribute('aria-label', 'Remove club filter: ' + clubName);
+    lensChip.setAttribute('aria-label', 'Clear highlighted rule: ' + lensName);
+    var count = (state.club ? 1 : 0) + (stats ? 1 : 0);
+    this.panel.querySelector('.filters-toggle').textContent = count ? 'Filters ' + count : 'Filters';
+  };
+
   Option.prototype.renderLensUi = function () {
     var state = this.state;
     var stats = state.rule && this.ruleStats()[state.rule];
+    this.renderChips(stats);
     this.lensSelect.value = state.rule;
     this.lensOnly.checked = state.only;
     this.lensOnly.disabled = !state.rule;
@@ -724,6 +755,18 @@
     setTimeout(function () { node.classList.remove('flash'); }, 2400);
   };
 
+  // Scrolls so the drawn view starts just under the sticky bar (the root's
+  // scroll-padding keeps it clear).
+  Option.prototype.showCalendar = function () {
+    this.panel.querySelector('.view-pane:not([hidden])').scrollIntoView({ block: 'start', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
+  };
+
+  Option.prototype.showScore = function () {
+    // The option tabs sit just above the panel; 8px of air keeps them from touching the edge.
+    var top = document.querySelector('.tabs').getBoundingClientRect().top + window.pageYOffset - 8;
+    window.scrollTo({ top: Math.max(0, top), behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
+  };
+
   Option.prototype.render = function () {
     if (!this.fx) {
       this.fx = hydrate(this.data);
@@ -732,6 +775,7 @@
     var state = this.state;
     var ctx = this.context();
     hideFlagTip();
+    this.panel.setAttribute('data-current-view', state.view);
     this.panel.querySelectorAll('.view-btn').forEach(function (button) {
       var active = button.dataset.view === state.view;
       button.classList.toggle('active', active);
@@ -775,6 +819,20 @@
     return options[index];
   }
 
+  // The visible panel's bar height, published as --bar-h for the scroll offsets in CSS.
+  var bar = null;
+  var barWatch = window.ResizeObserver ? new ResizeObserver(syncBar) : null;
+  function syncBar() {
+    if (bar) document.documentElement.style.setProperty('--bar-h', bar.offsetHeight + 'px');
+  }
+  function watchBar(panel) {
+    if (barWatch && bar) barWatch.unobserve(bar);
+    bar = panel.querySelector('.controls');
+    if (barWatch && bar) barWatch.observe(bar);
+    syncBar();
+  }
+  window.addEventListener('resize', syncBar);
+
   document.querySelectorAll('.tab').forEach(function (tab, index) {
     tab.addEventListener('click', function () {
       document.querySelectorAll('.tab').forEach(function (other) {
@@ -785,9 +843,13 @@
       current = index;
       panels[current].hidden = false;
       option(current).render();
+      watchBar(panels[current]);
     });
   });
-  if (panels.length) option(0).render();
+  if (panels.length) {
+    option(0).render();
+    watchBar(panels[0]);
+  }
 
   // ---------------------------------------------------------- rule tooltips
   //
@@ -958,16 +1020,79 @@
   }, true);
 
   document.addEventListener('click', function (e) {
-    var link = e.target.closest ? e.target.closest('.lens-link, .occ-row') : null;
+    var link = e.target.closest ? e.target.closest('.lens-link, .occ-row, .jump-cal, .back-to-score') : null;
     if (!link) return;
     var opt = optionOf(link);
-    if (link.classList.contains('occ-row')) {
+    if (link.classList.contains('jump-cal')) {
+      opt.showCalendar();
+    } else if (link.classList.contains('back-to-score')) {
+      opt.showScore();
+    } else if (link.classList.contains('occ-row')) {
       // The list's own rule becomes the lens, so the target is not left dimmed.
       opt.setLens(link.getAttribute('data-rule'));
       opt.reveal(+link.getAttribute('data-fx'));
     } else {
       opt.setLens(link.getAttribute('data-rule'));
-      opt.panel.querySelector('.controls').scrollIntoView({ block: 'start', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
+      opt.showCalendar();
     }
+  });
+
+  // ------------------------------------------------- bar disclosures
+  //
+  // The legend popover and, on a phone, the collapsed filter fields. Each
+  // button owns one region through aria-expanded/aria-controls.
+  function setLegend(wrap, open) {
+    var button = wrap.querySelector('.legend-toggle');
+    wrap.querySelector('.legend-panel').hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+  }
+  document.addEventListener('click', function (e) {
+    var target = e.target;
+    var toggle = target.closest ? target.closest('.legend-toggle, .filters-toggle') : null;
+    document.querySelectorAll('.legend-wrap').forEach(function (wrap) {
+      if (!toggle || !wrap.contains(toggle)) {
+        if (!wrap.contains(target)) setLegend(wrap, false);
+      }
+    });
+    if (!toggle) return;
+    if (toggle.classList.contains('legend-toggle')) {
+      setLegend(toggle.parentNode, toggle.getAttribute('aria-expanded') !== 'true');
+    } else {
+      setFilters(toggle.closest('.controls'), toggle.getAttribute('aria-expanded') !== 'true');
+    }
+  });
+  // A phone's filter fields close once used, on the next real scroll, or on
+  // Escape, so the bar does not stay tall over the calendar.
+  var FILTER_SCROLL_SLACK = 24;
+  var filtersOpenAt = 0;
+  function setFilters(bar, open, refocus) {
+    var toggle = bar.querySelector('.filters-toggle');
+    var hadFocus = bar.querySelector('.bar-fields').contains(document.activeElement);
+    bar.classList.toggle('filters-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+    if (open) filtersOpenAt = window.pageYOffset;
+    else if (hadFocus || refocus) toggle.focus();
+  }
+  document.addEventListener('change', function (e) {
+    var bar = e.target.closest ? e.target.closest('.controls.filters-open') : null;
+    if (!bar || !bar.querySelector('.bar-fields').contains(e.target)) return;
+    // Picking a rule is what enables "Only show matching", so the fields stay open for it.
+    if (!e.target.classList.contains('lens-select')) setFilters(bar, false);
+  });
+  window.addEventListener('scroll', function () {
+    var bar = document.querySelector('.controls.filters-open');
+    // Focusing a select can nudge the page a little; only a real scroll closes.
+    if (bar && Math.abs(window.pageYOffset - filtersOpenAt) > FILTER_SCROLL_SLACK) setFilters(bar, false);
+  }, { passive: true });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var bar = document.querySelector('.controls.filters-open');
+    if (bar) setFilters(bar, false, true);
+    document.querySelectorAll('.legend-wrap').forEach(function (wrap) {
+      var button = wrap.querySelector('.legend-toggle');
+      if (button.getAttribute('aria-expanded') !== 'true') return;
+      setLegend(wrap, false);
+      button.focus();
+    });
   });
 })();
