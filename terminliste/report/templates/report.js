@@ -54,8 +54,8 @@
   // Every wire entry (league match, cup round, European leg) is turned into one
   // shape, so each representation below handles all three without branching on
   // kind:
-  //   uid, kind, date, time, comp, clubs[], venue,
-  //   home / away: {name, full, cls, shape}  (away is null for cup/European)
+  //   uid, kind, date, time, comp, clubs[], teams[], venue,
+  //   home / away: {team, name, full, cls, shape}  (away is null for cup/European)
   //   versus: text after "v" when there is no away side, round: round name
   //   flags[]: scoring badges, one per rule {rule, delta, items[{delta, detail, n, group}]};
   //   rules: their rule ids; delta: their net; tint: 'good' | 'cost' | ''
@@ -64,7 +64,17 @@
 
   function side(teamId, shape) {
     var team = DATA.teams[teamId];
-    return { name: team.short, full: team.label, club: team.club, cls: DATA.clubs[team.club], shape: shape };
+    return { team: teamId, name: team.short, full: team.label, club: team.club, cls: DATA.clubs[team.club], shape: shape };
+  }
+
+  // The club's teams, in the order the wire lists them.
+  function teamsOf(club) {
+    return Object.keys(DATA.teams).filter(function (teamId) { return DATA.teams[teamId].club === club; });
+  }
+
+  // Dual clubs (a men's and a women's senior team) are the ones the timeline is for.
+  function isDual(club) {
+    return DATA.dualClubs.indexOf(club) !== -1;
   }
 
   // Net points a fixture needs to tint its card edge (set in render.py).
@@ -103,7 +113,7 @@
     var away = side(m.a, 'diamond');
     return withFlags({
       uid: uid, kind: 'league', date: m.d, time: m.t || '', comp: m.c,
-      clubs: [home.club, away.club], home: home, away: away, versus: '', round: '',
+      clubs: [home.club, away.club], teams: [m.h, m.a], home: home, away: away, versus: '', round: '',
       venue: DATA.venues[m.v || DATA.teams[m.h].venue]
     }, m.f, notes, groups);
   }
@@ -116,7 +126,7 @@
     var home = side(e.t, shape);
     return withFlags({
       uid: uid, kind: european ? 'european' : 'cup', date: e.d, time: '', comp: e.c,
-      clubs: [home.club], home: home, away: null, versus: european ? e.o : 'TBD', round: e.n,
+      clubs: [home.club], teams: [e.t], home: home, away: null, versus: european ? e.o : 'TBD', round: e.n,
       venue: e.vl
     }, null, null, null);
   }
@@ -591,11 +601,166 @@
     return root;
   }
 
+  // ------------------------------------------------------ club timeline
+  //
+  // A club's teams side by side, one row per date. Rest gaps and the pairing
+  // tags are worked out from each team's own fixtures, hidden or not, so a
+  // filter narrows what is drawn without changing what the gaps mean.
+
+  var DAY_MS = 86400000;
+
+  function daysBetween(from, to) {
+    var start = Date.UTC(+from.slice(0, 4), +from.slice(5, 7) - 1, +from.slice(8, 10));
+    var end = Date.UTC(+to.slice(0, 4), +to.slice(5, 7) - 1, +to.slice(8, 10));
+    return Math.round((end - start) / DAY_MS);
+  }
+
+  function byDateThenUid(a, b) {
+    return a.date < b.date ? -1 : a.date > b.date ? 1 : a.uid - b.uid;
+  }
+
+  // Home for a league fixture when the team is the home side; a cup or European
+  // entry is at home when its venue is the square (a confirmed home venue).
+  function isHomeFor(fx, teamId) {
+    return fx.away ? fx.home.team === teamId : fx.home.shape === 'square';
+  }
+
+  function opponentText(fx, teamId) {
+    if (!fx.away) return fx.round + ' · ' + fx.versus;
+    return fx.home.team === teamId ? fx.away.name : fx.home.name;
+  }
+
+  function timelineCard(fx, teamId, gap) {
+    var home = isHomeFor(fx, teamId);
+    var card = tag(el('div', 'tl-fx' + edgeClass(fx)), fx);
+    card.title = fx.venue;
+    var venue = el('span', 'tl-ha', home ? 'H' : 'A');
+    venue.title = home ? 'Home' : 'Away';
+    var gapText = gap === null ? 'first match' : plural(gap, 'day', 'days') + ' since last match';
+    return append(
+      card,
+      append(el('div', 'tl-top'), competitionTag(fx), venue),
+      el('div', 'tl-opp', opponentText(fx, teamId)),
+      el('div', 'tl-gap', (fx.time ? fx.time + ' · ' : '') + gapText),
+      flagBox(fx)
+    );
+  }
+
+  // Tags for one date: two of the club's teams playing that day, and the
+  // back-to-back pairs with the day before or after.
+  function timelineNotes(own, teams) {
+    var notes = {};
+    function note(date, text, bad) {
+      var list = notes[date] || (notes[date] = []);
+      if (!list.some(function (n) { return n.text === text; })) list.push({ text: text, bad: bad });
+    }
+    var byDate = {};
+    own.forEach(function (fx) { (byDate[fx.date] || (byDate[fx.date] = [])).push(fx); });
+    var dates = Object.keys(byDate).sort();
+    dates.forEach(function (date) {
+      var playing = {};
+      byDate[date].forEach(function (fx) {
+        fx.teams.forEach(function (t) { if (teams.indexOf(t) !== -1) playing[t] = true; });
+      });
+      var both = Object.keys(playing);
+      if (both.length < 2) return;
+      var homes = both.filter(function (t) {
+        return byDate[date].some(function (fx) { return fx.teams.indexOf(t) !== -1 && isHomeFor(fx, t); });
+      });
+      if (homes.length === both.length) note(date, 'both home the same day', true);
+      else note(date, 'same day', false);
+    });
+    // Two of the club's teams on consecutive days, both at home or both away.
+    dates.forEach(function (date, i) {
+      var next = dates[i + 1];
+      if (!next || daysBetween(date, next) !== 1) return;
+      byDate[date].forEach(function (a) {
+        byDate[next].forEach(function (b) {
+          teams.forEach(function (t) {
+            teams.forEach(function (u) {
+              if (u === t || a.teams.indexOf(t) === -1 || b.teams.indexOf(u) === -1) return;
+              var kind = isHomeFor(a, t) && isHomeFor(b, u) ? 'home pair' : !isHomeFor(a, t) && !isHomeFor(b, u) ? 'away pair' : '';
+              if (!kind) return;
+              note(date, kind, false);
+              note(next, kind, false);
+            });
+          });
+        });
+      });
+    });
+    return notes;
+  }
+
+  function clubTimelineView(ctx) {
+    var club = ctx.club;
+    if (!club) return dualClubChooser(ctx.opt);
+    var teams = teamsOf(club);
+    var own = ctx.fx.filter(function (fx) { return fx.clubs.indexOf(club) !== -1; });
+    var gap = {};
+    teams.forEach(function (teamId) {
+      var mine = own.filter(function (fx) { return fx.teams.indexOf(teamId) !== -1; }).sort(byDateThenUid);
+      mine.forEach(function (fx, i) { gap[fx.uid + ':' + teamId] = i ? daysBetween(mine[i - 1].date, fx.date) : null; });
+    });
+    var notes = timelineNotes(own, teams);
+    var byDate = {};
+    own.forEach(function (fx) { (byDate[fx.date] || (byDate[fx.date] = [])).push(fx); });
+
+    var root = el('div');
+    root.appendChild(el('p', 'desc tl-legend',
+      'One row per date. Each card is one team’s match that day, with the days since that team last played. ' +
+      'Tags mark two of the club’s teams on the same day, or on back-to-back days.'));
+    var grid = el('div', 'tl-grid');
+    grid.style.setProperty('--lanes', String(teams.length));
+    var head = el('div', 'tl-head');
+    head.appendChild(el('span', 'tl-date-h', 'Date'));
+    teams.forEach(function (teamId) { head.appendChild(el('span', 'tl-lane', DATA.teams[teamId].label)); });
+    grid.appendChild(head);
+
+    var rows = 0;
+    Object.keys(byDate).sort().forEach(function (date) {
+      var shown = {};
+      ctx.visible(byDate[date].map(function (fx) { return fx.uid; })).forEach(function (uid) { shown[uid] = true; });
+      if (!Object.keys(shown).length) return;
+      rows++;
+      var dayNotes = notes[date] || [];
+      var row = el('div', 'tl-row' + (dayNotes.some(function (n) { return n.bad; }) ? ' tl-clash' : ''));
+      var dateCell = append(el('div', 'tl-date'), el('b', '', shortDate(date)));
+      dayNotes.forEach(function (n) { dateCell.appendChild(el('span', 'tl-tag' + (n.bad ? ' tl-tag-bad' : ''), n.text)); });
+      row.appendChild(dateCell);
+      teams.forEach(function (teamId) {
+        var cell = el('div', 'tl-cell');
+        byDate[date].filter(function (fx) { return fx.teams.indexOf(teamId) !== -1 && shown[fx.uid]; })
+          .forEach(function (fx) { cell.appendChild(timelineCard(fx, teamId, gap[fx.uid + ':' + teamId])); });
+        row.appendChild(cell);
+      });
+      grid.appendChild(row);
+    });
+    if (!rows) return noMatches();
+    root.appendChild(grid);
+    return root;
+  }
+
+  // Shown when no club is picked: the six dual clubs as ways in.
+  function dualClubChooser(opt) {
+    var box = el('div', 'tl-choose');
+    box.appendChild(el('p', 'desc', 'Pick a club in Filters to see its two teams on one timeline, or start from a dual club:'));
+    var list = el('div', 'tl-choices');
+    DATA.dualClubs.forEach(function (club) {
+      var button = el('button', 'tl-club-btn', DATA.clubNames[club]);
+      button.type = 'button';
+      button.addEventListener('click', function () { opt.setClub(club); });
+      list.appendChild(button);
+    });
+    box.appendChild(list);
+    return box;
+  }
+
   var VIEWS = {
     'by-competition': byCompetitionView,
     'month-calendar': monthCalendarView,
     'combined-calendar': combinedCalendarView,
-    'combined-list': combinedListView
+    'combined-list': combinedListView,
+    'club-timeline': clubTimelineView
   };
 
   // ------------------------------------------------------ option controller
@@ -633,6 +798,10 @@
     this.headlines = panel.querySelector('.headlines');
     this.headlineScope = panel.querySelector('.headline-scope');
     this.strip = panel.querySelector('.season-strip');
+    this.scopeBanner = panel.querySelector('.scope-banner');
+    this.scopeText = panel.querySelector('.scope-text');
+    this.scopeCard = panel.querySelector('.scope-card');
+    this.shownCount = panel.querySelector('.shown-count');
     var self = this;
     panel.querySelectorAll('.view-btn').forEach(function (button) {
       button.addEventListener('click', function () {
@@ -640,10 +809,8 @@
         self.render();
       });
     });
-    this.clubSelect.addEventListener('change', function () {
-      self.state.club = self.clubSelect.value;
-      self.render();
-    });
+    this.clubSelect.addEventListener('change', function () { self.setClub(self.clubSelect.value); });
+    panel.querySelector('.scope-clear').addEventListener('click', function () { self.setClub(''); });
     this.lensSelect.addEventListener('change', function () { self.setLens(self.lensSelect.value); });
     this.lensOnly.addEventListener('change', function () { self.setLens(self.state.rule, self.lensOnly.checked); });
     panel.querySelector('.lens-clear').addEventListener('click', function () {
@@ -651,12 +818,28 @@
       self.focusFilter(self.lensSelect);
     });
     panel.querySelector('.club-clear').addEventListener('click', function () {
-      self.state.club = '';
-      self.clubSelect.value = '';
-      self.render();
+      self.setClub('');
       self.focusFilter(self.clubSelect);
     });
   }
+
+  // The one place the club filter changes. A dual club opens on the timeline;
+  // clearing the club leaves the timeline, which has nothing to draw without one.
+  Option.prototype.setClub = function (club) {
+    var state = this.state;
+    state.club = club || '';
+    this.clubSelect.value = state.club;
+    if (state.club && isDual(state.club)) state.view = 'club-timeline';
+    else if (!state.club && state.view === 'club-timeline') state.view = 'by-competition';
+    this.render();
+  };
+
+  // Option tabs share the club and the view, so flipping options keeps them.
+  Option.prototype.adopt = function (shared) {
+    this.state.club = shared.club;
+    this.state.view = shared.view;
+    this.clubSelect.value = shared.club;
+  };
 
   // Focus goes to the filter's own select, or to the Filters button while a
   // narrow bar keeps the selects collapsed, so removing a chip never drops focus.
@@ -696,6 +879,201 @@
     this.headlineScope.textContent = club && this.data.clubHeadlines[club]
       ? this.clubSelect.options[this.clubSelect.selectedIndex].text + '’s matches only:'
       : '';
+  };
+
+  // ------------------------------------------------------- club scorecard
+  //
+  // With a club selected, the upsides, problems and breakdown are rebuilt from
+  // the club's share of each rule: the points of the badges on its fixtures
+  // (items naming one of its teams or the club itself) plus the season-level
+  // events attributed to it (`clubUnpinned`, which no fixture carries). Rules
+  // scored per competition (preferred weekday) belong to no club and show none.
+  // The score, hard-rule list and fairness stay season-wide.
+
+  function groupNamesOf(club) {
+    var names = {};
+    names[DATA.clubNames[club]] = true;
+    teamsOf(club).forEach(function (teamId) { names[DATA.teams[teamId].label] = true; });
+    return names;
+  }
+
+  // The club's flag items by rule id: {fx, flag, item}.
+  Option.prototype.clubItems = function (club) {
+    var cache = this.clubCache || (this.clubCache = {});
+    if (cache[club]) return cache[club];
+    var names = groupNamesOf(club);
+    var byRule = {};
+    this.fx.forEach(function (fx) {
+      if (fx.clubs.indexOf(club) === -1) return;
+      fx.flags.forEach(function (flag) {
+        if (flag.rule.inv) return;
+        flag.items.forEach(function (item) {
+          if (!names[item.group]) return;
+          (byRule[flag.rule.id] || (byRule[flag.rule.id] = [])).push({ fx: fx, flag: flag, item: item });
+        });
+      });
+    });
+    cache[club] = byRule;
+    return byRule;
+  };
+
+  // The club's figure for every rule, in breakdown order. `fixtures` counts the
+  // fixtures carrying its items, `loose` the events attributed to it that no
+  // fixture carries, and `count` the events (an event shared by n fixtures counts once).
+  Option.prototype.clubScores = function (club) {
+    var items = this.clubItems(club);
+    var loose = {};
+    (this.data.clubUnpinned[club] || []).forEach(function (row) { loose[row[0]] = row; });
+    return this.data.order.map(function (index) {
+      var rule = DATA.rules[index];
+      var total = 0;
+      var count = 0;
+      var fixtures = {};
+      (items[rule.id] || []).forEach(function (entry) {
+        total += entry.item.delta;
+        count += 1 / entry.item.n;
+        fixtures[entry.fx.uid] = true;
+      });
+      var extra = loose[index];
+      if (extra) {
+        total += extra[1];
+        count += extra[2];
+      }
+      return {
+        rule: rule,
+        total: Math.round(total * 100) / 100,
+        count: Math.round(count),
+        fixtures: Object.keys(fixtures).length,
+        loose: extra ? extra[2] : 0
+      };
+    });
+  };
+
+  function ruleActions(score) {
+    var box = el('div', 'rule-actions');
+    if (!score.fixtures) {
+      box.appendChild(el('span', 'desc', 'Not tied to one fixture, so nothing to show in the calendar.'));
+      return box;
+    }
+    var button = el('button', 'lens-link', 'Show in calendar');
+    button.type = 'button';
+    button.setAttribute('data-rule', score.rule.id);
+    return append(box, button);
+  }
+
+  var scopeTooltips = 0;
+
+  // The rule's name with its description on hover, as the server draws it.
+  function ruleNameRow(rule) {
+    var row = el('span', 'name-row');
+    row.appendChild(el('span', 'name', ruleName(rule)));
+    var wrap = el('span', 'info-wrap');
+    var icon = el('button', 'info-icon', 'i');
+    icon.type = 'button';
+    icon.setAttribute('aria-label', ruleName(rule) + ' description');
+    var tooltip = el('span', 'tooltip', rule.desc);
+    scopeTooltips++;
+    tooltip.id = 'scope-tt-' + scopeTooltips;
+    tooltip.setAttribute('role', 'tooltip');
+    icon.setAttribute('aria-describedby', tooltip.id);
+    return append(row, append(wrap, icon, tooltip));
+  }
+
+  // A fixtures list mounted under a rule, filled by `toggle` when opened.
+  function ruleFixturesList(score) {
+    var list = el('details', 'fx-list');
+    list.setAttribute('data-rule', score.rule.id);
+    list.appendChild(el('summary', '', plural(score.fixtures, 'fixture', 'fixtures') + ', by team'));
+    list.appendChild(el('div', 'rule-fixtures'));
+    return list;
+  }
+
+  function scopeItem(score, kind) {
+    var item = el('details', 'item ' + kind);
+    if (score.fixtures) item.setAttribute('data-rule', score.rule.id);
+    var summary = el('summary', 'top');
+    append(summary, ruleNameRow(score.rule), el('span', 'delta', points(score.total)));
+    var body = append(el('div', 'item-body'), ruleActions(score));
+    if (score.fixtures) body.appendChild(el('div', 'rule-fixtures'));
+    if (score.loose) body.appendChild(el('div', 'desc', 'Includes ' + plural(score.loose, 'event', 'events') + ' not tied to one fixture.'));
+    return append(item, summary, body);
+  }
+
+  function scopeColumn(title, scores, kind, empty) {
+    var col = append(el('div', 'col'), el('h3', '', title));
+    if (!scores.length) col.appendChild(el('div', 'desc', empty));
+    scores.forEach(function (score) { col.appendChild(scopeItem(score, kind)); });
+    return col;
+  }
+
+  Option.prototype.scopeBreakdown = function (scores, club) {
+    var details = el('details', 'scope-breakdown');
+    details.appendChild(el('summary', '', 'Full score breakdown — ' + DATA.clubNames[club] + '’s share'));
+    var head = el('tr');
+    ['Rule', 'Type', 'Contribution', 'Events', 'Fixtures'].forEach(function (name, i) {
+      head.appendChild(el('th', i === 2 || i === 3 ? 'num' : '', name));
+    });
+    var body = el('tbody');
+    scores.forEach(function (score) {
+      var rule = score.rule;
+      var row = el('tr');
+      if (rule.hard && score.count) row.className = 'violated';
+      var last = el('td');
+      if (rule.inv) last.appendChild(el('span', 'desc', 'Scored per competition, not per team.'));
+      else if (score.fixtures) append(last, ruleActions(score), ruleFixturesList(score));
+      else last.appendChild(document.createTextNode('—'));
+      append(
+        row,
+        append(el('td'), ruleNameRow(rule)),
+        append(el('td'), el('span', 'kind ' + (rule.hard ? 'hard' : 'soft'), rule.hard ? 'hard' : 'soft')),
+        el('td', 'num', score.total ? signed(score.total) : '—'),
+        el('td', 'num', String(score.count)),
+        last
+      );
+      body.appendChild(row);
+    });
+    var table = append(el('table'), append(el('thead'), head), body);
+    details.appendChild(append(el('div', 'cal-wrap'), table));
+    return details;
+  };
+
+  // Draws the club's scorecard, or hides it again for the season-wide one. Also
+  // states the scope and how many fixtures the filters leave on screen.
+  Option.prototype.renderScope = function () {
+    var club = this.state.club;
+    this.panel.querySelectorAll('.season-part').forEach(function (node) { node.hidden = !!club; });
+    this.scopeBanner.hidden = !club;
+    this.scopeCard.textContent = '';
+    if (club) {
+      var matches = (this.data.clubHeadlines[club] || [])[0];
+      this.scopeText.textContent = '';
+      append(
+        this.scopeText,
+        el('b', '', DATA.clubNames[club] + ' — ' + (matches ? plural(+matches.value, 'match', 'matches') : 'no matches')),
+        document.createTextNode('. Upsides, problems and the breakdown below count only this club’s share of each rule. ' +
+          'The score, the hard-rule list and fairness stay season-wide.')
+      );
+      var scores = this.clubScores(club);
+      var limit = this.data.limit;
+      var ups = scores.filter(function (s) { return s.total > 0; })
+        .sort(function (a, b) { return b.total - a.total; }).slice(0, limit);
+      var downs = scores.filter(function (s) { return s.total < 0; })
+        .sort(function (a, b) { return (a.rule.hard ? 0 : 1) - (b.rule.hard ? 0 : 1) || a.total - b.total; })
+        .slice(0, limit);
+      var cols = el('div', 'cols');
+      cols.appendChild(scopeColumn(this.data.full ? 'Every upside' : 'Biggest upsides', ups, 'up', 'Nothing scored positively for this club.'));
+      cols.appendChild(scopeColumn(
+        this.data.full ? 'Every problem (including the hard rules above)' : 'Biggest problems',
+        downs, 'down', 'Nothing scored negatively for this club.'
+      ));
+      append(this.scopeCard, cols, this.scopeBreakdown(scores, club));
+    }
+    // The fixtures the filters leave on screen, so a narrowed view is obvious.
+    var ctx = this.context();
+    var filtering = ctx.filtering;
+    var shown = this.fx.filter(ctx.show).length;
+    this.shownCount.hidden = !filtering;
+    this.shownCount.textContent = filtering ? shown + ' of ' + this.fx.length + ' fixtures shown' : '';
   };
 
   // ------------------------------------------------------------- rule lens
@@ -975,6 +1353,7 @@
       }
     });
     this.renderHeadlines();
+    this.renderScope();
     this.renderLensUi();
     this.markLens(this.activeBody());
     this.renderStrip(ctx);
@@ -1022,11 +1401,14 @@
       document.querySelectorAll('.tab').forEach(function (other) {
         other.setAttribute('aria-selected', String(other === tab));
       });
-      option(current).release();
+      var previous = option(current);
+      previous.release();
       panels[current].hidden = true;
       current = index;
       panels[current].hidden = false;
-      option(current).render();
+      var next = option(current);
+      next.adopt(previous.state);
+      next.render();
       watchBar(panels[current]);
     });
   });
@@ -1155,25 +1537,40 @@
     return append(el('li'), button);
   }
 
-  // Lists a rule's fixtures grouped by team (or dual club), biggest group first,
-  // each group headed by its count.
-  Option.prototype.fillRuleList = function (mount, ruleId) {
-    var stats = this.ruleStats()[ruleId];
-    var groups = {};
+  // Every flag item of a rule across the option, as {fx, flag, item}.
+  Option.prototype.allRuleItems = function (ruleId) {
+    var out = [];
     this.fx.forEach(function (fx) {
       fx.flags.forEach(function (flag) {
         if (flag.rule.id !== ruleId) return;
-        flag.items.forEach(function (item) {
-          (groups[item.group] || (groups[item.group] = [])).push({ fx: fx, flag: flag, item: item });
-        });
+        flag.items.forEach(function (item) { out.push({ fx: fx, flag: flag, item: item }); });
       });
+    });
+    return out;
+  };
+
+  // Lists a rule's fixtures grouped by team (or dual club), biggest group first,
+  // each group headed by its count. With a club selected, only its share.
+  Option.prototype.fillRuleList = function (mount, ruleId) {
+    var club = this.state.club;
+    var stats = this.ruleStats()[ruleId];
+    var entries = club ? this.clubItems(club)[ruleId] || [] : this.allRuleItems(ruleId);
+    var groups = {};
+    entries.forEach(function (entry) {
+      (groups[entry.item.group] || (groups[entry.item.group] = [])).push(entry);
     });
     var names = Object.keys(groups).sort(function (a, b) {
       return groups[b].length - groups[a].length || (a < b ? -1 : 1);
     });
-    var total = names.reduce(function (sum, name) { return sum + groups[name].length; }, 0);
+    var total = entries.length;
     var box = el('div', 'occ-groups');
-    var summary = el('p', 'occ-summary', statsWording(stats) + '. Select a row to find it in the calendar.');
+    var wording = statsWording(stats);
+    if (club) {
+      var fixtures = {};
+      entries.forEach(function (entry) { fixtures[entry.fx.uid] = true; });
+      wording = DATA.clubNames[club] + ': ' + plural(Object.keys(fixtures).length, 'fixture', 'fixtures') + ' with this rule';
+    }
+    var summary = el('p', 'occ-summary', wording + '. Select a row to find it in the calendar.');
     if (total > 14) {
       box.tabIndex = 0;
       box.setAttribute('role', 'region');

@@ -127,7 +127,11 @@ def render_report(
     )
     report_data = {
         **payload.shared_tables(
-            world, club_colors, competitions, payload.rule_table(rule_ids, hard_ids, frozenset(_INVERSE_RULES))
+            world,
+            club_colors,
+            competitions,
+            payload.rule_table(rule_ids, hard_ids, frozenset(_INVERSE_RULES)),
+            dual_club_ids,
         ),
         "tint": {"good": TINT_GOOD, "cost": TINT_COST},
         "shared": [payload.shared_entry_wire(entry) for entry in shared_entries],
@@ -212,6 +216,10 @@ def _build_option(
             month_calendar=month_calendar,
             month_calendar_details=month_calendar_details,
             rule_totals={r.constraint_id: r.total for r in score.results},
+            score_order=[rule_index[r.constraint_id] for r in _ordered_results(score)],
+            club_unpinned=_club_unpinned(world, candidate, rule_index),
+            limit=limit,
+            full=full_diagnostics,
         ),
     }
 
@@ -538,6 +546,36 @@ def _club_headlines(world: World, candidate: Candidate, dual_club_ids: set[str])
             )
         headlines[club_id] = rows
     return headlines
+
+
+def _club_unpinned(
+    world: World, candidate: Candidate, rule_index: dict[str, int]
+) -> dict[str, list[list]]:
+    """Per club, the events that point at no fixture, as `[rule, total, count]`.
+
+    A club's scorecard figures are otherwise summed from the fixture flags on
+    the page; these are the season-level events no fixture carries. Attributed
+    as `_event_groups` attributes pinned events, so the two halves agree.
+    """
+    totals: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(lambda: [0.0, 0]))
+    for result in candidate.score.results:
+        if result.constraint_id in _INVERSE_RULES:
+            continue
+        rule = rule_index[result.constraint_id]
+        club_events, team_events = _classify_events(world, result.events)
+        by_club = len(club_events) >= len(team_events)
+        for event in club_events if by_club else team_events:
+            if event.match_keys:
+                continue
+            clubs = {world.team(team_id).club_id for team_id in event.team_ids}
+            for club_id in clubs:
+                entry = totals[club_id][rule]
+                entry[0] += event.delta
+                entry[1] += 1
+    return {
+        club_id: [[rule, round(total, 2), count] for rule, (total, count) in sorted(by_rule.items())]
+        for club_id, by_rule in totals.items()
+    }
 
 
 def _match_entries(

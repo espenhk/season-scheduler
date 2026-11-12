@@ -1276,3 +1276,53 @@ def test_each_option_panel_has_one_sticky_bar_with_summary_legend_and_unique_ids
     assert "jump-cal" in rendered
     ids = re.findall(r' id="((?:legend|filters)-\d+)"', rendered)
     assert len(ids) == len(set(ids))
+
+
+# -- club scope and timeline (issue #33) ---------------------------------------
+
+
+def test_the_payload_names_the_dual_clubs_and_orders_the_breakdown_for_the_club_scorecard():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    constraints = [PreferredWeekday(competitions=[comp_m, comp_w]), ConsecutiveHomeDays(competitions=[comp_m, comp_w])]
+    candidate = _candidate(world, season, matches, constraints)
+
+    data = _report_data(_render(world, season, [candidate]))
+    option = data["options"][0]
+
+    assert set(data["dualClubs"]) == {"club_a", "club_b"}
+    assert data["clubNames"]["club_a"] == "Club A"
+    assert sorted(option["order"]) == sorted(
+        data["rules"].index(next(r for r in data["rules"] if r["id"] == res.constraint_id))
+        for res in candidate.score.results
+    )
+    assert option["limit"] == 4 and option["full"] is False
+
+
+def test_club_unpinned_attributes_season_events_to_the_club_they_name_and_skips_pinned_ones():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    candidate = _candidate(world, season, matches, [])
+    candidate.score.results.append(
+        ConstraintResult(
+            constraint_id="season_rule",
+            kind="soft",
+            total=6.0,
+            count=3,
+            events=[
+                Event(delta=3.0, detail="a_m season", team_ids=("a_m",)),
+                Event(delta=1.0, detail="a_w season", team_ids=("a_w",)),
+                Event(delta=2.0, detail="b_m season", team_ids=("b_m",)),
+                Event(delta=9.0, detail="pinned", team_ids=("a_m",), match_keys=(matches[0].key,)),
+            ],
+        )
+    )
+
+    data = _report_data(_render(world, season, [candidate]))
+    option = data["options"][0]
+    rule = next(i for i, r in enumerate(data["rules"]) if r["id"] == "season_rule")
+
+    # Club A's two teams' events add up; the pinned one is on a fixture already,
+    # and Club B's own event goes to Club B.
+    assert [row for row in option["clubUnpinned"]["club_a"] if row[0] == rule] == [[rule, 4.0, 2]]
+    assert [row for row in option["clubUnpinned"]["club_b"] if row[0] == rule] == [[rule, 2.0, 1]]

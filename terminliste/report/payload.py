@@ -36,6 +36,14 @@ each rule that has drawn flags: the full rule total, which fixtures alone
 cannot give (unpinned events, and the quiet rewards of an inverse rule). A rule
 in the rule table marked `inv` is shown inversely, its drawn flags being the
 fixtures that missed the reward.
+
+Club scope (#33). With a club selected the page restates the scorecard from the
+flags above: a club's share of a rule is the flags on its fixtures whose `group`
+names one of its teams (or the club). Season-level events that no fixture
+carries cannot be derived that way, so `clubUnpinned` gives them per club as
+`[rule, total, count]`. `order` is the rules in breakdown order, `limit` how
+many upsides or problems the scorecard lists, and `full` whether it is the
+every-rule diagnostic.
 """
 
 from __future__ import annotations
@@ -149,11 +157,17 @@ def rule_table(
 
 
 def shared_tables(
-    world: World, club_colors: dict[str, str], competitions: dict[str, dict], rules: list[dict]
+    world: World,
+    club_colors: dict[str, str],
+    competitions: dict[str, dict],
+    rules: list[dict],
+    dual_club_ids: set[str],
 ) -> dict:
     return {
         "rules": rules,
         "clubs": {club_id: club_class(club_id) for club_id in club_colors},
+        "clubNames": {club.id: club.name for club in world.clubs.values()},
+        "dualClubs": sorted(dual_club_ids, key=lambda club_id: world.club(club_id).name),
         "competitions": {
             cid: {"name": c["name"], "short": c["short"], "cls": competition_class(cid)}
             for cid, c in competitions.items()
@@ -278,6 +292,10 @@ def option_wire(
     month_calendar: list[dict],
     month_calendar_details: list[dict],
     rule_totals: dict[str, float],
+    score_order: list[int],
+    club_unpinned: dict[str, list[list]],
+    limit: int,
+    full: bool,
 ) -> dict:
     """Everything one option's views need on top of the shared tables and
     shared entries."""
@@ -296,6 +314,12 @@ def option_wire(
         ],
         "headlines": headlines,
         "clubHeadlines": club_headlines,
+        # Rules in breakdown order, the scorecard's per-club figures, and how
+        # many entries each club's lists show.
+        "order": score_order,
+        "clubUnpinned": club_unpinned,
+        "limit": limit,
+        "full": full,
         "byCompetition": by_competition_wire(league_views),
         "weeks": [
             {"label": week["label"], "dates": week["dates"], "ids": _uids(week["matches"])}
