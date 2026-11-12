@@ -228,7 +228,7 @@ def describe(constraint_id: str) -> str:
 # report one (#34).
 COVERAGE_UNITS: dict[str, str] = {
     "preferred_weekday": "matches",
-    "consecutive_home_days": "home matches",
+    "consecutive_home_days": "home matches of two-team clubs",
     "rest_comfort": "gaps",
     "home_away_balance": "team half-seasons",
 }

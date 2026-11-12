@@ -1384,7 +1384,7 @@ def test_the_score_explanation_and_club_breakdown_fit_a_phone_without_overflow(b
     context.close()
 
 
-_COVERAGE_TEXT = re.compile(r"^\d+ of \d+ (matches|home matches|gaps|team half-seasons) \(\d+%\)$")
+_COVERAGE_TEXT = re.compile(r"^\d+ of \d+ (matches|home matches of two-team clubs|gaps|team half-seasons) \(\d+%\)$")
 
 
 def test_coverage_counts_sit_under_the_rule_names_in_the_scorecard(page):
