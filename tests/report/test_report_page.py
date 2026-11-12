@@ -159,18 +159,26 @@ def _no_browser(reason: str):
 @pytest.fixture(scope="module")
 def browser():
     with sync_api.sync_playwright() as playwright:
-        try:
-            instance = playwright.chromium.launch()
-        except sync_api.Error:
-            executable = _browser_executable()
-            if not executable:
-                _no_browser("no Chromium available for Playwright")
-            try:
-                instance = playwright.chromium.launch(executable_path=executable)
-            except sync_api.Error as exc:
-                _no_browser(f"Chromium could not be launched: {exc}")
+        instance, reason = _launch_chromium(playwright)
+        if instance is None:
+            _no_browser(reason)
         yield instance
         instance.close()
+
+
+def _launch_chromium(playwright):
+    """The launched browser, or None and why it could not start."""
+    try:
+        return playwright.chromium.launch(), ""
+    except sync_api.Error:
+        pass
+    executable = _browser_executable()
+    if not executable:
+        return None, "no Chromium available for Playwright"
+    try:
+        return playwright.chromium.launch(executable_path=executable), ""
+    except sync_api.Error as exc:
+        return None, f"Chromium could not be launched: {exc}"
 
 
 @pytest.fixture
@@ -663,7 +671,7 @@ def test_the_bar_stays_in_view_and_summarises_the_selected_option(short_page):
 def test_the_bar_controls_drive_the_view_club_and_rule_filters_and_chips_clear_them(short_page):
     page = short_page
     page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
-    body = _view(page, "combined-calendar")
+    _view(page, "combined-calendar")
     page.select_option("#panel-1 .club-select", "club_b")
     page.select_option("#panel-1 .lens-select", PAIR)
     assert _rect(page, "#panel-1 .controls")["top"] == 0
