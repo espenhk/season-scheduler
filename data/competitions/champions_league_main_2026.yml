@@ -39,11 +39,8 @@ format: european
 movable: false
 is_main_tournament: true
 
-# Season report colour (issue #77) — a teal family, distinct from the
-# qualifiers' blue family, so a reader can tell "qualifying" and "main
-# tournament" apart at a glance on the report calendar. Darkest here, same
-# spirit as champions_league_2026.yml's own darkest-of-the-three choice.
-color: "#115e59"
+# UEFA family colour, the main tournament's shade (#36); see the colour test in tests/report/test_render.py.
+color: "#14532d"
 
 team_count: 0
 teams: []

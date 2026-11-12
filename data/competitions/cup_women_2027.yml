@@ -21,8 +21,8 @@ season: 2027
 gender: women
 format: cup
 
-# Season report colour (issue #77) — see cup_men_2027.yml's comment.
-color: "#701a75"
+# NM cup family colour, a shade of red (#36); see the colour test in tests/report/test_render.py.
+color: "#5c1111"
 
 # NFF-fixed, not scheduler-controlled — see cup_men_2027.yml and issue #31.
 movable: false

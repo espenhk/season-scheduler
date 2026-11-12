@@ -27,9 +27,8 @@ gender: men
 format: european
 movable: false
 
-# Season report colour (issue #77) — see champions_league_2026.yml's
-# comment: same blue family, lightest shade.
-color: "#4b5563"
+# UEFA family colour; qualifying is a lighter tint (#36); see the colour test in tests/report/test_render.py.
+color: "#3c6a30"
 
 team_count: 2
 teams:

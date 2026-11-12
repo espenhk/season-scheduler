@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import re
 import tempfile
 from collections import Counter
@@ -803,7 +804,7 @@ def _contrast(a: str, b: str) -> float:
     return (light + 0.05) / (dark + 0.05)
 
 
-def _cie_lab(hex_colour: str) -> tuple[float, float, float]:
+def _lab(hex_colour: str) -> tuple[float, float, float]:
     r, g, b = (_srgb_channel(int(hex_colour[i : i + 2], 16)) for i in (1, 3, 5))
     x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
     y = 0.2126 * r + 0.7152 * g + 0.0722 * b
@@ -816,24 +817,107 @@ def _cie_lab(hex_colour: str) -> tuple[float, float, float]:
     return 116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)
 
 
-def _delta_e(a: str, b: str) -> float:
-    """CIE76 colour difference: about 2.3 is a just-noticeable step."""
-    return sum((p - q) ** 2 for p, q in zip(_cie_lab(a), _cie_lab(b), strict=True)) ** 0.5
+def _ciede2000(a: str, b: str) -> float:
+    """CIEDE2000 colour difference (Sharma, Wu and Dalal, 2005); about 2.3 is a just-noticeable step."""
+    l1, a1, b1 = _lab(a)
+    l2, a2, b2 = _lab(b)
+    c1, c2 = math.hypot(a1, b1), math.hypot(a2, b2)
+    c_bar = (c1 + c2) / 2
+    g = 0.5 * (1 - math.sqrt(c_bar**7 / (c_bar**7 + 25**7)))
+    a1p, a2p = (1 + g) * a1, (1 + g) * a2
+    c1p, c2p = math.hypot(a1p, b1), math.hypot(a2p, b2)
+    h1p = math.degrees(math.atan2(b1, a1p)) % 360
+    h2p = math.degrees(math.atan2(b2, a2p)) % 360
+    dl, dc = l2 - l1, c2p - c1p
+    if c1p * c2p == 0:
+        dh = 0.0
+    else:
+        dh = h2p - h1p
+        if dh > 180:
+            dh -= 360
+        elif dh < -180:
+            dh += 360
+    d_big_h = 2 * math.sqrt(c1p * c2p) * math.sin(math.radians(dh / 2))
+    l_bar, c_bar_p = (l1 + l2) / 2, (c1p + c2p) / 2
+    if c1p * c2p == 0:
+        h_bar = h1p + h2p
+    elif abs(h1p - h2p) <= 180:
+        h_bar = (h1p + h2p) / 2
+    elif h1p + h2p < 360:
+        h_bar = (h1p + h2p + 360) / 2
+    else:
+        h_bar = (h1p + h2p - 360) / 2
+    t = (
+        1
+        - 0.17 * math.cos(math.radians(h_bar - 30))
+        + 0.24 * math.cos(math.radians(2 * h_bar))
+        + 0.32 * math.cos(math.radians(3 * h_bar + 6))
+        - 0.20 * math.cos(math.radians(4 * h_bar - 63))
+    )
+    d_theta = 30 * math.exp(-(((h_bar - 275) / 25) ** 2))
+    rc = 2 * math.sqrt(c_bar_p**7 / (c_bar_p**7 + 25**7))
+    sl = 1 + 0.015 * (l_bar - 50) ** 2 / math.sqrt(20 + (l_bar - 50) ** 2)
+    sc = 1 + 0.045 * c_bar_p
+    sh = 1 + 0.015 * c_bar_p * t
+    rt = -math.sin(math.radians(2 * d_theta)) * rc
+    return math.sqrt(
+        (dl / sl) ** 2 + (dc / sc) ** 2 + (d_big_h / sh) ** 2 + rt * (dc / sc) * (d_big_h / sh)
+    )
 
 
-def test_every_competition_colour_is_distinct_and_readable_in_the_real_data(world):
-    """The month calendar tells competitions apart by dot colour alone, so the
-    shipped colours must differ clearly from each other (CIE76 delta E 15 or
-    more, where near-identical oranges and teals used to sit at 10 and 15) and
-    the dot and its tag text must read on the page (dot 3:1 on white, tag text
+def _hue(hex_colour: str) -> float:
+    _, a, b = _lab(hex_colour)
+    return math.degrees(math.atan2(b, a)) % 360
+
+
+def _colour_family(competition) -> str:
+    """Eliteserien and Toppserien are each a family of their own; the cups share one, and the UEFA competitions another."""
+    if competition.format == "league":
+        return competition.id
+    return "cup" if competition.format == "cup" else "uefa"
+
+
+def test_competition_colours_form_four_families_that_read_apart_in_the_real_data(world):
+    """The month calendar tells competitions apart by their short label, so the
+    colours only need to group them: Eliteserien and Toppserien each a strong
+    colour of their own, all cups one hue (shades for men, women and editions),
+    all UEFA competitions one hue with the qualifiers a lighter tint of the main
+    tournament. Families must differ clearly (CIEDE2000 25 or more between any
+    two; the shipped minimum is about 30). Within a family, one hue spans no more
+    than 40 degrees. No neutral grey, and no competition colour repeats a club's.
+    The dot and its tag text must read on the page (dot 3:1 on white, tag text
     4.5:1 on its tint)."""
-    colours = {competition.id: competition.color for competition in world.competitions.values()}
-    assert len(colours) >= 2
-    for left, right in itertools.combinations(sorted(colours), 2):
-        assert _delta_e(colours[left], colours[right]) >= 15, (left, right)
+    colours = {c.id: c.color for c in world.competitions.values()}
+    families: dict[str, list[str]] = {}
+    for competition in world.competitions.values():
+        families.setdefault(_colour_family(competition), []).append(competition.id)
+    assert len(families) == 4
+
+    cross = [
+        _ciede2000(colours[a], colours[b])
+        for fa, fb in itertools.combinations(families, 2)
+        for a in families[fa]
+        for b in families[fb]
+    ]
+    assert min(cross) >= 25
+
+    for members in families.values():
+        hues = [_hue(colours[m]) for m in members]
+        assert max(hues) - min(hues) <= 40, members
+
+    uefa = {c.id: c for c in world.competitions.values() if _colour_family(c) == "uefa"}
+    qualifiers = [colours[i] for i, c in uefa.items() if "qualifying" in c.name.lower()]
+    mains = [colours[i] for i, c in uefa.items() if "qualifying" not in c.name.lower()]
+    assert qualifiers and mains
+    assert min(_lab(q)[0] for q in qualifiers) - max(_lab(m)[0] for m in mains) >= 6
+
+    club_colours = {club.color.lower() for club in world.clubs.values() if club.color}
+    assert not club_colours & {colour.lower() for colour in colours.values()}
+
     for competition_id, colour in colours.items():
         assert _contrast(colour, "#ffffff") >= 3, competition_id
         assert _contrast(colour, _tint(colour)) >= 4.5, competition_id
+        assert _lab(colour)[0] < 60, competition_id  # no neutral grey reading as disabled
 
 
 # -- embedded fixture payload (#42) ------------------------------------------
