@@ -368,11 +368,9 @@
     return sum;
   }
 
-  // Parts are joined with " · " and each omitted when it would read zero: the net
-  // only when a visible badge is on the games, costs and the repeated badge only
-  // when there are any.
   // The parts of a round or week total, as text plus an optional class for the
-  // net. Shared by the visible label and the accessible name, so they agree.
+  // net, each omitted when it would read zero (the net only when a visible badge
+  // is on the games). Shared by the visible label and the accessible name.
   function summaryParts(sum) {
     var parts = [];
     if (sum.badged) parts.push({ text: netText(sum.net) + ' pts', net: true, cls: netClass(sum.net) });
@@ -390,9 +388,7 @@
     return texts.join(' · ');
   }
 
-  // Parts are joined with " · " and each omitted when it would read zero: the net
-  // only when a visible badge is on the games, costs and the repeated badge only
-  // when there are any.
+  // Visible label; the parts come from summaryParts.
   function summaryNode(sum, midweekTag) {
     var node = el('div', 'rsum');
     node.title = 'Net points from the rule badges on the games shown (hidden rewards are not counted)';
