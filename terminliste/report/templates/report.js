@@ -120,9 +120,8 @@
 
   function sharedFixture(uid, e) {
     var european = e.k === 'eu';
-    // A European leg with no confirmed home/away gets a dimmed square; a cup
-    // round is always one of the three.
-    var shape = SHAPE_BY_VENUE_TYPE[e.vt] || (european ? 'square-dim' : 'circle');
+    // A tie whose venue is not decided yet gets a dimmed square.
+    var shape = SHAPE_BY_VENUE_TYPE[e.vt] || 'square-dim';
     var home = side(e.t, shape);
     return withFlags({
       uid: uid, kind: european ? 'european' : 'cup', date: e.d, time: '', comp: e.c,
@@ -619,10 +618,16 @@
     return a.date < b.date ? -1 : a.date > b.date ? 1 : a.uid - b.uid;
   }
 
-  // Home for a league fixture when the team is the home side; a cup or European
-  // entry is at home when its venue is the square (a confirmed home venue).
-  function isHomeFor(fx, teamId) {
-    return fx.away ? fx.home.team === teamId : fx.home.shape === 'square';
+  // Where a team plays a fixture: 'home', 'away', 'neutral', or 'unknown' for a
+  // tie whose venue is not decided yet. Only home and away count towards tags.
+  var VENUE_OF_SHAPE = { square: 'home', diamond: 'away', circle: 'neutral', 'square-dim': 'unknown' };
+  var VENUE_MARK = {
+    home: ['H', 'Home'], away: ['A', 'Away'], neutral: ['N', 'Neutral venue'], unknown: ['?', 'Venue not decided']
+  };
+
+  function venueFor(fx, teamId) {
+    if (fx.away) return fx.home.team === teamId ? 'home' : 'away';
+    return VENUE_OF_SHAPE[fx.home.shape] || 'unknown';
   }
 
   function opponentText(fx, teamId) {
@@ -631,11 +636,12 @@
   }
 
   function timelineCard(fx, teamId, gap) {
-    var home = isHomeFor(fx, teamId);
+    var mark = VENUE_MARK[venueFor(fx, teamId)];
     var card = tag(el('div', 'tl-fx' + edgeClass(fx)), fx);
     card.title = fx.venue;
-    var venue = el('span', 'tl-ha', home ? 'H' : 'A');
-    venue.title = home ? 'Home' : 'Away';
+    var venue = el('span', 'tl-ha', mark[0]);
+    venue.title = mark[1];
+    venue.setAttribute('aria-label', mark[1]);
     var gapText = gap === null ? 'first match' : plural(gap, 'day', 'days') + ' since last match';
     return append(
       card,
@@ -646,8 +652,9 @@
     );
   }
 
-  // Tags for one date: two of the club's teams playing that day, and the
-  // back-to-back pairs with the day before or after.
+  // Tags for each date over the club's teams: two of them playing that day
+  // (flagged when both are at home), and the back-to-back pairs with the day
+  // before or after, both at home or both away.
   function timelineNotes(own, teams) {
     var notes = {};
     function note(date, text, bad) {
@@ -658,19 +665,18 @@
     own.forEach(function (fx) { (byDate[fx.date] || (byDate[fx.date] = [])).push(fx); });
     var dates = Object.keys(byDate).sort();
     dates.forEach(function (date) {
-      var playing = {};
-      byDate[date].forEach(function (fx) {
-        fx.teams.forEach(function (t) { if (teams.indexOf(t) !== -1) playing[t] = true; });
+      var playing = [];
+      var atHome = [];
+      teams.forEach(function (t) {
+        var mine = byDate[date].filter(function (fx) { return fx.teams.indexOf(t) !== -1; });
+        if (!mine.length) return;
+        playing.push(t);
+        if (mine.some(function (fx) { return venueFor(fx, t) === 'home'; })) atHome.push(t);
       });
-      var both = Object.keys(playing);
-      if (both.length < 2) return;
-      var homes = both.filter(function (t) {
-        return byDate[date].some(function (fx) { return fx.teams.indexOf(t) !== -1 && isHomeFor(fx, t); });
-      });
-      if (homes.length === both.length) note(date, 'both home the same day', true);
+      if (playing.length < 2) return;
+      if (atHome.length === playing.length) note(date, 'both home the same day', true);
       else note(date, 'same day', false);
     });
-    // Two of the club's teams on consecutive days, both at home or both away.
     dates.forEach(function (date, i) {
       var next = dates[i + 1];
       if (!next || daysBetween(date, next) !== 1) return;
@@ -679,7 +685,9 @@
           teams.forEach(function (t) {
             teams.forEach(function (u) {
               if (u === t || a.teams.indexOf(t) === -1 || b.teams.indexOf(u) === -1) return;
-              var kind = isHomeFor(a, t) && isHomeFor(b, u) ? 'home pair' : !isHomeFor(a, t) && !isHomeFor(b, u) ? 'away pair' : '';
+              var va = venueFor(a, t);
+              var vb = venueFor(b, u);
+              var kind = va === 'home' && vb === 'home' ? 'home pair' : va === 'away' && vb === 'away' ? 'away pair' : '';
               if (!kind) return;
               note(date, kind, false);
               note(next, kind, false);
@@ -695,6 +703,8 @@
     var club = ctx.club;
     if (!club) return dualClubChooser(ctx.opt);
     var teams = teamsOf(club);
+    // A picked team gets its own lane; the pairs and gaps still read both teams.
+    var lanes = ctx.team ? [ctx.team] : teams;
     var own = ctx.fx.filter(function (fx) { return fx.clubs.indexOf(club) !== -1; });
     var gap = {};
     teams.forEach(function (teamId) {
@@ -706,14 +716,15 @@
     own.forEach(function (fx) { (byDate[fx.date] || (byDate[fx.date] = [])).push(fx); });
 
     var root = el('div');
-    root.appendChild(el('p', 'desc tl-legend',
-      'One row per date. Each card is one team’s match that day, with the days since that team last played. ' +
-      'Tags mark two of the club’s teams on the same day, or on back-to-back days.'));
+    var legend = 'One row per date. Each card is one team’s match that day, with the days since that team last played. ' +
+      'Tags mark two of the club’s teams on the same day, or on back-to-back days.';
+    if (ctx.team) legend += ' With one team picked, the tags and gaps still count both teams.';
+    root.appendChild(el('p', 'desc tl-legend', legend));
     var grid = el('div', 'tl-grid');
-    grid.style.setProperty('--lanes', String(teams.length));
+    grid.style.setProperty('--lanes', String(lanes.length));
     var head = el('div', 'tl-head');
     head.appendChild(el('span', 'tl-date-h', 'Date'));
-    teams.forEach(function (teamId) { head.appendChild(el('span', 'tl-lane', DATA.teams[teamId].label)); });
+    lanes.forEach(function (teamId) { head.appendChild(el('span', 'tl-lane', DATA.teams[teamId].label)); });
     grid.appendChild(head);
 
     var rows = 0;
@@ -727,7 +738,7 @@
       var dateCell = append(el('div', 'tl-date'), el('b', '', shortDate(date)));
       dayNotes.forEach(function (n) { dateCell.appendChild(el('span', 'tl-tag' + (n.bad ? ' tl-tag-bad' : ''), n.text)); });
       row.appendChild(dateCell);
-      teams.forEach(function (teamId) {
+      lanes.forEach(function (teamId) {
         var cell = el('div', 'tl-cell');
         byDate[date].filter(function (fx) { return fx.teams.indexOf(teamId) !== -1 && shown[fx.uid]; })
           .forEach(function (fx) { cell.appendChild(timelineCard(fx, teamId, gap[fx.uid + ':' + teamId])); });
@@ -790,18 +801,20 @@
     this.panel = panel;
     this.fx = null;
     this.stats = null;
-    this.state = { view: panel.querySelector('.view-btn').dataset.view, club: '', date: '', rule: '', only: false };
+    this.state = { view: panel.querySelector('.view-btn').dataset.view, club: '', team: '', date: '', rule: '', only: false };
     this.clubSelect = panel.querySelector('.club-select');
     this.lensSelect = panel.querySelector('.lens-select');
     this.lensOnly = panel.querySelector('.lens-only-box');
     this.lensCaption = panel.querySelector('.lens-caption');
     this.headlines = panel.querySelector('.headlines');
-    this.headlineScope = panel.querySelector('.headline-scope');
     this.strip = panel.querySelector('.season-strip');
     this.scopeBanner = panel.querySelector('.scope-banner');
     this.scopeText = panel.querySelector('.scope-text');
     this.scopeCard = panel.querySelector('.scope-card');
-    this.shownCount = panel.querySelector('.shown-count');
+    this.teamFilter = panel.querySelector('.team-filter');
+    this.teamSelect = panel.querySelector('.team-select');
+    this.scopeCount = panel.querySelector('.scope-count');
+    this.lensCount = panel.querySelector('.lens-count');
     var self = this;
     panel.querySelectorAll('.view-btn').forEach(function (button) {
       button.addEventListener('click', function () {
@@ -810,7 +823,12 @@
       });
     });
     this.clubSelect.addEventListener('change', function () { self.setClub(self.clubSelect.value); });
+    this.teamSelect.addEventListener('change', function () { self.setTeam(self.teamSelect.value); });
     panel.querySelector('.scope-clear').addEventListener('click', function () { self.setClub(''); });
+    panel.querySelector('.team-clear').addEventListener('click', function () {
+      self.setTeam('');
+      self.focusFilter(self.teamSelect);
+    });
     this.lensSelect.addEventListener('change', function () { self.setLens(self.lensSelect.value); });
     this.lensOnly.addEventListener('change', function () { self.setLens(self.state.rule, self.lensOnly.checked); });
     panel.querySelector('.lens-clear').addEventListener('click', function () {
@@ -828,15 +846,23 @@
   Option.prototype.setClub = function (club) {
     var state = this.state;
     state.club = club || '';
+    state.team = '';
     this.clubSelect.value = state.club;
-    if (state.club && isDual(state.club)) state.view = 'club-timeline';
+    // A dual club opens on the timeline, unless the reader is already on another view.
+    if (state.club && isDual(state.club) && state.view === 'by-competition') state.view = 'club-timeline';
     else if (!state.club && state.view === 'club-timeline') state.view = 'by-competition';
     this.render();
   };
 
-  // Option tabs share the club and the view, so flipping options keeps them.
+  Option.prototype.setTeam = function (team) {
+    this.state.team = team || '';
+    this.render();
+  };
+
+  // Option tabs share the club, team and view, so flipping options keeps them.
   Option.prototype.adopt = function (shared) {
     this.state.club = shared.club;
+    this.state.team = shared.team;
     this.state.view = shared.view;
     this.clubSelect.value = shared.club;
   };
@@ -849,17 +875,22 @@
 
   Option.prototype.context = function () {
     var club = this.state.club;
+    var team = this.state.team;
     var rule = this.state.rule;
     var only = this.state.only;
     var fx = this.fx;
     function matches(f) { return !rule || f.rules.indexOf(rule) !== -1; }
-    function show(f) { return (!club || f.clubs.indexOf(club) !== -1) && (!only || matches(f)); }
+    function show(f) {
+      return (!club || f.clubs.indexOf(club) !== -1) && (!team || f.teams.indexOf(team) !== -1) &&
+        (!only || matches(f));
+    }
     return {
       opt: this,
       fx: fx,
       club: club,
+      team: team,
       rule: rule,
-      filtering: !!club || only,
+      filtering: !!club || !!team || only,
       matches: matches,
       show: show,
       visible: function (ids) { return ids.filter(function (uid) { return show(fx[uid]); }); }
@@ -876,9 +907,6 @@
     rows.forEach(function (row) {
       append(box, append(el('div', 'headline'), el('div', 'v', row.value), el('div', 'l', row.label)));
     });
-    this.headlineScope.textContent = club && this.data.clubHeadlines[club]
-      ? this.clubSelect.options[this.clubSelect.selectedIndex].text + '’s matches only:'
-      : '';
   };
 
   // ------------------------------------------------------- club scorecard
@@ -924,6 +952,7 @@
     var items = this.clubItems(club);
     var loose = {};
     (this.data.clubUnpinned[club] || []).forEach(function (row) { loose[row[0]] = row; });
+    var ranks = this.data.clubRanks[club] || [];
     return this.data.order.map(function (index) {
       var rule = DATA.rules[index];
       var total = 0;
@@ -941,6 +970,7 @@
       }
       return {
         rule: rule,
+        ranks: ranks.filter(function (row) { return row.id === rule.id; }),
         total: Math.round(total * 100) / 100,
         count: Math.round(count),
         fixtures: Object.keys(fixtures).length,
@@ -948,6 +978,23 @@
       };
     });
   };
+
+  function ordinal(n) {
+    if (n % 100 >= 11 && n % 100 <= 13) return n + 'th';
+    return n + (['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+  }
+
+  // "Men 3rd of 16 teams (5 events); Women 1st of 12 teams (9 events)".
+  function rankText(ranks) {
+    var parts = [];
+    ranks.forEach(function (row) {
+      var unit = row.by === 'club' ? 'dual clubs' : 'teams';
+      row.found.forEach(function (f) {
+        parts.push(f[0] + ' ' + ordinal(f[2]) + ' of ' + row.of + ' ' + unit + ' (' + plural(f[1], 'event', 'events') + ')');
+      });
+    });
+    return parts.join('; ');
+  }
 
   function ruleActions(score) {
     var box = el('div', 'rule-actions');
@@ -996,6 +1043,7 @@
     var body = append(el('div', 'item-body'), ruleActions(score));
     if (score.fixtures) body.appendChild(el('div', 'rule-fixtures'));
     if (score.loose) body.appendChild(el('div', 'desc', 'Includes ' + plural(score.loose, 'event', 'events') + ' not tied to one fixture.'));
+    if (score.ranks.length) body.appendChild(el('div', 'desc', 'Rank by events, 1st = most: ' + rankText(score.ranks) + '.'));
     return append(item, summary, body);
   }
 
@@ -1010,7 +1058,7 @@
     var details = el('details', 'scope-breakdown');
     details.appendChild(el('summary', '', 'Full score breakdown — ' + DATA.clubNames[club] + '’s share'));
     var head = el('tr');
-    ['Rule', 'Type', 'Contribution', 'Events', 'Fixtures'].forEach(function (name, i) {
+    ['Rule', 'Type', 'Contribution', 'Events', 'Rank', 'Fixtures'].forEach(function (name, i) {
       head.appendChild(el('th', i === 2 || i === 3 ? 'num' : '', name));
     });
     var body = el('tbody');
@@ -1028,6 +1076,7 @@
         append(el('td'), el('span', 'kind ' + (rule.hard ? 'hard' : 'soft'), rule.hard ? 'hard' : 'soft')),
         el('td', 'num', score.total ? signed(score.total) : '—'),
         el('td', 'num', String(score.count)),
+        el('td', '', score.ranks.length ? rankText(score.ranks) : '—'),
         last
       );
       body.appendChild(row);
@@ -1037,10 +1086,34 @@
     return details;
   };
 
-  // Draws the club's scorecard, or hides it again for the season-wide one. Also
-  // states the scope and how many fixtures the filters leave on screen.
+  // Draws the club's scorecard, or hides it again for the season-wide one. What
+  // the filters leave is counted in the banner while a club is picked, and under
+  // the bar when a rule filter alone is on.
+  Option.prototype.renderTeamUi = function () {
+    var club = this.state.club;
+    var dual = !!club && isDual(club);
+    this.teamFilter.hidden = !dual;
+    if (!dual) return;
+    if (this.teamSelect.getAttribute('data-club') !== club) {
+      this.teamSelect.textContent = '';
+      this.teamSelect.setAttribute('data-club', club);
+      var all = el('option', '', 'All');
+      all.value = '';
+      this.teamSelect.appendChild(all);
+      teamsOf(club).forEach(function (teamId) {
+        var gender = DATA.teams[teamId].gender;
+        var option = el('option', '', gender === 'women' ? 'Women' : gender === 'men' ? 'Men' : DATA.teams[teamId].label);
+        option.value = teamId;
+        this.teamSelect.appendChild(option);
+      }, this);
+    }
+    this.teamSelect.value = this.state.team;
+  };
+
   Option.prototype.renderScope = function () {
     var club = this.state.club;
+    var team = this.state.team;
+    var ctx = this.context();
     this.panel.querySelectorAll('.season-part').forEach(function (node) { node.hidden = !!club; });
     this.scopeBanner.hidden = !club;
     this.scopeCard.textContent = '';
@@ -1051,8 +1124,12 @@
         this.scopeText,
         el('b', '', DATA.clubNames[club] + ' — ' + (matches ? plural(+matches.value, 'match', 'matches') : 'no matches')),
         document.createTextNode('. Upsides, problems and the breakdown below count only this club’s share of each rule. ' +
-          'The score, the hard-rule list and fairness stay season-wide.')
+          'Preferred weekday is scored per competition and left out. The score, the hard-rule list and fairness stay season-wide.')
       );
+      if (team) {
+        var teamName = this.teamSelect.options[this.teamSelect.selectedIndex].text;
+        this.scopeText.appendChild(document.createTextNode(' With ' + teamName + ' picked, the fixtures and timeline narrow to that team; the scorecard figures stay the club’s.'));
+      }
       var scores = this.clubScores(club);
       var limit = this.data.limit;
       var ups = scores.filter(function (s) { return s.total > 0; })
@@ -1068,12 +1145,13 @@
       ));
       append(this.scopeCard, cols, this.scopeBreakdown(scores, club));
     }
-    // The fixtures the filters leave on screen, so a narrowed view is obvious.
-    var ctx = this.context();
     var filtering = ctx.filtering;
     var shown = this.fx.filter(ctx.show).length;
-    this.shownCount.hidden = !filtering;
-    this.shownCount.textContent = filtering ? shown + ' of ' + this.fx.length + ' fixtures shown' : '';
+    var count = filtering ? shown + ' of ' + this.fx.length + ' fixtures shown' : '';
+    this.scopeCount.textContent = club ? count : '';
+    this.scopeCount.hidden = !club || !filtering;
+    this.lensCount.textContent = club ? '' : count;
+    this.lensCount.hidden = !!club || !filtering;
   };
 
   // ------------------------------------------------------------- rule lens
@@ -1193,13 +1271,18 @@
     var lensChip = this.panel.querySelector('.lens-clear');
     var clubName = state.club ? this.clubSelect.options[this.clubSelect.selectedIndex].text : '';
     var lensName = stats ? ruleName(stats.rule) + (state.only ? ' (only)' : '') : '';
+    var teamChip = this.panel.querySelector('.team-clear');
+    var teamName = state.team ? this.teamSelect.options[this.teamSelect.selectedIndex].text : '';
+    teamChip.hidden = !state.team;
+    teamChip.querySelector('.chip-text').textContent = teamName;
+    teamChip.setAttribute('aria-label', 'Remove team filter: ' + teamName);
     clubChip.hidden = !state.club;
     lensChip.hidden = !stats;
     clubChip.querySelector('.chip-text').textContent = clubName;
     lensChip.querySelector('.chip-text').textContent = lensName;
     clubChip.setAttribute('aria-label', 'Remove club filter: ' + clubName);
     lensChip.setAttribute('aria-label', 'Clear highlighted rule: ' + lensName);
-    var count = (state.club ? 1 : 0) + (stats ? 1 : 0);
+    var count = (state.club ? 1 : 0) + (state.team ? 1 : 0) + (stats ? 1 : 0);
     this.panel.querySelector('.filters-toggle').textContent = count ? 'Filters ' + count : 'Filters';
   };
 
@@ -1233,9 +1316,10 @@
     var fx = this.fx[uid];
     var state = this.state;
     var redraw = false;
-    if (state.club && fx.clubs.indexOf(state.club) === -1) {
-      state.club = '';
-      this.clubSelect.value = '';
+    // A team filter can hide a target in a club's list, so it is lifted.
+    if (state.team && fx.teams.indexOf(state.team) === -1) {
+      state.team = '';
+      this.teamSelect.value = '';
       redraw = true;
     }
     if (state.only && fx.rules.indexOf(state.rule) === -1) {
@@ -1353,6 +1437,7 @@
       }
     });
     this.renderHeadlines();
+    this.renderTeamUi();
     this.renderScope();
     this.renderLensUi();
     this.markLens(this.activeBody());

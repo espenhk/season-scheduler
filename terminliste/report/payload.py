@@ -41,7 +41,8 @@ Club scope (#33). With a club selected the page restates the scorecard from the
 flags above: a club's share of a rule is the flags on its fixtures whose `group`
 names one of its teams (or the club). Season-level events that no fixture
 carries cannot be derived that way, so `clubUnpinned` gives them per club as
-`[rule, total, count]`. `order` is the rules in breakdown order, `limit` how
+`[rule, total, count]`. `clubRanks` gives each club's place in the fairness
+rows (`{id, by, of, found: [[label, count, rank]]}`). `order` is the rules in breakdown order, `limit` how
 many upsides or problems the scorecard lists, and `full` whether it is the
 every-rule diagnostic.
 """
@@ -135,6 +136,7 @@ def team_table(world: World) -> dict[str, dict]:
             "short": world.team_short_label(team.id),
             "club": team.club_id,
             "venue": team.home_venue,
+            "gender": team.gender,
         }
         for team in world.teams.values()
     }
@@ -294,6 +296,7 @@ def option_wire(
     rule_totals: dict[str, float],
     score_order: list[int],
     club_unpinned: dict[str, list[list]],
+    club_ranks: dict[str, list[dict]],
     limit: int,
     full: bool,
 ) -> dict:
@@ -318,6 +321,7 @@ def option_wire(
         # many entries each club's lists show.
         "order": score_order,
         "clubUnpinned": club_unpinned,
+        "clubRanks": club_ranks,
         "limit": limit,
         "full": full,
         "byCompetition": by_competition_wire(league_views),

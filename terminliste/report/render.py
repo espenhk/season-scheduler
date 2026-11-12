@@ -184,6 +184,7 @@ def _build_option(
     pinned = _pinned_fixture_counts(entries)
     headlines = _headlines(world, candidate)
     club_headlines = _club_headlines(world, candidate, dual_club_ids)
+    fairness = _fairness_rows(world, candidate)
     month_calendar, month_calendar_details = _month_calendar_view(combined_entries)
     return {
         "label": candidate.label,
@@ -202,7 +203,7 @@ def _build_option(
         "problems": [_result_row(r, world, pinned, full=full_diagnostics) for r in score.biggest_problems(limit=limit)],
         "upsides": [_result_row(r, world, pinned, full=full_diagnostics) for r in score.biggest_upsides(limit=limit)],
         "breakdown": [_result_row(r, world, pinned, full=True) for r in _ordered_results(score)],
-        "fairness": _fairness_rows(world, candidate),
+        "fairness": fairness,
         "league_entries": entries,
         "client": payload.option_wire(
             entries=entries,
@@ -218,6 +219,7 @@ def _build_option(
             rule_totals={r.constraint_id: r.total for r in score.results},
             score_order=[rule_index[r.constraint_id] for r in _ordered_results(score)],
             club_unpinned=_club_unpinned(world, candidate, rule_index),
+            club_ranks=_club_ranks(fairness),
             limit=limit,
             full=full_diagnostics,
         ),
@@ -1152,7 +1154,8 @@ def _fairness_row_for(
         if len(dual_club_ids) < 2:
             return None
         raw_counts = _count_by_club(world, club_events)
-        entries = [(world.club(cid).name, raw_counts.get(cid, 0)) for cid in dual_club_ids]
+        entries = [(world.club(cid).name, raw_counts.get(cid, 0), cid) for cid in dual_club_ids]
+        return _fairness_row(result.constraint_id, entries, by="club")
     else:
         if len(participant_teams) < 2:
             return None
@@ -1161,20 +1164,22 @@ def _fairness_row_for(
             for team_id in event.team_ids:
                 if team_id in counts:
                     counts[team_id] += 1
-        entries = [(world.team_label(tid), n) for tid, n in counts.items()]
+        entries = [(world.team_label(tid), n, world.team(tid).club_id) for tid, n in counts.items()]
 
-    return _fairness_row(result.constraint_id, entries)
+    return _fairness_row(result.constraint_id, entries, by="team")
 
 
-def _fairness_row(constraint_id: str, entries: list[tuple[str, int]]) -> dict:
+def _fairness_row(constraint_id: str, entries: list[tuple[str, int, str]], by: str) -> dict:
+    """`by` says what each entry is: a "team" or a "club" (dual clubs)."""
     entries = sorted(entries, key=lambda e: -e[1])
-    values = [n for _, n in entries]
+    values = [n for _, n, _ in entries]
     lo, hi = min(values), max(values)
     mean = sum(values) / len(values)
     return {
         "id": constraint_id,
+        "by": by,
         "description": describe(constraint_id),
-        "entries": [{"label": label, "count": n} for label, n in entries],
+        "entries": [{"label": label, "count": n, "club": club} for label, n, club in entries],
         "min": lo,
         "max": hi,
         # Flagged when best-to-worst spread is at least as wide as the average
@@ -1182,6 +1187,22 @@ def _fairness_row(constraint_id: str, entries: list[tuple[str, int]]) -> dict:
         # doesn't trip it (#23).
         "flagged": hi > 0 and (hi - lo) >= max(2, round(mean)),
     }
+
+
+def _club_ranks(fairness_rows: list[dict]) -> dict[str, list[dict]]:
+    """Each club's place in every fairness row, read off the row's own entries:
+    rank 1 is the most events, ties share a rank. A club with two teams is
+    listed once per team, and a club-coupling row once per club."""
+    ranks: dict[str, list[dict]] = defaultdict(list)
+    for row in fairness_rows:
+        entries = row["entries"]
+        by_club: dict[str, list] = defaultdict(list)
+        for entry in entries:
+            rank = 1 + sum(1 for other in entries if other["count"] > entry["count"])
+            by_club[entry["club"]].append([entry["label"], entry["count"], rank])
+        for club_id, found in by_club.items():
+            ranks[club_id].append({"id": row["id"], "by": row["by"], "of": len(entries), "found": found})
+    return dict(ranks)
 
 
 def _round_date_label(entries: list[dict]) -> str:

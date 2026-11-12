@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }}</title>
 <style>
-  /* The page's own `display` rules (grids, flex rows) would otherwise win over the hidden attribute. */
+  /* Global: the page's own `display` rules (grids, flex rows) would otherwise win over the hidden attribute. */
   [hidden] { display: none !important; }
   :root {
     --bg: #f7f7f5;
@@ -82,8 +82,6 @@
   .headlines { display: flex; gap: 28px; margin: 20px 0 4px; flex-wrap: wrap; }
   .headline .v { font-size: 24px; font-weight: 700; }
   .headline .l { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .headline-scope { font-size: 12.5px; color: var(--muted); font-style: italic; margin: 0 0 4px; }
-  .headline-scope:empty { display: none; }
 
   /* -- upsides / problems --
      Each entry is a <details> so the per-team occurrence list stays out of
@@ -506,7 +504,9 @@
   .scope-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .scope-card .cols { margin-top: 14px; }
   .scope-breakdown { margin-top: 18px; }
-  .shown-count { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
+  .scope-count { font-weight: 600; white-space: nowrap; }
+  .scope-count[hidden] { display: none; }
+  .lens-count { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
 
   /* -- club timeline: a row per date, a lane per team -- */
   .tl-legend { margin-top: 8px; }
@@ -764,7 +764,6 @@
     <button type="button" class="bar-btn jump-cal">Jump to calendar ↓</button>
   </div>
 
-  <div class="headline-scope"></div>
   <div class="headlines">
     {% for headline in option.headlines %}
     <div class="headline">
@@ -803,6 +802,7 @@
 
   <div class="scope-banner" hidden>
     <span class="scope-text"></span>
+    <span class="scope-count" aria-live="polite" hidden></span>
     <button type="button" class="chip scope-clear">All clubs</button>
   </div>
 
@@ -1010,6 +1010,11 @@
             {% endfor %}
           </select>
         </label>
+        {# Shown by report.js for a dual club only: all of its fixtures, or one team's. #}
+        <label class="club-filter team-filter" hidden>
+          Team
+          <select class="team-select"><option value="">All</option></select>
+        </label>
         {# Options are filled in by report.js from the rules this option has fixtures for. #}
         <label class="club-filter lens-filter">
           Highlight rule
@@ -1019,6 +1024,7 @@
       </div>
       <div class="bar-chips">
         <button type="button" class="chip club-clear" hidden><span class="chip-text"></span> <span aria-hidden="true">×</span></button>
+        <button type="button" class="chip team-clear" hidden><span class="chip-text"></span> <span aria-hidden="true">×</span></button>
         <button type="button" class="chip lens-clear" hidden><span class="chip-text"></span> <span aria-hidden="true">×</span></button>
       </div>
     </div>
@@ -1026,11 +1032,10 @@
 
   <div class="lens-caption" hidden>
     <span class="lens-text" role="status"></span>
+    <span class="lens-count" aria-live="polite" hidden></span>
   </div>
 
   {# Drawn by report.js for the views that list rounds. #}
-  <div class="shown-count" aria-live="polite" hidden></div>
-
   <div class="season-strip" role="group" aria-label="Season overview: one button per round" hidden></div>
 
   {# Fixtures are drawn into each `.pane-body` by report.js from #report-data. #}
