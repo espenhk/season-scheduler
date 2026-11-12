@@ -110,11 +110,20 @@
   }
   .cmp td.is-best { background: #e8f6ee; }
   .cmp td.is-best .cmp-val { font-weight: 800; }
+  .cmp-tag-short { display: none; }
+  /* Phones: the summaries move out of the narrow header cells into a list under the table. */
   @media (max-width: 480px) {
     .cmp th, .cmp td { padding: 8px 6px; }
-    .cmp-measure { width: 30%; }
-    .cmp-what { font-size: 12px; }
+    .cmp-measure { width: 34%; }
+    .cmp .cmp-what { display: none; }
+    .cmp-tag-long { display: none; }
+    .cmp-tag-short { display: inline; }
+    .cmp .cmp-tag { white-space: nowrap; }
+    .cmp-phone-summary { display: block; margin: 12px 0 0; padding-left: 18px; font-size: 13.5px; }
+    .cmp-phone-summary li { margin: 4px 0; }
   }
+  .cmp-quiet { margin: 10px 0 0; }
+  @media (min-width: 481px) { .cmp-phone-summary { display: none; } }
   .cmp-diffs { margin-top: 12px; }
   .cmp-diff { margin-top: 6px; }
   .cmp-diff summary { font-size: 14px; }
@@ -927,7 +936,7 @@
 {% if comparison %}
 <section class="compare" aria-labelledby="compare-title">
   <h2 id="compare-title">Compare the {{ options|length }} options</h2>
-  <p class="desc">Each row is what that measure adds to a score, so higher is better. The best value on a row is shaded and marked “best”; a row where every option is level is left unmarked.</p>
+  <p class="desc">Each rule row is the soft points that rule adds; higher is better. The score row is the 0–100 result. The best value on a row is shaded and marked “best”; a row where every option is level is left unmarked.</p>
   <div class="cmp-wrap">
     <table class="cmp">
       <thead>
@@ -937,7 +946,7 @@
           <th scope="col">
             <button type="button" class="cmp-open" data-option="{{ col.index }}">{{ col.label }}</button>
             {% if col.seed %}<span class="cmp-seed">seed {{ col.seed }}</span>{% endif %}
-            {% if col.tag %}<span class="cmp-tag">{{ col.tag }}</span>{% endif %}
+            {% if col.tag %}<span class="cmp-tag"><span class="cmp-tag-long">{{ col.tag }}</span><span class="cmp-tag-short">{{ col.tag_short }}</span></span>{% endif %}
             <div class="cmp-what">{{ col.summary }}</div>
           </th>
           {% endfor %}
@@ -962,6 +971,14 @@
     </table>
   </div>
   {% if comparison.diffs %}
+  {% if comparison.quiet %}
+  <p class="desc cmp-quiet">No effect in any option: {{ comparison.quiet|join(', ') }}.</p>
+  {% endif %}
+  <ul class="cmp-phone-summary">
+    {% for col in comparison.columns %}
+    <li><b>{{ col.label }}</b> {{ col.summary }}</li>
+    {% endfor %}
+  </ul>
   <div class="cmp-diffs">
     {% for diff in comparison.diffs %}
     <details class="cmp-diff">

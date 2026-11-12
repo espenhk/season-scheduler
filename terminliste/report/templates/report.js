@@ -1571,7 +1571,7 @@
         other.setAttribute('aria-selected', String(other === tab));
       });
       var previous = option(current);
-      var anchor = previous.anchor;
+      var anchor = jumping ? '' : previous.anchor;
       previous.release();
       panels[current].hidden = true;
       current = index;
@@ -1599,12 +1599,16 @@
     }, 200);
   }, { passive: true });
 
-  // The comparison table's option names open that option's tab.
+  // The comparison table's option names open that option's tab at the tabs,
+  // not at the reader's calendar position, so only the one scroll happens.
+  var jumping = false;
   document.addEventListener('click', function (e) {
     var open = e.target.closest ? e.target.closest('.cmp-open') : null;
     if (!open) return;
     var index = +open.getAttribute('data-option');
+    jumping = true;
     document.querySelectorAll('.tab')[index].click();
+    jumping = false;
     option(index).showScore();
   });
   if (panels.length) {

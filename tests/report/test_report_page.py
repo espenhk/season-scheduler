@@ -1499,3 +1499,26 @@ def test_switching_options_keeps_the_round_in_view(page):
     page.click('.tab[data-panel="panel-2"]')
     page.wait_for_timeout(1000)  # the anchor scroll is smooth
     assert _first_visible_round(page, "#panel-2") == before
+
+
+def test_on_a_phone_the_summaries_move_below_a_short_table_header(browser, report_url):
+    context = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
+    page = context.new_page()
+    page.problems = []
+    page.on("console", lambda m: page.problems.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: page.problems.append(str(e)))
+    page.goto(report_url)
+    # Header cells stay short: the summaries are not in them on a phone.
+    assert page.locator(".cmp .cmp-what").first.is_hidden()
+    tallest = page.evaluate("Math.max(...[...document.querySelectorAll('.cmp thead th')].map(th => th.getBoundingClientRect().height))")
+    assert tallest <= 120
+    assert page.locator(".cmp-phone-summary li").count() == 2
+    assert page.locator(".cmp-phone-summary").is_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert page.problems == []
+    context.close()
+
+
+def test_the_summaries_sit_in_the_header_on_a_wide_screen(page):
+    assert page.locator(".cmp .cmp-what").first.is_visible()
+    assert page.locator(".cmp-phone-summary").is_hidden()

@@ -344,7 +344,7 @@ def _fixture_diff(world: World, baseline: list[Match], other: list[Match]) -> di
     parts = [
         f"{counts[kind]} {text}"
         for kind, text in (
-            ("date", "on another date"),
+            ("date", "on another date (side or kickoff may differ too)"),
             ("side", "with home and away swapped"),
             ("kickoff", "with only the kickoff time changed"),
             ("unmatched", "not in the baseline"),
@@ -360,14 +360,87 @@ def _fixture_diff(world: World, baseline: list[Match], other: list[Match]) -> di
     }
 
 
+# A lead or trail is named in an option's summary only when its gap is at least
+# this share of the table's largest gap, so rows that barely separate the
+# options stay out of the summary.
+_SUMMARY_GAP_SHARE = 0.10
+# Per option and per side (leads, trails), so the summary stays a line or two.
+_SUMMARY_NAMES = 3
+
+
+def _gap_text(gap: float) -> str:
+    digits = 0 if abs(gap) >= 10 else 1
+    return f"{gap:+.{digits}f} pts".replace("-", "−")
+
+
+def _events(count: int) -> str:
+    return "1 event" if count == 1 else f"{count} events"
+
+
+def _gaps(numbers: list[float | None]) -> list[float | None]:
+    """Each option's gap to the best of the others: its lead over the next best
+    when positive, its deficit to the best when negative."""
+    gaps: list[float | None] = []
+    for i, value in enumerate(numbers):
+        others = [n for j, n in enumerate(numbers) if j != i and n is not None]
+        gaps.append(round(value - max(others), 1) if value is not None and others else None)
+    return gaps
+
+
+def _option_summaries(soft: list[tuple[str, list[float | None]]], hard_counts: list[int]) -> list[str]:
+    """One summary per option: the rules it leads on and trails on, by how much.
+
+    `soft` is (rule name, soft points per option); `hard_counts` the hard-rule
+    violations per option. Hard-rule gaps are counted, not weighed, and are
+    always named when they exist.
+    """
+    count = len(hard_counts)
+    soft_gaps = [(name, _gaps(numbers)) for name, numbers in soft]
+    largest = max((abs(g) for _, gaps in soft_gaps for g in gaps if g is not None), default=0.0)
+    threshold = _SUMMARY_GAP_SHARE * largest
+    hard = _gaps([-c for c in hard_counts])  # fewer violations is a lead
+    summaries = []
+    for i in range(count):
+        leads: list[tuple[tuple[int, float], str]] = []
+        trails: list[tuple[tuple[int, float], str]] = []
+        if hard[i]:
+            if hard[i] > 0:
+                leads.append(((0, 0.0), f"Hard-rule violations ({int(hard[i])} fewer)"))
+            else:
+                trails.append(((0, 0.0), f"Hard-rule violations ({int(-hard[i])} more)"))
+        for name, gaps in soft_gaps:
+            gap = gaps[i]
+            if not gap or abs(gap) < threshold:
+                continue
+            text = f"{name} ({_gap_text(gap)})"
+            if gap > 0:
+                leads.append(((1, -gap), text))
+            else:
+                trails.append(((1, gap), text))
+        lead_names = [text for _, text in sorted(leads)][:_SUMMARY_NAMES]
+        trail_names = [text for _, text in sorted(trails)][:_SUMMARY_NAMES]
+        pieces = []
+        if lead_names:
+            pieces.append("Leads on " + ", ".join(lead_names))
+        if trail_names:
+            pieces.append("trails on " + ", ".join(trail_names))
+        if not pieces:
+            summaries.append("No row sets it apart.")
+            continue
+        sentence = "; ".join(pieces)
+        summaries.append(sentence[0].upper() + sentence[1:] + ".")
+    return summaries
+
+
 def _comparison_view(
     world: World, candidates: list[Candidate], options: list[dict], rule_ids: list[str]
 ) -> dict | None:
     """The side-by-side table of the options, or None with one option.
 
-    A rule row shows what the rule adds to each option's score, so its best
-    value is the one that helps most (or hurts least). Hard-rule violations
-    are the exception: fewer is better.
+    A soft rule row shows the soft points that rule adds to each option, so its
+    best value is the one that adds most (or costs least). Hard-rule violations
+    are the exception: fewer is better. Rules that add nothing in any option
+    are listed once, not as rows.
     """
     if len(candidates) < 2:
         return None
@@ -382,28 +455,26 @@ def _comparison_view(
         result = results[i].get(rule_id)
         return None if result is None else round(result.total, 1)
 
-    def row(label, numbers, texts, subs=None, higher_is_better=True, characterise=True) -> dict:
+    def row(label, numbers, texts, subs=None, higher_is_better=True) -> dict:
         best, weakest = _extremes(numbers, higher_is_better)
         cells = [
             {"text": texts[i], "sub": subs[i] if subs else "", "best": best[i]} for i in range(count)
         ]
-        return {"label": label, "cells": cells, "best": best, "weakest": weakest, "characterise": characterise}
+        return {"label": label, "cells": cells, "best": best, "weakest": weakest}
 
     score_row = row(
         "Score out of 100",
         [round(option["points"], 1) for option in options],
         [option["points_text"] for option in options],
-        characterise=False,
     )
 
     diffs = [_fixture_diff(world, candidates[0].matches, c.matches) for c in candidates[1:]]
     fixture_row = {
-        "label": "League fixtures on another date, side or kickoff",
+        "label": f"Fixtures that differ from {options[0]['label']}",
         "cells": [{"text": "baseline", "sub": "", "best": False}]
         + [{"text": f"{diff['count']} of {diff['total']}", "sub": "", "best": False} for diff in diffs],
         "best": [False] * count,
         "weakest": [False] * count,
-        "characterise": False,
     }
 
     headline_rules: list[str] = []
@@ -417,15 +488,8 @@ def _comparison_view(
     headline_rows = []
     for rule_id in headline_rules:
         shown = [{h["rule"]: h["value"] for h in option["headlines"]}.get(rule_id, "—") for option in options]
-        totals = [contribution(i, rule_id) for i in range(count)]
         headline_rows.append(
-            row(
-                headline_labels[rule_id],
-                totals,
-                shown,
-                subs=[f"score {_signed(t)}" if t is not None else "" for t in totals],
-                characterise=False,
-            )
+            row(headline_labels[rule_id], [contribution(i, rule_id) for i in range(count)], shown)
         )
 
     hard_row = row(
@@ -436,50 +500,55 @@ def _comparison_view(
     )
 
     soft_rows = []
+    quiet: list[str] = []
     for rule_id in (rule for rule in kinds if kinds[rule] == "soft"):
         numbers = [contribution(i, rule_id) for i in range(count)]
+        if all(n in (None, 0.0) for n in numbers):
+            quiet.append(rule_name(rule_id))
+            continue
         events = [results[i][rule_id].count if rule_id in results[i] else 0 for i in range(count)]
         soft_rows.append(
             (
-                max((abs(n) for n in numbers if n is not None), default=0.0),
+                max(abs(n) for n in numbers if n is not None),
                 row(
                     rule_name(rule_id),
                     numbers,
                     [_signed(n) if n is not None else "—" for n in numbers],
-                    subs=[f"{n} events" if n else "" for n in events],
+                    subs=[_events(n) if n else "" for n in events],
                 ),
+                numbers,
             )
         )
-    soft_rows.sort(key=lambda pair: (-pair[0], pair[1]["label"]))
+    soft_rows.sort(key=lambda entry: (-entry[0], entry[1]["label"]))
+    quiet.sort()
 
     sections = [{"title": "Overall", "rows": [score_row, fixture_row]}]
     if headline_rows:
         sections.append({"title": "Headline numbers", "rows": headline_rows})
     sections.append({"title": "Hard rules", "rows": [hard_row]})
-    sections.append({"title": "Soft rules, largest movement first", "rows": [r for _, r in soft_rows]})
+    sections.append({"title": "Soft points by rule, largest movement first", "rows": [e[1] for e in soft_rows]})
 
-    compared = [r for section in sections for r in section["rows"] if r["characterise"]]
+    summaries = _option_summaries(
+        [(entry[1]["label"], entry[2]) for entry in soft_rows],
+        [option["hard_violations"] for option in options],
+    )
     columns = []
     for i, option in enumerate(options):
-        best = [r["label"] for r in compared if r["best"][i]]
-        weakest = [r["label"] for r in compared if r["weakest"][i]]
-        parts = []
-        if best:
-            parts.append(f"Best on {_listed(best)}.")
-        if weakest:
-            parts.append(f"Weakest on {_listed(weakest)}.")
+        tag = option["tag"]
         columns.append(
             {
                 "index": i,
                 "label": option["label"],
                 "seed": candidates[i].seed or None,
-                "tag": option["tag"],
-                "summary": " ".join(parts) if parts else "No row sets it apart.",
+                "tag": tag,
+                "tag_short": None if tag is None else ("top" if tag == "top score" else "tied"),
+                "summary": summaries[i],
             }
         )
     return {
         "columns": columns,
         "sections": sections,
+        "quiet": quiet,
         "baseline": options[0]["label"],
         "diffs": [{"label": option["label"], **diff} for option, diff in zip(options[1:], diffs, strict=True)],
     }
@@ -826,6 +895,7 @@ def _headlines(world: World, candidate: Candidate) -> list[dict]:
     score = candidate.score
     matches = candidate.matches
     headlines: list[dict] = []
+    # Each headline names its rule: the comparison table reads it to rank the headline.
 
     weekday = score.result("preferred_weekday")
     if weekday is not None and matches:

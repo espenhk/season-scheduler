@@ -24,9 +24,12 @@ from terminliste.report.render import (
     _day_competitions,
     _entity_counts,
     _european_entries,
+    _events,
     _fairness_rows,
+    _headlines,
     _match_entries,
     _month_calendar_view,
+    _option_summaries,
     _rule_ids,
     _score_marks,
     _search_stats_view,
@@ -1546,6 +1549,10 @@ def _comparison(world, candidates):
     return _comparison_view(world, candidates, _options_for(world, candidates), _rule_ids(candidates))
 
 
+def _section(comparison, title):
+    return next(section for section in comparison["sections"] if section["title"] == title)["rows"]
+
+
 def _row(comparison, label, section_title="Overall"):
     rows = next(section for section in comparison["sections"] if section["title"] == section_title)["rows"]
     return next(row for row in rows if row["label"] == label)
@@ -1582,13 +1589,13 @@ def test_comparison_rows_show_each_candidates_own_contribution_to_the_score():
     home_only = _candidate(world, season, matches, [ConsecutiveHomeDays(competitions=comps)])
     comparison = _comparison(world, [both, home_only])
 
-    weekday = _row(comparison, rule_name("preferred_weekday"), "Soft rules, largest movement first")
+    weekday = _row(comparison, rule_name("preferred_weekday"), "Soft points by rule, largest movement first")
     assert weekday["cells"][0]["text"] == _signed(both.score.result("preferred_weekday").total)
     # The second option never scored this rule: nothing to compare, so nothing is marked.
     assert weekday["cells"][1]["text"] == "—"
     assert weekday["best"] == [False, False]
 
-    home = _row(comparison, rule_name("consecutive_home_days"), "Soft rules, largest movement first")
+    home = _row(comparison, rule_name("consecutive_home_days"), "Soft points by rule, largest movement first")
     assert [cell["text"] for cell in home["cells"]] == [
         _signed(both.score.result("consecutive_home_days").total),
         _signed(home_only.score.result("consecutive_home_days").total),
@@ -1619,8 +1626,8 @@ def test_the_top_score_is_marked_and_the_option_with_hard_violations_is_weakest_
     hard = _row(comparison, "Hard-rule violations", "Hard rules")
     assert [cell["text"] for cell in hard["cells"]] == ["0", str(bad.score.hard_violations)]
     assert [cell["best"] for cell in hard["cells"]] == [True, False]
-    assert comparison["columns"][0]["summary"].startswith("Best on")
-    assert "Weakest on Hard-rule violations." in comparison["columns"][1]["summary"]
+    assert comparison["columns"][0]["summary"].startswith("Leads on Hard-rule violations")
+    assert "trails on Hard-rule violations (" in comparison["columns"][1]["summary"]
 
 
 def test_three_options_get_three_columns_and_a_tie_for_the_top_is_tagged_on_each():
@@ -1657,7 +1664,7 @@ def test_fixture_differences_count_moved_swapped_and_retimed_fixtures_against_th
     assert diff["total"] == 4
     assert diff["count"] == 4
     assert diff["breakdown"] == (
-        "1 on another date, 1 with home and away swapped, "
+        "1 on another date (side or kickoff may differ too), 1 with home and away swapped, "
         "1 with only the kickoff time changed, 1 not in the baseline."
     )
     details = [item["detail"] for item in diff["fixtures"]]  # in date order
@@ -1689,3 +1696,54 @@ def test_the_page_shows_the_comparison_above_the_tabs_for_several_options():
     assert rendered.count('data-option="') == 2
     assert "Compare the 2 options" in rendered
 
+
+def test_option_summaries_name_only_gaps_big_enough_to_matter_and_say_how_big():
+    # The largest gap is 118 points (option 1 over option 3, back-to-back home days),
+    # so gaps of 11.8 points or more are named; option 1's 5-point comfortable-rest
+    # gap over option 3 is not.
+    soft = [
+        ("Back-to-back home days", [130.0, 10.0, 12.0]),
+        ("Comfortable rest", [-20.0, -100.0, -15.0]),
+    ]
+    assert _option_summaries(soft, [0, 0, 0]) == [
+        "Leads on Back-to-back home days (+118 pts).",
+        "Trails on Back-to-back home days (−120 pts), Comfortable rest (−85 pts).",
+        "Trails on Back-to-back home days (−118 pts).",
+    ]
+
+
+def test_option_summaries_name_hard_violation_gaps_by_their_count_first():
+    summaries = _option_summaries([("Comfortable rest", [5.0, 5.0, -5.0])], [0, 0, 2])
+    assert summaries[0] == "No row sets it apart."
+    assert summaries[2] == "Trails on Hard-rule violations (2 more), Comfortable rest (−10 pts)."
+
+
+def test_events_are_singular_only_for_one():
+    assert _events(1) == "1 event"
+    assert _events(2) == "2 events"
+
+
+def test_rules_with_no_effect_in_any_option_are_listed_once_not_as_rows():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    comps = [comp_m, comp_w]
+    # One match: no back-to-back home days in either option, so the rule adds nothing.
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 14), "va")]
+    candidates = [_candidate(world, season, matches, [ConsecutiveHomeDays(competitions=comps)])] * 2
+    comparison = _comparison(world, candidates)
+    assert comparison["quiet"] == [rule_name("consecutive_home_days")]
+    soft_labels = [row["label"] for section in comparison["sections"] if section["title"].startswith("Soft") for row in section["rows"]]
+    assert rule_name("consecutive_home_days") not in soft_labels
+
+
+def test_headline_rows_carry_no_sub_line_and_the_rule_each_headline_names():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    comps = [comp_m, comp_w]
+    matches = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 14), "va"),
+        f.match("topp", "a_w", "opp_w", date(2026, 6, 14), "va"),
+    ]
+    candidate = _candidate(world, season, matches, [PreferredWeekday(competitions=comps), ConsecutiveHomeDays(competitions=comps)])
+    assert {h["rule"] for h in _headlines(world, candidate)} == {"preferred_weekday", "consecutive_home_days"}
+    comparison = _comparison(world, [candidate, candidate])
+    for headline in _section(comparison, "Headline numbers"):
+        assert all(cell["sub"] == "" for cell in headline["cells"])
