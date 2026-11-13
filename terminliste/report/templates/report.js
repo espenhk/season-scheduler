@@ -1416,6 +1416,11 @@
     var state = this.state;
     state.club = club || '';
     state.team = '';
+    // Picking a club opens its rounds, whatever was folded before.
+    if (state.club) {
+      state.rounds = {};
+      state.allRounds = null;
+    }
     this.clubSelect.value = state.club;
     // A dual club opens on the timeline, unless the reader is already on another view.
     if (state.club && isDual(state.club) && state.view === 'by-competition') state.view = 'club-timeline';

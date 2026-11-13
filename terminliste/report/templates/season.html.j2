@@ -1002,6 +1002,7 @@
     /* Tap targets: info icons and day cells reach 44 x 44 px; the glyph stays small. */
     .info-icon {
       width: 44px; height: 44px; margin: -14px -12px -14px -8px; background: none; border-radius: 0; font-size: 0;
+      position: relative; z-index: 1; /* above the description line that follows */
     }
     .info-icon::before {
       content: "i"; display: inline-flex; align-items: center; justify-content: center;

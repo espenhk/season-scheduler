@@ -2555,3 +2555,49 @@ def test_season_strip_figures_stay_inside_their_cells(page, phone):
             outer = _box(cell)
             assert inner["x"] >= outer["x"] + 3 and inner["x"] + inner["w"] <= outer["x"] + outer["w"] - 1
             assert "." not in cell.locator(".strip-net").inner_text()
+
+
+def test_choosing_a_club_opens_its_rounds_after_collapse_all(phone):
+    body = _view(phone, "by-competition")
+    body.locator(".expand-all").tap()
+    body.locator(".expand-all").tap()  # collapse all
+    assert body.locator(".round.is-open").count() == 0
+    _open_filters(phone)
+    phone.select_option("#panel-1 .club-select", "club_b")
+    body = _view(phone, "by-competition")
+    assert body.locator(".round.collapsible.is-open").count() == body.locator(".round").count() > 0
+
+
+def test_a_phones_info_icon_is_not_covered_by_the_description_below_it(phone):
+    icon = phone.locator("#panel-1 .col .item .info-icon").first
+    icon.scroll_into_view_if_needed()
+    box = _box(icon)
+    for fx, fy in ((0.5, 0.97), (0.1, 0.97), (0.9, 0.97), (0.5, 0.5), (0.1, 0.03), (0.9, 0.03)):
+        hit = phone.evaluate(
+            "([x, y]) => !!document.elementFromPoint(x, y).closest('.info-icon')",
+            [box["x"] + box["w"] * fx, box["y"] + box["h"] * fy],
+        )
+        assert hit, (fx, fy)
+
+
+def test_the_round_folds_follow_a_viewport_crossing_600px(phone):
+    body = _view(phone, "by-competition")
+    assert body.locator(".round.collapsible").count() == 3
+    phone.set_viewport_size({"width": 1280, "height": 900})
+    assert body.locator(".round.collapsible").count() == 0
+    assert body.locator(".round .fixtures:visible").count() == 3
+    phone.set_viewport_size({"width": 390, "height": 844})
+    assert body.locator(".round.collapsible").count() == 3
+    assert body.locator(".round .fixtures:visible").count() == 0
+
+
+def test_the_fold_state_carries_to_the_other_option(phone):
+    body = _view(phone, "by-competition")
+    body.locator(".round.collapsible").first.locator(".round-toggle").tap()
+    phone.locator(".tab").nth(1).tap()
+    other = phone.locator("#panel-2 .view-pane[data-view='by-competition'] .pane-body")
+    assert other.locator(".round.collapsible").first.get_attribute("class").count("is-open") == 1
+    assert other.locator(".round.is-open").count() == 1
+    phone.locator("#panel-2 .expand-all").tap()
+    phone.locator(".tab").nth(0).tap()
+    assert phone.locator("#panel-1 .round.is-open").count() == 3
