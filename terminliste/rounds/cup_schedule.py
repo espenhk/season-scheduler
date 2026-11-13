@@ -102,6 +102,7 @@ def schedule_cup(
     blackouts: set[date],
     european_commitments: CommitmentSet | None = None,
     team_label: Callable[[str], str] = str,
+    year: int | None = None,
 ) -> tuple[CupSchedule, list[str]]:
     """Resolve one cup competition's rounds to dates.
 
@@ -129,12 +130,13 @@ def schedule_cup(
             if main_date in blackouts:
                 warnings.append(
                     f"{competition.name}: {round_.name} has no legal (non-blackout) date in its "
-                    f"window — placed on {short_date(main_date)} anyway"
+                    f"window — placed on {short_date(main_date, year)} anyway"
                 )
         else:
             main_date, round_warnings = _pick_date(
                 competition, round_, previous_latest, gap, blackouts, uefa, set(main_teams),
                 team_label,
+                year,
             )
             warnings.extend(round_warnings)
 
@@ -145,8 +147,8 @@ def schedule_cup(
         for team_id, day in sorted(round_.team_overrides.items()):
             if day in blackouts:
                 warnings.append(
-                    f"{competition.name}: {round_.name} override for {team_label(team_id)} falls on "
-                    f"blackout date {short_date(day)}"
+                    f"{competition.name}: {round_.name} override for {team_label(team_id)} "
+                    f"falls on blackout date {short_date(day, year)}"
                 )
         placement = CupRoundPlacement(
             round_id=round_.id,
@@ -157,7 +159,7 @@ def schedule_cup(
         )
         placements.append(placement)
         if round_.is_forced:
-            warnings.extend(_uefa_warnings(competition, round_, team_dates, uefa, team_label))
+            warnings.extend(_uefa_warnings(competition, round_, team_dates, uefa, team_label, year))
         previous_latest = placement.latest_date
 
     return (
@@ -257,6 +259,7 @@ def _pick_date(
     uefa: list[_UefaLeg],
     teams: set[str],
     team_label: Callable[[str], str] = str,
+    year: int | None = None,
 ) -> tuple[date, list[str]]:
     """The one date a windowed round is played on for `teams`.
 
@@ -297,7 +300,7 @@ def _pick_date(
     if not ranked:
         return earliest, [
             f"{competition.name}: {round_.name} has no legal (non-blackout) date in its "
-            f"window — placed on {short_date(earliest)} anyway"
+            f"window — placed on {short_date(earliest, year)} anyway"
         ]
 
     key, chosen, level = min(ranked)
@@ -305,12 +308,13 @@ def _pick_date(
     if key[0]:
         warnings.append(
             f"{competition.name}: {round_.name} has no {round_.preferred_weekday}-class date "
-            f"in its window — placed on {short_date(chosen)}"
+            f"in its window — placed on {short_date(chosen, year)}"
         )
     if level == 2:
         clashing = ", ".join(team_label(t) for t in _binding_clashes(chosen, rest, uefa, teams))
         warnings.append(
-            f"{competition.name}: {round_.name} on {short_date(chosen)} sits inside a UEFA week for {clashing}"
+            f"{competition.name}: {round_.name} on {short_date(chosen, year)} sits inside "
+            f"a UEFA week for {clashing}"
         )
     return chosen, warnings
 
@@ -321,6 +325,7 @@ def _uefa_warnings(
     team_dates: dict[str, date],
     uefa: list[_UefaLeg],
     team_label: Callable[[str], str] = str,
+    year: int | None = None,
 ) -> list[str]:
     """One warning per forced-round date that sits in a UEFA week of an
     entrant: the date cannot move, so the clash is surfaced rather than fixed."""
@@ -330,7 +335,8 @@ def _uefa_warnings(
         clashing = _binding_clashes(day, competition.min_rest_days, uefa, teams)
         if clashing:
             warnings.append(
-                f"{competition.name}: {round_.name} is forced to {short_date(day)}, inside a UEFA week "
+                f"{competition.name}: {round_.name} is forced to {short_date(day, year)}, "
+                f"inside a UEFA week "
                 f"for {', '.join(team_label(t) for t in clashing)}"
             )
     return warnings
@@ -354,7 +360,7 @@ def schedule_cups(
     for competition in competitions:
         blackouts = set(season.blacked_out_dates) | set(season.scoped_blackout_dates(competition))
         schedule, round_warnings = schedule_cup(
-            competition, blackouts, european_commitments, team_label
+            competition, blackouts, european_commitments, team_label, season.year
         )
         schedules.append(schedule)
         warnings.extend(round_warnings)

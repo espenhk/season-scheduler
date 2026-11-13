@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from terminliste.model.loader import validate_world
+from terminliste.model.loader import load_world, validate_world
 from terminliste.model.schema import CupRound, FixedRequirement
 
 
@@ -1008,3 +1008,16 @@ def test_capacity_check_counts_extra_round_slots():
 
 def test_files_marked_unverified_are_recorded_on_the_world(world):
     assert world.unverified_data == ["club", "venue", "travel-time"]
+
+
+def test_a_data_root_without_travel_overrides_still_loads(tmp_path):
+    import shutil
+
+    from conftest import DATA_ROOT
+
+    root = tmp_path / "data"
+    shutil.copytree(DATA_ROOT, root)
+    (root / "travel_overrides.yml").unlink()
+    loaded = load_world(root)
+    assert loaded.travel_overrides == []
+    assert loaded.unverified_data == ["club", "venue"]

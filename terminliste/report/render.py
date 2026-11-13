@@ -1737,7 +1737,7 @@ def write_json(result: SolverResult, output_path: Path) -> Path:
         "solver": result.solver,
         "iterations": result.iterations,
         "elapsed_s": round(result.elapsed_s, 2),
-        "notes": result.notes,
+        "notes": [{"text": str(n), "severity": severity_of(n)} for n in result.notes],
         "search_stats": {
             "investigated": stats.investigated,
             "feasible": stats.feasible,

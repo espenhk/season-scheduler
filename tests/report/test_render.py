@@ -2096,3 +2096,16 @@ def test_a_cup_round_date_keeps_one_round_for_all_its_teams_and_each_view_names_
     assert {data["shared"][uid]["t"] for uid in cup_round["ids"]} == {"a_m", "b_m"}
     (league_view,) = data["options"][0]["byCompetition"]
     assert league_view["kind"] == "league"
+
+
+def test_write_json_emits_notes_with_their_severity(tmp_path):
+    from terminliste.report.render import write_json
+    from terminliste.solvers.base import error, info
+
+    result = SolverResult(solver="test", notes=[info("fyi"), "careful", error("broken")])
+    data = json.loads(write_json(result, tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert data["notes"] == [
+        {"text": "fyi", "severity": "info"},
+        {"text": "careful", "severity": "warning"},
+        {"text": "broken", "severity": "error"},
+    ]

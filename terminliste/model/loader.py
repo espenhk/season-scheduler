@@ -174,7 +174,8 @@ def _unverified_data(data_root: Path) -> list[str]:
     return [
         label
         for filename, label in _VERIFIABLE_FILES.items()
-        if _read_yaml(data_root / filename).get("verified") is False
+        if (data_root / filename).exists()
+        and _read_yaml(data_root / filename).get("verified") is False
     ]
 
 

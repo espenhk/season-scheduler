@@ -187,7 +187,8 @@ def plan_league_slots(
         teams = ", ".join(world.team_label(t) for t in slot)
         plan.warnings.append(
             f"{competition.name}: round {round_index + 1} on "
-            f"{short_date(plan.chosen[round_index].default_day)} clashes with a hard cup or UEFA commitment for {teams}; no clear slot was available"
+            f"{short_date(plan.chosen[round_index].default_day, season.year)} clashes with a "
+            f"hard cup or UEFA commitment for {teams}; no clear slot was available"
         )
     return plan
 

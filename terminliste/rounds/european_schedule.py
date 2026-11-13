@@ -92,7 +92,7 @@ def resolve_leg_date(
 
 
 def resolve_all_legs(
-    competitions: list[Competition], blackouts: set[date]
+    competitions: list[Competition], blackouts: set[date], year: int | None = None
 ) -> tuple[ResolvedLegs, list[str]]:
     """Resolve every round's two legs, across every competition given.
 
@@ -114,12 +114,12 @@ def resolve_all_legs(
             if first_blacked_out:
                 warnings.append(
                     f"{competition.name}: {round_.name} first leg has no legal (non-blackout) "
-                    f"date in its window — placed on {short_date(first_date)} anyway"
+                    f"date in its window — placed on {short_date(first_date, year)} anyway"
                 )
             if second_blacked_out:
                 warnings.append(
                     f"{competition.name}: {round_.name} second leg has no legal (non-blackout) "
-                    f"date in its window — placed on {short_date(second_date)} anyway"
+                    f"date in its window — placed on {short_date(second_date, year)} anyway"
                 )
     return resolved, warnings
 
@@ -319,7 +319,7 @@ def _next_round_for_team(
 
 
 def resolve_main_stages(
-    competition: Competition, blackouts: set[date]
+    competition: Competition, blackouts: set[date], year: int | None = None
 ) -> tuple[list[MainStage], list[str]]:
     """A main tournament as stages a team may play (#79, #8): the league phase
     with every matchday date, then each knockout round with its leg dates,
@@ -333,7 +333,7 @@ def resolve_main_stages(
         if blacked_out:
             warnings.append(
                 f"{competition.name}: {matchday.name} has no legal (non-blackout) date in its "
-                f"window — placed on {short_date(resolved)} anyway"
+                f"window — placed on {short_date(resolved, year)} anyway"
             )
 
     stages: list[MainStage] = []
@@ -357,7 +357,7 @@ def resolve_main_stages(
         if first_blacked_out:
             warnings.append(
                 f"{competition.name}: {round_.name} has no legal (non-blackout) date in its "
-                f"window — placed on {short_date(first_date)} anyway"
+                f"window — placed on {short_date(first_date, year)} anyway"
             )
         if round_.second_leg is not None:
             second_date, second_blacked_out = resolve_leg_date(
@@ -367,7 +367,7 @@ def resolve_main_stages(
             if second_blacked_out:
                 warnings.append(
                     f"{competition.name}: {round_.name} second leg has no legal (non-blackout) "
-                    f"date in its window — placed on {short_date(second_date)} anyway"
+                    f"date in its window — placed on {short_date(second_date, year)} anyway"
                 )
         advance = (
             round_.advance_probability
@@ -455,12 +455,12 @@ def resolve_european_trees(
     another's landing spot.
     """
     blackouts = set(season.blacked_out_dates)
-    resolved_legs, warnings = resolve_all_legs(competitions, blackouts)
+    resolved_legs, warnings = resolve_all_legs(competitions, blackouts, season.year)
 
     main_stages: dict[str, list[MainStage]] = {}
     for competition in competitions:
         if competition.is_main_tournament:
-            stages, stage_warnings = resolve_main_stages(competition, blackouts)
+            stages, stage_warnings = resolve_main_stages(competition, blackouts, season.year)
             main_stages[competition.id] = stages
             warnings.extend(stage_warnings)
 

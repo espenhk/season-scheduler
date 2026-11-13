@@ -273,6 +273,28 @@ def test_uefa_clash_warning_uses_team_labels_and_short_dates():
     ]
 
 
+def test_short_date_adds_the_year_only_when_it_differs_from_the_season():
+    from terminliste.display import short_date
+
+    assert short_date(date(2026, 8, 22)) == "Sat 22 Aug"
+    assert short_date(date(2026, 8, 22), 2026) == "Sat 22 Aug"
+    assert short_date(date(2027, 5, 15), 2026) == "Sat 15 May 2027"
+
+
+def test_cup_warning_for_a_date_in_the_next_year_names_the_year():
+    cup = f.competition(
+        "cup",
+        ["t1"],
+        format="cup",
+        cup_rounds=[f.cup_round("r1", forced_date=date(2027, 5, 15), name="Final")],
+    )
+    commitments = f.commitment_set(_uefa("t1", date(2027, 5, 15)))
+    _, warnings = schedule_cup(
+        cup, blackouts=set(), european_commitments=commitments, year=2026
+    )
+    assert "Sat 15 May 2027" in warnings[0]
+
+
 def test_forced_round_clear_of_uefa_does_not_warn():
     cup = f.competition(
         "cup",

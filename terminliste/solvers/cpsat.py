@@ -326,7 +326,9 @@ class CpSatScheduler:
             candidate.label = f"Option {position}"
         if chosen and not any(c.score.feasible for c in chosen):
             notes.append(
-                error("No fully feasible schedule found — see the hard-rule rows in the breakdown.")
+                error(
+                    "No fully feasible schedule found — see the hard-rule rows in the breakdown."
+                )
             )
 
         best_plans = plans_by_candidate.get(id(chosen[0])) if chosen else None
@@ -394,7 +396,7 @@ def _run_pass(
                 give_up_on_level_two()
             elif cuts:
                 # Level 1 was feasible before the diversity cuts, so only they close it.
-                notes.append(f"pass {pass_index}: no further distinct slot assignment exists")
+                notes.append(info(f"pass {pass_index}: no further distinct slot assignment exists"))
             else:
                 culprits = _culprits(solver, status, level_one.assumptions, cp_model)
                 stats.investigated += 1
@@ -841,7 +843,8 @@ def _slot_plans(problem: _Problem, solution: _LevelOneSolution) -> dict[str, Slo
             teams = ", ".join(problem.world.team_label(t) for t in slot)
             plan.warnings.append(
                 f"{problem.world.competition(lg.id).name}: round {round_index + 1} on "
-                f"{short_date(chosen[round_index].default_day)} clashes with a hard cup or UEFA commitment for {teams}"
+                f"{short_date(chosen[round_index].default_day, problem.season.year)} clashes with "
+                f"a hard cup or UEFA commitment for {teams}"
             )
         plans[lg.id] = plan
     return plans
@@ -1132,8 +1135,9 @@ def _slot_shortage(problem: _Problem) -> list[str]:
         if usable >= lg.rounds:
             continue
         notes.append(
-            f"{lg.id}: {usable} usable round slots for {lg.rounds} rounds — "
-            f"{len(lg.closed)} of {len(lg.slot_plan.candidates)} candidate slots are closed by the frame"
+            f"{problem.world.competition(lg.id).name}: {usable} usable round slots for "
+            f"{lg.rounds} rounds — {len(lg.closed)} of {len(lg.slot_plan.candidates)} "
+            f"candidate slots are closed by the frame"
         )
         notes.extend(_closed_slot_lines(problem, lg))
     return notes
