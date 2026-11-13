@@ -257,6 +257,22 @@ def test_forced_round_inside_a_uefa_week_warns_but_keeps_its_date():
     assert len(warnings) == 1 and "UEFA" in warnings[0] and "t1" in warnings[0]
 
 
+def test_uefa_clash_warning_uses_team_labels_and_short_dates():
+    cup = f.competition(
+        "cup",
+        ["t1"],
+        format="cup",
+        cup_rounds=[f.cup_round("r1", forced_date=date(2026, 8, 22), name="Round 1")],
+    )
+    commitments = f.commitment_set(_uefa("t1", date(2026, 8, 22)))
+    _, warnings = schedule_cup(
+        cup, blackouts=set(), european_commitments=commitments, team_label=str.upper
+    )
+    assert warnings == [
+        f"{cup.name}: Round 1 is forced to Sat 22 Aug, inside a UEFA week for T1"
+    ]
+
+
 def test_forced_round_clear_of_uefa_does_not_warn():
     cup = f.competition(
         "cup",
@@ -298,7 +314,7 @@ def test_team_override_on_a_blackout_date_warns():
         ],
     )
     _, warnings = schedule_cup(cup, blackouts={date(2026, 9, 2)})
-    assert len(warnings) == 1 and "t2" in warnings[0] and "2026-09-02" in warnings[0]
+    assert len(warnings) == 1 and "t2" in warnings[0] and "Wed 2 Sep" in warnings[0]
 
 
 def test_a_weekend_preference_keeps_the_final_on_one_weekend_date():

@@ -49,6 +49,9 @@ class World:
     competitions: dict[str, Competition]
     seasons: dict[str, Season]
     travel_overrides: list[TravelOverride] = field(default_factory=list)
+    # Data files whose top-level `verified: false` says they were not checked
+    # against a primary source, e.g. "club" or "venue" (#38).
+    unverified_data: list[str] = field(default_factory=list)
 
     # -- lookups -----------------------------------------------------------
 
@@ -152,11 +155,27 @@ def load_world(data_root: Path) -> World:
         competitions=competitions,
         seasons=seasons,
         travel_overrides=overrides,
+        unverified_data=_unverified_data(data_root),
     )
     errors = validate_world(world)
     if errors:
         raise DataError("data validation failed:\n  - " + "\n  - ".join(errors))
     return world
+
+
+_VERIFIABLE_FILES = {
+    "clubs.yml": "club",
+    "venues.yml": "venue",
+    "travel_overrides.yml": "travel-time",
+}
+
+
+def _unverified_data(data_root: Path) -> list[str]:
+    return [
+        label
+        for filename, label in _VERIFIABLE_FILES.items()
+        if _read_yaml(data_root / filename).get("verified") is False
+    ]
 
 
 def _load_venues(path: Path) -> dict[str, Venue]:

@@ -9,7 +9,7 @@ import math
 import re
 import tempfile
 from collections import Counter
-from datetime import date
+from datetime import UTC, date
 from pathlib import Path
 
 import factories as f
@@ -1402,6 +1402,144 @@ def test_render_report_lists_the_round_slots_and_search_space():
     assert "ways to pick compatible slots" in rendered
     first = plans["elite"].chosen[0]
     assert f"default {first.default_day.strftime('%a %d %b')}" in rendered
+
+
+# -- top of page (#38) -------------------------------------------------------
+
+
+def _top_world():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    return world, season, _candidate(world, season, matches, [])
+
+
+def _render_result(world, season, result, **kwargs) -> str:
+    with tempfile.TemporaryDirectory() as tmp:
+        return render_report(world, season, result, Path(tmp) / "out.html", **kwargs).read_text(
+            encoding="utf-8"
+        )
+
+
+def _body(rendered: str) -> str:
+    return rendered.split("<script")[0]
+
+
+def test_default_title_names_the_leagues_from_the_world():
+    world, season, candidate = _top_world()
+    title = re.search(r"<h1>(.*?)</h1>", _render(world, season, [candidate])).group(1)
+    names = [world.competition(c).name for c in season.competitions]
+    assert title == f"{names[0]} & {names[1]} {season.year} — proposed fixture list"
+
+
+def test_an_explicit_title_wins():
+    world, season, candidate = _top_world()
+    assert "<h1>Custom</h1>" in _render(world, season, [candidate], title="Custom")
+
+
+def test_header_intro_stamp_commit_and_links(monkeypatch):
+    from datetime import datetime
+
+    monkeypatch.setattr("terminliste.report.render._git_short_commit", lambda: "abc1234")
+    world, season, candidate = _top_world()
+    result = SolverResult(candidates=[candidate], solver="test")
+    rendered = _render_result(
+        world, season, result,
+        json_name="2026.json", generated_at=datetime(2026, 11, 13, 9, 5, tzinfo=UTC),
+    )
+    header = rendered.split("<header>")[1].split("</header>")[0]
+    assert "back-to-back home weekends" in header
+    assert "generated 13 Nov 2026 09:05 UTC" in header
+    assert "<code>abc1234</code>" in header
+    assert 'href="https://github.com/espenhk/season-scheduler"' in header
+    assert 'href="2026.json"' in header
+    assert "iterations" not in header
+
+
+def test_header_degrades_without_git_or_json(monkeypatch):
+    monkeypatch.setattr("terminliste.report.render._git_short_commit", lambda: None)
+    world, season, candidate = _top_world()
+    header = _render(world, season, [candidate]).split("<header>")[1].split("</header>")[0]
+    assert "generated " in header
+    assert "<code>" not in header
+    assert "download JSON" not in header
+
+
+def test_git_short_commit_is_none_when_git_cannot_run(monkeypatch):
+    import subprocess
+
+    from terminliste.report import render
+
+    def boom(*args, **kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert render._git_short_commit() is None
+
+
+def test_notes_are_styled_by_severity_and_info_moves_to_the_diagnostics_section():
+    from terminliste.solvers.base import error, info
+
+    world, season, candidate = _top_world()
+    result = SolverResult(
+        candidates=[candidate],
+        solver="test",
+        notes=[info("polish phase refined 3 of 3"), "a plain warning", error("nothing feasible")],
+    )
+    body = _body(_render_result(world, season, result))
+    banner, generation = body.split('<details class="generation">')
+    assert 'class="notes warning"' in banner and "a plain warning" in banner
+    assert 'class="notes error"' in banner and "nothing feasible" in banner
+    assert "polish phase" not in banner
+    assert "polish phase refined 3 of 3" in generation
+
+
+def test_data_caveat_sits_with_the_coverage_notes_when_data_is_unverified():
+    world, season, candidate = _top_world()
+    world.unverified_data = ["club", "venue"]
+    body = _body(_render(world, season, [candidate]))
+    top = body.split('<details class="generation">')[0]
+    assert "Club and venue data is marked verified: false" in top
+    assert "Coverage notes" in top
+    assert "verified: false" not in body.split("<footer>")[1]
+
+
+def test_no_data_caveat_when_everything_is_verified():
+    world, season, candidate = _top_world()
+    assert "verified: false" not in _body(_render(world, season, [candidate]))
+
+
+def test_diagnostics_follow_the_option_panels_in_one_collapsed_section():
+    from terminliste.model.calendar import build_calendar
+    from terminliste.model.schema import DatedNote
+    from terminliste.slot_planner import plan_slots
+
+    world, _, comp_m, comp_w = _two_dual_clubs_world()
+    season = f.season(
+        competitions=["elite", "topp"], start=date(2026, 3, 1), end=date(2026, 6, 30),
+        global_blackouts=[DatedNote(date=date(2026, 5, 17), reason="national day")],
+    )
+    plans = plan_slots(world, season, [comp_m, comp_w], build_calendar(world, season))
+    candidate = _candidate(
+        world, season, [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")], []
+    )
+    stats = SearchStats(investigated=10, feasible=1, hard_violation_scenarios=9)
+    result = SolverResult(
+        candidates=[candidate], solver="test", iterations=10, slot_plans=plans, search_stats=stats
+    )
+    body = _body(_render_result(world, season, result))
+
+    start = body.index('<details class="generation">')
+    assert "<details class=\"generation\" open" not in body
+    assert start > body.rindex('role="tabpanel"')
+    assert start < body.index("<footer>")
+    section = body[start:body.index("<footer>")]
+    for heading in ("Season exclusions", "Round slots", "How hard was this to schedule?"):
+        assert heading in section
+        assert heading not in body[:start]
+    assert "option seeds" not in section  # all seeds are 0 in this fixture
+    # Each league's clause names it, not just "16 rounds in 24 candidate slots".
+    for competition in (comp_m, comp_w):
+        assert f"{competition.name}: {competition.rounds} rounds in" in section
 
 
 # -- rule lens (#30) ---------------------------------------------------------

@@ -28,6 +28,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from ..display import short_date
 from ..model.schema import (
     WEEKDAYS,
     Competition,
@@ -113,12 +114,12 @@ def resolve_all_legs(
             if first_blacked_out:
                 warnings.append(
                     f"{competition.name}: {round_.name} first leg has no legal (non-blackout) "
-                    f"date in its window — placed on {first_date} anyway"
+                    f"date in its window — placed on {short_date(first_date)} anyway"
                 )
             if second_blacked_out:
                 warnings.append(
                     f"{competition.name}: {round_.name} second leg has no legal (non-blackout) "
-                    f"date in its window — placed on {second_date} anyway"
+                    f"date in its window — placed on {short_date(second_date)} anyway"
                 )
     return resolved, warnings
 
@@ -332,7 +333,7 @@ def resolve_main_stages(
         if blacked_out:
             warnings.append(
                 f"{competition.name}: {matchday.name} has no legal (non-blackout) date in its "
-                f"window — placed on {resolved} anyway"
+                f"window — placed on {short_date(resolved)} anyway"
             )
 
     stages: list[MainStage] = []
@@ -356,7 +357,7 @@ def resolve_main_stages(
         if first_blacked_out:
             warnings.append(
                 f"{competition.name}: {round_.name} has no legal (non-blackout) date in its "
-                f"window — placed on {first_date} anyway"
+                f"window — placed on {short_date(first_date)} anyway"
             )
         if round_.second_leg is not None:
             second_date, second_blacked_out = resolve_leg_date(
@@ -366,7 +367,7 @@ def resolve_main_stages(
             if second_blacked_out:
                 warnings.append(
                     f"{competition.name}: {round_.name} second leg has no legal (non-blackout) "
-                    f"date in its window — placed on {second_date} anyway"
+                    f"date in its window — placed on {short_date(second_date)} anyway"
                 )
         advance = (
             round_.advance_probability

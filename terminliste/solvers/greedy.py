@@ -17,6 +17,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from ..display import short_date
 from ..frame import SeasonFrame
 from ..model.calendar import (
     SeasonCalendar,
@@ -343,7 +344,7 @@ def _clear_pin_date(
     round_desc = "final round" if movable else "full-round requirement"
     resolution = "no clear nearby date was found" if movable else "the date cannot move"
     return anchor, (
-        f"{plan.competition.id}: {round_desc} on {anchor} conflicts with a hard cup or "
+        f"{plan.competition.name}: {round_desc} on {short_date(anchor)} conflicts with a hard cup or "
         f"European commitment for at least one team, and {resolution}"
     )
 
@@ -538,8 +539,8 @@ def build_initial_schedule(
         claimed.add((fixture.competition_id, fixture.round_index, fixture.home_team, fixture.away_team))
         if not plan.slots[fixture.round_index].contains(requirement.date):
             pin_warnings.append(
-                f"{requirement.competition}: fixed requirement {requirement.id} on "
-                f"{requirement.date} lies outside every round slot; the match is placed "
+                f"{plan.competition.name}: fixed requirement {requirement.id} on "
+                f"{short_date(requirement.date)} lies outside every round slot; the match is placed "
                 f"there regardless of its round's slot"
             )
         venue = world.team(fixture.home_team).home_venue

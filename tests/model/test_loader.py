@@ -1004,3 +1004,7 @@ def test_capacity_check_counts_extra_round_slots():
         extra_round_slots=[extra],
     )
     assert _validate_calendar_capacity(world, with_midweek) == []
+
+
+def test_files_marked_unverified_are_recorded_on_the_world(world):
+    assert world.unverified_data == ["club", "venue", "travel-time"]

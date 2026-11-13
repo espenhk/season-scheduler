@@ -36,10 +36,14 @@
   .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 20px 80px; }
   header h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.01em; }
   header .sub { color: var(--muted); font-size: 14px; }
+  header .intro { margin: 8px 0 10px; max-width: 70ch; }
+  header .sub a { color: inherit; }
   .notes {
-    margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid var(--bad);
-    background: #fdf0ee; font-size: 14px;
+    margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid var(--warn);
+    background: #fdf6ea; font-size: 14px;
   }
+  .notes.error { border-left-color: var(--bad); background: #fdf0ee; }
+  details.generation { margin-top: 32px; }
   .warnings {
     margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid var(--warn);
     background: #fdf6ea; font-size: 14px;
@@ -923,126 +927,33 @@
 
 <header>
   <h1>{{ title }}</h1>
+  <p class="intro">
+    {% if header.scoring_only %}
+    This page scores one supplied fixture list against the same hard rules and soft preferences the generator uses.
+    Read the score first, then the rule rows for what costs points, then the calendar.
+    {% else %}
+    The generator proposes season fixture lists for related leagues and optimises one thing in particular: clubs that field a team in more than one league get back-to-back home weekends, rather than clashing or being planned independently.
+    Compare the options below, then open one to see its rules, calendar and per-club views.
+    {% endif %}
+  </p>
   <div class="sub">
-    {{ season.start.strftime('%d %B %Y') }} – {{ season.end.strftime('%d %B %Y') }}
-    · solver <b>{{ result.solver }}</b>
-    {% if result.iterations %}· {{ '{:,}'.format(result.iterations) }} iterations{% endif %}
-    · {{ '%.1f'|format(result.elapsed_s) }}s
+    {{ season.start.strftime('%d %b %Y') }} – {{ season.end.strftime('%d %b %Y') }}
+    · generated {{ header.generated }}{% if header.commit %} from <code>{{ header.commit }}</code>{% endif %}
+    · <a href="{{ header.repo_url }}">source</a>
+    {% if header.json_name %}· <a href="{{ header.json_name }}" download>download JSON</a>{% endif %}
   </div>
 </header>
 
-{% if result.notes %}
-<div class="notes">
-  {% for note in result.notes %}<div>{{ note }}</div>{% endfor %}
-</div>
-{% endif %}
+{% for note in banner_notes %}
+<div class="notes {{ note.severity }}" role="{{ 'alert' if note.severity == 'error' else 'note' }}">{{ note.text }}</div>
+{% endfor %}
 
-{% if warnings %}
+{% if warnings or data_caveat %}
 <div class="warnings">
   <div style="font-weight:700;margin-bottom:4px">Coverage notes</div>
   {% for warning in warnings %}<div>⚠ {{ warning }}</div>{% endfor %}
+  {% if data_caveat %}<div>⚠ {{ data_caveat }}</div>{% endif %}
 </div>
-{% endif %}
-
-{% if season_exclusions %}
-<details>
-  <summary>
-    Season exclusions
-    <span style="font-weight:400;color:var(--muted)">
-      · {{ season_exclusions|length }} entr{{ 'y' if season_exclusions|length == 1 else 'ies' }}
-    </span>
-  </summary>
-  <div class="item-body">
-    {% for entry in season_exclusions %}
-    <div class="desc">
-      {{ entry.start.strftime('%d %b %Y') }}{% if entry.end != entry.start %} – {{ entry.end.strftime('%d %b %Y') }}{% endif %}
-      {%- if entry.venue_label %} ({{ entry.venue_label }}){% endif %}
-      {%- if entry.reason %} — {{ entry.reason }}{% endif %}
-    </div>
-    {% endfor %}
-  </div>
-</details>
-{% endif %}
-
-{% if playoff_views %}
-<details>
-  <summary>
-    Play-off weeks
-    <span style="font-weight:400;color:var(--muted)">
-      · dates reserved after or between the league rounds
-    </span>
-  </summary>
-  <div class="item-body">
-    {% for view in playoff_views %}
-    <div class="desc">
-      <strong>{{ view.competition }}</strong> · {{ view.label }}
-      {%- if not view.reserves_league %} (other division's teams){% endif %}
-      · {% for d in view.dates %}{{ d.date.strftime('%a %d %b %Y') }} (week {{ d.iso_week }}){{ ', ' if not loop.last }}{% endfor %}
-    </div>
-    {% endfor %}
-  </div>
-</details>
-{% endif %}
-
-{% if slot_views %}
-<details>
-  <summary>
-    Round slots
-    <span style="font-weight:400;color:var(--muted)">
-      · {% for view in slot_views %}{{ view.rounds }} rounds in {{ view.candidates }} candidate slots{% if view.overlapping %} ({{ view.overlapping }} overlap a weekend){% endif %}{{ ', ' if not loop.last }}{% endfor %}
-    </span>
-  </summary>
-  <div class="item-body">
-    {% for view in slot_views %}
-    <div class="desc" style="font-weight:700;margin-top:8px">{{ view.name }}</div>
-    <div class="desc">
-      {{ '{:,}'.format(view.combinations) }} ways to pick compatible slots; per-match dates
-      ~10<sup>{{ '%.0f'|format(view.dates_log10) }}</sup> within the slots' own days.
-    </div>
-    {% for row in view.rows %}
-    <div class="desc">
-      R{{ row.round }} · {{ row.kind }} ·
-      {{ row.start.strftime('%d %b') }}{% if row.end != row.start %} – {{ row.end.strftime('%d %b') }}{% endif %}
-      · default {{ row.default_day.strftime('%a %d %b') }}
-      {%- if row.clashes %} · ⚠ clashes: {{ row.clashes|join(', ') }}{% endif %}
-    </div>
-    {% endfor %}
-    {% endfor %}
-  </div>
-</details>
-{% endif %}
-
-{% if search_stats %}
-<details class="search-stats">
-  <summary>
-    How hard was this to schedule?
-    <span class="difficulty-pill difficulty-{{ search_stats.difficulty }}">{{ search_stats.difficulty }}</span>
-    <span style="font-weight:400;color:var(--muted)">
-      · {{ '{:,}'.format(search_stats.investigated) }} scenarios investigated ·
-      {{ '%.0f'|format(search_stats.feasible_pct) }}% viable
-    </span>
-  </summary>
-  <div class="item-body">
-    <div class="desc">{{ search_stats.difficulty_label }}</div>
-    <div class="desc">
-      {{ '{:,}'.format(search_stats.feasible) }} scenario{{ '' if search_stats.feasible == 1 else 's' }} came out viable,
-      {{ '{:,}'.format(search_stats.hard_violation_scenarios) }} hit at least one hard-rule violation
-      ({{ '%.0f'|format(search_stats.hard_violation_pct) }}% of everything tried).
-    </div>
-    {% if search_stats.breakdown %}
-    <div style="font-weight:700;margin:14px 0 6px;font-size:13px">Where the dead ends came from</div>
-    <div class="fairness-bars">
-      {% for row in search_stats.breakdown %}
-      <div class="fairness-bar" title="{{ row.description }}">
-        <span class="flabel">{{ row.name }}</span>
-        <span class="ftrack"><span class="ffill" style="width:{{ row.pct }}%"></span></span>
-        <span class="fcount">{{ '{:,}'.format(row.count) }}</span>
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
-  </div>
-</details>
 {% endif %}
 
 {% if comparison %}
@@ -1450,9 +1361,123 @@
 </section>
 {% endfor %}
 
+<details class="generation">
+  <summary>
+    How this schedule was generated
+    <span style="font-weight:400;color:var(--muted)">
+      · solver, search effort, season exclusions, round slots
+    </span>
+  </summary>
+  <div class="item-body">
+    <div class="desc">
+      Solver <b>{{ run_facts.solver }}</b>
+      {%- if run_facts.seeds %} · option seeds {{ run_facts.seeds|join(', ') }}{% endif %}
+      {%- if run_facts.iterations %} · {{ '{:,}'.format(run_facts.iterations) }} iterations{% endif %}
+      · {{ run_facts.elapsed }}
+    </div>
+    {% for note in info_notes %}<div class="desc">{{ note }}</div>{% endfor %}
+{% if season_exclusions %}
+    <details>
+      <summary>
+        Season exclusions
+        <span style="font-weight:400;color:var(--muted)">
+          · {{ season_exclusions|length }} entr{{ 'y' if season_exclusions|length == 1 else 'ies' }}
+        </span>
+      </summary>
+      <div class="item-body">
+        {% for entry in season_exclusions %}
+        <div class="desc">
+          {{ entry.start.strftime('%d %b %Y') }}{% if entry.end != entry.start %} – {{ entry.end.strftime('%d %b %Y') }}{% endif %}
+          {%- if entry.venue_label %} ({{ entry.venue_label }}){% endif %}
+          {%- if entry.reason %} — {{ entry.reason }}{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+    {% if playoff_views %}
+    <details>
+      <summary>
+        Play-off weeks
+        <span style="font-weight:400;color:var(--muted)">
+          · dates reserved after or between the league rounds
+        </span>
+      </summary>
+      <div class="item-body">
+        {% for view in playoff_views %}
+        <div class="desc">
+          <strong>{{ view.competition }}</strong> · {{ view.label }}
+          {%- if not view.reserves_league %} (other division's teams){% endif %}
+          · {% for d in view.dates %}{{ d.date.strftime('%a %d %b %Y') }} (week {{ d.iso_week }}){{ ', ' if not loop.last }}{% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+    {% if slot_views %}
+    <details>
+      <summary>
+        Round slots
+        <span style="font-weight:400;color:var(--muted)">
+          · {% for view in slot_views %}{{ view.name }}: {{ view.rounds }} rounds in {{ view.candidates }} candidate slots{% if view.overlapping %} ({{ view.overlapping }} overlap a weekend){% endif %}{{ '; ' if not loop.last }}{% endfor %}
+        </span>
+      </summary>
+      <div class="item-body">
+        {% for view in slot_views %}
+        <div class="desc" style="font-weight:700;margin-top:8px">{{ view.name }}</div>
+        <div class="desc">
+          {{ '{:,}'.format(view.combinations) }} ways to pick compatible slots; per-match dates
+          ~10<sup>{{ '%.0f'|format(view.dates_log10) }}</sup> within the slots' own days.
+        </div>
+        {% for row in view.rows %}
+        <div class="desc">
+          R{{ row.round }} · {{ row.kind }} ·
+          {{ row.start.strftime('%d %b') }}{% if row.end != row.start %} – {{ row.end.strftime('%d %b') }}{% endif %}
+          · default {{ row.default_day.strftime('%a %d %b') }}
+          {%- if row.clashes %} · ⚠ clashes: {{ row.clashes|join(', ') }}{% endif %}
+        </div>
+        {% endfor %}
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+    {% if search_stats %}
+    <details class="search-stats">
+      <summary>
+        How hard was this to schedule?
+        <span class="difficulty-pill difficulty-{{ search_stats.difficulty }}">{{ search_stats.difficulty }}</span>
+        <span style="font-weight:400;color:var(--muted)">
+          · {{ '{:,}'.format(search_stats.investigated) }} scenarios investigated ·
+          {{ '%.0f'|format(search_stats.feasible_pct) }}% viable
+        </span>
+      </summary>
+      <div class="item-body">
+        <div class="desc">{{ search_stats.difficulty_label }}</div>
+        <div class="desc">
+          {{ '{:,}'.format(search_stats.feasible) }} scenario{{ '' if search_stats.feasible == 1 else 's' }} came out viable,
+          {{ '{:,}'.format(search_stats.hard_violation_scenarios) }} hit at least one hard-rule violation
+          ({{ '%.0f'|format(search_stats.hard_violation_pct) }}% of everything tried).
+        </div>
+        {% if search_stats.breakdown %}
+        <div style="font-weight:700;margin:14px 0 6px;font-size:13px">Where the dead ends came from</div>
+        <div class="fairness-bars">
+          {% for row in search_stats.breakdown %}
+          <div class="fairness-bar" title="{{ row.description }}">
+            <span class="flabel">{{ row.name }}</span>
+            <span class="ftrack"><span class="ffill" style="width:{{ row.pct }}%"></span></span>
+            <span class="fcount">{{ '{:,}'.format(row.count) }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
+</details>
+
 <footer>
-  Generated by terminliste. Club, venue and league data is assembled from public sources
-  and marked <code>verified: false</code> — check <code>data/</code> before using this for anything real.
+  Generated by <a href="{{ header.repo_url }}">terminliste</a>.
 </footer>
 
 </div>

@@ -260,11 +260,11 @@ def cmd_generate(args: argparse.Namespace) -> int:
         season,
         result,
         html_path,
-        title=f"{season.year} season schedule",
         warnings=frame_warnings,
         cup_schedules=frame.cup_schedules,
         european_competitions=european_competitions,
         resolved_legs=resolved_legs,
+        json_name=json_path.name,
     )
     write_json(result, json_path)
 
