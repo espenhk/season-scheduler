@@ -352,7 +352,7 @@
   /* -- rule contributions as a share of the season's movement (#34) -- */
   .contrib { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .contrib .share-track { display: block; width: 64px; height: 8px; background: var(--tint-neutral); border-radius: 4px; overflow: hidden; }
-  .contrib .share-fill { display: block; height: 100%; border-radius: 4px; background: var(--muted); }
+  .contrib .share-fill { display: block; height: 100%; min-width: 6px; border-radius: 4px; background: var(--muted); }
   .contrib .share-text { font-weight: 700; font-size: 14px; min-width: 3.2em; text-align: right; }
   .contrib.gain .share-fill { background: var(--good); }
   .contrib.gain .share-text { color: var(--good-ink); }
@@ -1139,8 +1139,8 @@
         {# Inside a <summary> an icon button would be a control within a control, and the description is printed just below anyway. #}
         <span class="info-wrap">
           {% if compact %}
-          <button type="button" class="info-icon" aria-label="{{ row.name }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
-          <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
+          <button type="button" class="info-icon" aria-label="{{ row.name }} description">i</button>
+          <span class="tooltip" aria-hidden="true">{{ row.description }}</span>
           {% else %}
           <span class="info-icon" aria-hidden="true">i</span>
           <span class="tooltip" aria-hidden="true">{{ row.description }}</span>
@@ -1343,8 +1343,8 @@
           <span class="name">{{ row.name }}</span>
           {% set ns.tooltip_id = ns.tooltip_id + 1 %}
           <span class="info-wrap">
-            <button type="button" class="info-icon" aria-label="{{ row.name }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
-            <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
+            <button type="button" class="info-icon" aria-label="{{ row.name }} description">i</button>
+            <span class="tooltip" aria-hidden="true">{{ row.description }}</span>
           </span>
         </span>
         <span class="delta">{{ row.count }} violation{{ '' if row.count == 1 else 's' }}</span>
@@ -1425,8 +1425,8 @@
               <b>{{ row.name }}</b>
               {% set ns.tooltip_id = ns.tooltip_id + 1 %}
               <span class="info-wrap">
-                <button type="button" class="info-icon" aria-label="{{ row.name }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
-                <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
+                <button type="button" class="info-icon" aria-label="{{ row.name }} description">i</button>
+                <span class="tooltip" aria-hidden="true">{{ row.description }}</span>
               </span>
             </span>
             <div class="rule-desc phone-desc">{{ row.description }}</div>
@@ -1524,7 +1524,7 @@
           {% endif %}
           <div class="legend-keys">
             <h4>Keyboard</h4>
-            <p class="desc">Tab moves between sections. Inside the calendar, a round or a day list, the arrow keys move between fixtures and badges, and Home and End jump to the first and last. Enter opens a fixture’s details.</p>
+            <p class="desc">Tab moves between sections. Each round, each day’s list and the season strip is one tab stop: inside it the arrow keys move between fixtures and badges, and Home and End jump to the first and last. The calendar’s days work the same way. Enter opens a fixture’s details.</p>
           </div>
           <details class="abbr-key">
             <summary>Club abbreviations</summary>

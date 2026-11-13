@@ -44,7 +44,7 @@
   // The group's own items that are on screen (a closed round or chip hides its items).
   function roveItems(group) {
     return Array.prototype.filter.call(group.querySelectorAll('[data-rove]'), function (item) {
-      return item.closest('[data-rove-group]') === group && item.getClientRects().length > 0;
+      return item.closest('[data-rove-group]') === group && !item.disabled && item.getClientRects().length > 0;
     });
   }
 
@@ -1522,7 +1522,7 @@
     this.lensOnly = panel.querySelector('.lens-only-box');
     this.lensCaption = panel.querySelector('.lens-caption');
     this.headlines = panel.querySelector('.headlines');
-    this.strip = panel.querySelector('.season-strip');
+    this.strip = roveGroup(panel.querySelector('.season-strip'));
     this.scopeBanner = panel.querySelector('.scope-banner');
     this.scopeText = panel.querySelector('.scope-text');
     this.scopeCard = panel.querySelector('.scope-card');
@@ -1822,8 +1822,6 @@
     return append(box, button);
   }
 
-  var scopeTooltips = 0;
-
   // The rule's name with its description on hover, as the server draws it. Inside a <summary> the
   // icon is a picture only (a button there is a control within a control) and the description is
   // text on the row.
@@ -1839,10 +1837,8 @@
     } else {
       icon.type = 'button';
       icon.setAttribute('aria-label', ruleName(rule) + ' description');
-      scopeTooltips++;
-      tooltip.id = 'scope-tt-' + scopeTooltips;
-      tooltip.setAttribute('role', 'tooltip');
-      icon.setAttribute('aria-describedby', tooltip.id);
+      // The description is text beside the name, so it is not also read from the tooltip.
+      tooltip.setAttribute('aria-hidden', 'true');
     }
     return append(row, append(wrap, icon, tooltip));
   }
@@ -1875,7 +1871,7 @@
     var item = el('details', 'item ' + kind);
     if (score.fixtures) item.setAttribute('data-rule', score.rule.id);
     var summary = el('summary', 'top');
-    var names = append(el('span', 'name-block'), ruleNameRow(score.rule, true), el('span', 'rule-desc phone-desc', score.rule.desc));
+    var names = append(el('span', 'name-block'), ruleNameRow(score.rule, true), el('span', 'rule-desc', score.rule.desc));
     append(summary, names, contributionNode(score.total, score.share, score.count));
     var body = append(el('div', 'item-body'));
     if (score.share !== null) body.appendChild(el('div', 'desc', 'Raw score change ' + signed(score.total) + '.'));
@@ -2266,6 +2262,8 @@
   function stripCell(opt, ctx, round) {
     var button = el('button', 'strip-cell');
     button.type = 'button';
+    button.tabIndex = -1;
+    button.setAttribute('data-rove', '');
     button.appendChild(el('span', 'strip-round', round.title.replace(/^Round\s*/, '')));
     var shown = ctx.visible(round.ids);
     if (!shown.length) {
@@ -2415,6 +2413,14 @@
     if (to === undefined) return null;
     return buttons[to < 0 ? last : to > last ? 0 : to];
   }
+  // Leaving the tabs puts the tab stop back on the open one, so Shift+Tab returns to it.
+  document.addEventListener('focusout', function (e) {
+    var list = e.target.closest ? e.target.closest('[role="tablist"]') : null;
+    if (!list || list.contains(e.relatedTarget)) return;
+    list.querySelectorAll('[role="tab"]').forEach(function (tab) {
+      tab.tabIndex = tab.getAttribute('aria-selected') === 'true' ? 0 : -1;
+    });
+  });
   document.addEventListener('keydown', function (e) {
     var group = e.target.closest ? e.target.closest('[role="tablist"], [role="radiogroup"]') : null;
     if (!group || e.altKey || e.ctrlKey || e.metaKey) return;

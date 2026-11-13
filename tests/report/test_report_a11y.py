@@ -1,7 +1,7 @@
 """Accessibility of the report page (#41): an automated axe-core pass over every view,
 option, colour scheme and width, and the keyboard flows axe cannot judge.
 
-Shares the browser fixtures of `test_report_page.py` and skips under the same conditions.
+Uses the browser fixtures of `conftest.py` and skips under the same conditions.
 """
 
 from __future__ import annotations
@@ -14,13 +14,7 @@ import pytest
 sync_api = pytest.importorskip("playwright.sync_api")
 axe_api = pytest.importorskip("axe_playwright_python.sync_playwright")
 
-from test_report_page import (  # noqa: E402, F401  (fixtures)
-    DAY,
-    browser,
-    other_months_url,
-    report_url,
-    rules_url,
-)
+from report_support import DAY  # noqa: E402
 
 VIEWS = ("by-competition", "month-calendar", "combined-calendar", "combined-list", "club-timeline")
 VIEWPORTS = {"desktop": {"width": 1280, "height": 900}, "phone": {"width": 390, "height": 844}}
@@ -424,3 +418,40 @@ def test_edges_and_badges_differ_without_colour(kb):
     assert all(
         styles[k] not in ("none", "normal") for k in ("flag-good", "flag-cost", "flag-broken")
     )
+
+
+# -- review follow-ups ---------------------------------------------------------
+
+
+def test_a_club_scope_rule_row_prints_its_description_where_the_icon_cannot_be_focused(kb):
+    kb.select_option("#panel-1 .club-select", "club_a")
+    descriptions = kb.locator("#panel-1 .scope-card summary.top .rule-desc")
+    assert descriptions.count() > 0
+    for description in descriptions.all():
+        assert description.bounding_box()["width"] > 1
+        assert description.inner_text().strip()
+
+
+def test_leaving_the_tabs_puts_the_tab_stop_back_on_the_open_option(kb):
+    kb.focus("#tab-1")
+    kb.keyboard.press("ArrowRight")
+    assert _active(kb) == "tab-2"
+    kb.keyboard.press("Tab")
+    assert kb.evaluate("!document.activeElement.closest('[role=tablist]')")
+    kb.keyboard.press("Shift+Tab")
+    assert _active(kb) == "tab-1"
+    assert [kb.get_attribute(f"#tab-{n}", "tabindex") for n in (1, 2)] == ["0", "-1"]
+
+
+def test_the_season_strip_is_one_tab_stop_walked_with_the_arrow_keys(kb):
+    cells = kb.locator("#panel-1 .strip-cell:not([disabled])")
+    assert cells.count() >= 3
+    assert cells.evaluate_all("els => els.filter(e => e.tabIndex === 0).length") == 1
+    cells.first.focus()
+    kb.keyboard.press("ArrowRight")
+    assert cells.evaluate_all("els => els.indexOf(document.activeElement)") == 1
+    kb.keyboard.press("End")
+    assert cells.evaluate_all("(els) => els.indexOf(document.activeElement)") == cells.count() - 1
+    kb.keyboard.press("Home")
+    assert cells.evaluate_all("els => els.indexOf(document.activeElement)") == 0
+    assert cells.evaluate_all("els => els.filter(e => e.tabIndex === 0).length") == 1

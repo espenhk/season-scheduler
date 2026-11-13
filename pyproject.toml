@@ -35,9 +35,6 @@ ignore = [
     "B017",  # assert-raises-exception: tests assert bare Exception on purpose
 ]
 
-[tool.ruff.lint.per-file-ignores]
-# Shares test_report_page.py's fixtures by import, so each test's parameters shadow them.
-"tests/report/test_report_a11y.py" = ["F811"]
 
 [build-system]
 requires = ["poetry-core"]
