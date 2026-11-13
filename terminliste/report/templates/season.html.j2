@@ -352,7 +352,8 @@
   /* -- rule contributions as a share of the season's movement (#34) -- */
   .contrib { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .contrib .share-track { display: block; width: 64px; height: 8px; background: var(--tint-neutral); border-radius: 4px; overflow: hidden; }
-  .contrib .share-fill { display: block; height: 100%; min-width: 6px; border-radius: 4px; background: var(--muted); }
+  .contrib .share-fill { display: block; height: 100%; border-radius: 4px; background: var(--muted); }
+  .contrib.gain .share-fill, .contrib.cost .share-fill { min-width: 6px; }
   .contrib .share-text { font-weight: 700; font-size: 14px; min-width: 3.2em; text-align: right; }
   .contrib.gain .share-fill { background: var(--good); }
   .contrib.gain .share-text { color: var(--good-ink); }
@@ -1099,7 +1100,6 @@
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to the schedule options</a>
-{% set ns = namespace(tooltip_id=0) %}
 {# A rule's fixtures are listed by report.js from the fixture flags, so only a rule with some (`row.pinned`) gets a mount and a calendar link. #}
 {# Share as signed text; a non-zero share that rounds to 0 reads "<1%", never a bare "0%" (#34). #}
 {% macro share_text(row) %}
@@ -1135,7 +1135,6 @@
     <span class="name-block">
       <span class="name-row">
         <span class="name">{{ row.name }}</span>
-        {% set ns.tooltip_id = ns.tooltip_id + 1 %}
         {# Inside a <summary> an icon button would be a control within a control, and the description is printed just below anyway. #}
         <span class="info-wrap">
           {% if compact %}
@@ -1341,7 +1340,6 @@
       <div class="top">
         <span class="name-row">
           <span class="name">{{ row.name }}</span>
-          {% set ns.tooltip_id = ns.tooltip_id + 1 %}
           <span class="info-wrap">
             <button type="button" class="info-icon" aria-label="{{ row.name }} description">i</button>
             <span class="tooltip" aria-hidden="true">{{ row.description }}</span>
@@ -1423,7 +1421,6 @@
           <td>
             <span class="name-row">
               <b>{{ row.name }}</b>
-              {% set ns.tooltip_id = ns.tooltip_id + 1 %}
               <span class="info-wrap">
                 <button type="button" class="info-icon" aria-label="{{ row.name }} description">i</button>
                 <span class="tooltip" aria-hidden="true">{{ row.description }}</span>

@@ -455,3 +455,22 @@ def test_the_season_strip_is_one_tab_stop_walked_with_the_arrow_keys(kb):
     kb.keyboard.press("Home")
     assert cells.evaluate_all("els => els.indexOf(document.activeElement)") == 0
     assert cells.evaluate_all("els => els.filter(e => e.tabIndex === 0).length") == 1
+
+
+def test_a_neutral_row_draws_no_bar_but_a_small_gain_or_cost_keeps_a_visible_one(kb):
+    widths = kb.evaluate(
+        """() => {
+          const out = {};
+          for (const cls of ['neutral', 'gain', 'cost']) {
+            const box = document.createElement('span');
+            box.className = 'contrib ' + cls;
+            box.innerHTML = '<span class="share-track"><span class="share-fill" style="width:0%"></span></span>';
+            document.body.appendChild(box);
+            out[cls] = box.querySelector('.share-fill').getBoundingClientRect().width;
+            box.remove();
+          }
+          return out;
+        }"""
+    )
+    assert widths["neutral"] == 0
+    assert widths["gain"] >= 6 and widths["cost"] >= 6

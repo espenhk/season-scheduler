@@ -1822,23 +1822,20 @@
     return append(box, button);
   }
 
-  // The rule's name with its description on hover, as the server draws it. Inside a <summary> the
-  // icon is a picture only (a button there is a control within a control) and the description is
-  // text on the row.
+  // The rule's name with its description on hover. The description is also printed beside the name,
+  // so the tooltip is hidden from speech; inside a <summary> the icon is a picture, not a button.
   function ruleNameRow(rule, inSummary) {
     var row = el('span', 'name-row');
     row.appendChild(el('span', 'name', ruleName(rule)));
     var wrap = el('span', 'info-wrap');
     var icon = el(inSummary ? 'span' : 'button', 'info-icon', 'i');
     var tooltip = el('span', 'tooltip', rule.desc);
+    tooltip.setAttribute('aria-hidden', 'true');
     if (inSummary) {
       icon.setAttribute('aria-hidden', 'true');
-      tooltip.setAttribute('aria-hidden', 'true');
     } else {
       icon.type = 'button';
       icon.setAttribute('aria-label', ruleName(rule) + ' description');
-      // The description is text beside the name, so it is not also read from the tooltip.
-      tooltip.setAttribute('aria-hidden', 'true');
     }
     return append(row, append(wrap, icon, tooltip));
   }
