@@ -2584,9 +2584,11 @@ def test_the_round_folds_follow_a_viewport_crossing_600px(phone):
     body = _view(phone, "by-competition")
     assert body.locator(".round.collapsible").count() == 3
     phone.set_viewport_size({"width": 1280, "height": 900})
+    phone.wait_for_function("!document.querySelector('#panel-1 .round.collapsible')")  # the redraw is async
     assert body.locator(".round.collapsible").count() == 0
     assert body.locator(".round .fixtures:visible").count() == 3
     phone.set_viewport_size({"width": 390, "height": 844})
+    phone.wait_for_function("document.querySelector('#panel-1 .round.collapsible')")
     assert body.locator(".round.collapsible").count() == 3
     assert body.locator(".round .fixtures:visible").count() == 0
 
