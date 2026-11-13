@@ -4,27 +4,101 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }}</title>
+<meta name="description" content="{{ description }}">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{ title }}">
+<meta property="og:description" content="{{ description }}">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231e8449'/%3E%3Crect x='6' y='9' width='20' height='17' rx='2' fill='%23fff'/%3E%3Crect x='6' y='9' width='20' height='5' rx='2' fill='%23145a32'/%3E%3Cpath d='M10 17h4v3h-4zM18 17h4v3h-4zM10 22h4v2h-4z' fill='%231e8449'/%3E%3C/svg%3E">
 <style>
   /* Global: the page's own `display` rules (grids, flex rows) would otherwise win over the hidden attribute. */
   [hidden] { display: none !important; }
   :root {
+    color-scheme: light dark;
     --bg: #f7f7f5;
     --panel: #ffffff;
     --ink: #1c1c1a;
-    --muted: #6b6b66;
+    --ink-2: #45453f;
+    --muted: #595953;
     --line: #e0e0da;
     --good: #1e8449;
     --bad: #c0392b;
     --warn: #b9770e;
-    --accent: #2471a3;
+    --accent: #1d5f8a;
     /* Text in the cost colour: --warn stays for edges, this one clears 4.5:1 on the panel and page. */
     --warn-ink: #94620a;
+    --good-ink: #14653a;
+    --bad-ink: #a52e22;
+    /* Borders of form controls and other boundaries that must read at 3:1; --line is only a divider. */
+    --control-line: #85857f;
     --panel-pad: 24px;
+    /* Surfaces and tints: every fill the page uses is a variable, so the dark theme only re-states these. */
+    --surface: #fcfcfb;
+    --surface-2: #f6f6f3;
+    --tint-neutral: #eeeee9;
+    --tint-accent: #eaf2f8;
+    --tint-good: #f1f9f4;
+    --tint-good-strong: #e8f6ee;
+    --tint-warn: #fdf7ec;
+    --tint-warn-strong: #fbefd5;
+    --tint-bad: #fdf2f0;
+    --tint-bad-strong: #fbe6e3;
+    --good-line: #bfe0cc;
+    --warn-line: #ecd199;
+    --bad-line: #f2c6c0;
+    --flash: #ffd9a8;
+    /* Text on a solid --ink / --accent / --bad fill, and the tooltip's own dark box. */
+    --on-ink: #ffffff;
+    --on-ink-muted: #c9c9c4;
+    --on-accent: #ffffff;
+    --on-bad: #ffffff;
+    --tip-bg: #1c1c1a;
+    --tip-fg: #ffffff;
+    --tip-muted: #c9c9c4;
+    /* A thin ring on club swatches: two navies, or a pale yellow on white, stay apart. */
+    --swatch-ring: rgba(0, 0, 0, 0.5);
+  }
+  @media screen and (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413;
+      --panel: #1e1e1c;
+      --ink: #ecece8;
+      --ink-2: #c8c8c2;
+      --muted: #aeaea7;
+      --line: #3b3b36;
+      --good: #4fbf7f;
+      --bad: #ef7a6d;
+      --warn: #d9a03a;
+      --accent: #5aa9dd;
+      --warn-ink: #e6b04c;
+      --good-ink: #6fd39a;
+      --bad-ink: #ef7a6d;
+      --control-line: #85857e;
+      --surface: #242422;
+      --surface-2: #2a2a27;
+      --tint-neutral: #343430;
+      --tint-accent: #1d3040;
+      --tint-good: #1b2b22;
+      --tint-good-strong: #1f3a2a;
+      --tint-warn: #302817;
+      --tint-warn-strong: #3d3018;
+      --tint-bad: #321e1b;
+      --tint-bad-strong: #4a2622;
+      --good-line: #2f5a41;
+      --warn-line: #5d4a22;
+      --bad-line: #5e2d28;
+      --flash: #5a4120;
+      --on-ink: #1c1c1a;
+      --on-ink-muted: #55554f;
+      --on-accent: #0c1a25;
+      --on-bad: #2a0d09;
+      --tip-bg: #2e2e2a;
+      --tip-fg: #f2f2ee;
+      --tip-muted: #b4b4ad;
+      --swatch-ring: rgba(255, 255, 255, 0.55);
+    }
   }
   * { box-sizing: border-box; }
-  /* `hidden` on <html> alone is taken by the viewport; on <body> too it would become a scroll container and break the sticky bar, hence `clip` there. */
-  html { overflow-x: hidden; }
-  body { overflow-x: clip; }
   /* --bar-h is the sticky controls bar's height, kept current by report.js, so every scroll target clears it. */
   html { --bar-h: 0px; scroll-padding-top: calc(var(--bar-h) + 8px); }
   body {
@@ -36,20 +110,25 @@
   .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 20px 80px; }
   header h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.01em; }
   header .sub { color: var(--muted); font-size: 14px; }
+  header .intro { margin: 8px 0 10px; max-width: 70ch; }
+  header .sub a { color: inherit; }
   .notes {
-    margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid var(--bad);
-    background: #fdf0ee; font-size: 14px;
+    margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid var(--warn);
+    background: var(--tint-warn); font-size: 14px;
   }
+  .notes.error { border-left-color: var(--bad); background: var(--tint-bad); }
+  details.generation { margin-top: 32px; }
   .warnings {
     margin: 16px 0 0; padding: 12px 14px; border-left: 3px solid var(--warn);
-    background: #fdf6ea; font-size: 14px;
+    background: var(--tint-warn); font-size: 14px;
   }
   .warnings div { margin: 2px 0; }
+  .warn-title { margin: 0 0 4px; font-size: 14px; }
   .hardbox {
     margin-top: 22px; padding: 16px 18px; border-radius: 8px;
-    border: 1px solid #f2c6c0; background: #fdf4f3;
+    border: 1px solid var(--bad-line); background: var(--tint-bad);
   }
-  .hardbox h3 { margin: 0 0 10px; font-size: 14px; color: var(--bad); text-transform: uppercase; letter-spacing: 0.05em; }
+  .hardbox h3 { margin: 0 0 10px; font-size: 14px; color: var(--bad-ink); text-transform: uppercase; letter-spacing: 0.05em; }
   .hardbox .item { border-left-color: var(--bad); }
 
   /* -- option tabs -- */
@@ -62,14 +141,14 @@
   .tab .score { color: var(--muted); font-weight: 400; margin-left: 8px; }
   .tab .tab-seed { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 8px; }
   .tab .tab-tag, .cmp-tag {
-    display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    display: inline-block; font-size: 12px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.04em; padding: 1px 7px; border-radius: 9px; margin-left: 8px;
-    background: #e8f6ee; color: #14653a; white-space: nowrap;
+    background: var(--tint-good-strong); color: var(--good-ink); white-space: nowrap;
   }
-  .tab[aria-selected="true"] { background: var(--ink); color: #fff; }
-  .tab[aria-selected="true"] .score { color: #c9c9c4; }
-  .tab[aria-selected="true"] .tab-seed { color: #c9c9c4; }
-  .tab[aria-selected="true"] .tab-tag { background: #ffffff; color: #14653a; }
+  .tab[aria-selected="true"] { background: var(--ink); color: var(--on-ink); }
+  .tab[aria-selected="true"] .score { color: var(--on-ink-muted); }
+  .tab[aria-selected="true"] .tab-seed { color: var(--on-ink-muted); }
+  .tab[aria-selected="true"] .tab-tag { background: var(--panel); color: var(--good-ink); }
 
   /* -- comparing the options (#35): a table of what each option scores per rule -- */
   .compare { margin: 28px 0 0; }
@@ -98,21 +177,21 @@
   }
   .cmp tbody + tbody tr:first-child th { border-top: 1px solid var(--line); }
   .cmp tr.cmp-section th {
-    background: #fafaf8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    background: var(--surface); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;
     color: var(--muted); font-weight: 700; padding: 6px 12px;
   }
   .cmp td.cmp-cell { text-align: right; font-variant-numeric: tabular-nums; }
   .cmp-val { font-weight: 500; }
   .cmp-sub { display: block; font-size: 12px; color: var(--muted); }
   .cmp-best {
-    display: inline-block; margin-left: 6px; font-size: 10.5px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.04em; color: #14653a; white-space: nowrap;
+    display: inline-block; margin-left: 6px; font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--good-ink); white-space: nowrap;
   }
-  .cmp td.is-best { background: #e8f6ee; }
+  .cmp td.is-best { background: var(--tint-good-strong); }
   .cmp td.is-best .cmp-val { font-weight: 800; }
   .cmp-tag-short { display: none; }
   /* Phones: the summaries move out of the narrow header cells into a list under the table. */
-  @media (max-width: 480px) {
+  @media (max-width: 600px) {
     .cmp th, .cmp td { padding: 8px 6px; }
     .cmp-measure { width: 34%; }
     .cmp .cmp-what { display: none; }
@@ -123,17 +202,25 @@
     .cmp-phone-summary li { margin: 4px 0; }
   }
   .cmp-quiet { margin: 10px 0 0; }
-  @media (min-width: 481px) { .cmp-phone-summary { display: none; } }
+  @media (min-width: 601px) { .cmp-phone-summary { display: none; } }
   .cmp-diffs { margin-top: 12px; }
   .cmp-diff { margin-top: 6px; }
   .cmp-diff summary { font-size: 14px; }
   .cmp-list { margin: 6px 0 0; padding-left: 18px; font-size: 13.5px; }
   .cmp-list li { margin: 2px 0; }
   .cmp-date { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 4px; }
-  .sr-only {
+  /* A rule's description stays in the page for assistive technology where it is not drawn (#41). */
+  .sr-only, .phone-desc {
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
     clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
   }
+  .skip-link {
+    position: absolute; left: 8px; top: -64px; z-index: 40; padding: 8px 14px; border-radius: 6px;
+    background: var(--ink); color: var(--on-ink); font-weight: 600; text-decoration: none;
+  }
+  .skip-link:focus { top: 8px; }
+  main:focus { outline: none; }
+  :where(a, button, summary, select, input, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .panel {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: 0 8px 8px 8px; padding: var(--panel-pad);
@@ -148,8 +235,8 @@
     font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 20px;
     text-transform: uppercase; letter-spacing: 0.04em;
   }
-  .badge.ok { background: #e4f3ea; color: var(--good); }
-  .badge.fail { background: #fbe6e3; color: var(--bad); }
+  .badge.ok { background: var(--tint-good-strong); color: var(--good-ink); }
+  .badge.fail { background: var(--tint-bad-strong); color: var(--bad-ink); }
 
   .headlines { display: flex; gap: 28px; margin: 20px 0 4px; flex-wrap: wrap; }
   .headline .v { font-size: 24px; font-weight: 700; }
@@ -168,23 +255,24 @@
      gets padding from summary.top/.item-body instead, further down. */
   .item:not(details) { padding: 8px 0 8px 12px; }
   .item.up { border-left-color: var(--good); }
-  .item.down { border-left-color: var(--bad); }
+  /* Cost edges are dashed and upside edges solid, so the two differ without colour (#41). */
+  .item.down { border-left-color: var(--bad); border-left-style: dashed; }
   .item .top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
   details.item > summary.top { cursor: pointer; padding: 8px 8px 8px 4px; list-style: none; }
   details.item > summary.top::-webkit-details-marker { display: none; }
   details.item > summary.top::before {
-    content: '▸'; display: inline-block; width: 12px; color: var(--muted);
+    content: '▸'; display: inline-block; width: 12px; flex: none; color: var(--muted);
     font-size: 10px; transition: transform 0.12s ease;
   }
   details.item[open] > summary.top::before { transform: rotate(90deg); }
   details.item > summary.top .name-block { margin-right: auto; min-width: 0; display: flex; flex-direction: column; }
   .rule-desc { color: var(--muted); font-size: 12.5px; line-height: 1.35; margin-top: 2px; }
   .coverage { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; margin-top: 1px; }
-  .gain-text { color: var(--good); }
-  .cost-text { color: var(--bad); }
-  .split-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: #eeeee9; margin: 10px 0 6px; max-width: 480px; }
+  .gain-text { color: var(--good-ink); }
+  .cost-text { color: var(--bad-ink); }
+  .split-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--tint-neutral); margin: 10px 0 6px; max-width: 600px; }
   .split-gain { display: block; height: 100%; background: var(--good); }
-  .split-cost { display: block; height: 100%; background: var(--bad); }
+  .split-cost { display: block; height: 100%; background: var(--bad) repeating-linear-gradient(135deg, transparent 0 3px, var(--tint-bad) 3px 6px); }
   .all-soft { margin-top: 22px; }
   .all-soft > summary { cursor: pointer; color: var(--accent); font-size: 13.5px; font-weight: 600; }
   .all-soft .soft-sum { font-size: 13.5px; margin: 10px 0 0; }
@@ -192,15 +280,16 @@
   .item.compact .name-block { margin-right: auto; min-width: 0; display: flex; flex-direction: column; }
   .all-soft .neutral-list { font-size: 13px; color: var(--muted); margin: 0; }
   .hard-ok { margin: 8px 0 10px; font-size: 13px; }
-  .hard-ok > summary { cursor: pointer; color: var(--good); font-weight: 600; }
-  @media (max-width: 480px) { .col-extra, .col-type { display: none; } }
+  .hard-ok > summary { cursor: pointer; color: var(--good-ink); font-weight: 600; }
+  .legend-dots, .key-short, .round-tools { display: none; }
+  .round-toggle { all: unset; }
   .item-body { padding: 0 8px 10px 16px; }
   .item .name { font-weight: 600; font-size: 14px; }
   .item .delta { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; white-space: nowrap; }
-  .up .delta { color: var(--good); }
-  .down .delta { color: var(--bad); }
+  .up .delta { color: var(--good-ink); }
+  .down .delta { color: var(--bad-ink); }
   .desc { color: var(--muted); font-size: 13px; margin-top: 2px; }
-  .examples, .occurrences { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: #45453f; }
+  .examples, .occurrences { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); }
   .examples li, .occurrences li { margin: 2px 0; }
   .occurrences .occ-count { color: var(--muted); font-variant-numeric: tabular-nums; }
   .more { color: var(--muted); font-size: 12px; font-style: italic; }
@@ -218,20 +307,20 @@
     border: none; border-radius: 50%; background: var(--line); color: var(--muted);
     font: 700 10px/1 -apple-system, BlinkMacSystemFont, sans-serif; cursor: pointer;
   }
-  .info-icon:hover { background: var(--accent); color: #fff; }
-  .info-icon:focus-visible { background: var(--accent); color: #fff; outline: 2px solid var(--accent); outline-offset: 2px; }
+  .info-icon:hover { background: var(--accent); color: var(--on-accent); }
+  .info-icon:focus-visible { background: var(--accent); color: var(--on-accent); outline: 2px solid var(--accent); outline-offset: 2px; }
   .tooltip {
     position: fixed; z-index: 20;
     width: max-content; max-width: min(280px, 78vw);
     overflow-wrap: break-word; word-break: break-word;
-    background: var(--ink); color: #fff; padding: 8px 10px; border-radius: 6px;
-    font: 400 12.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--tip-bg); color: var(--tip-fg); padding: 8px 10px; border-radius: 6px;
+    font: 400 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
     opacity: 0; visibility: hidden; transform: translateY(-4px); pointer-events: none;
     transition: opacity 0.12s ease, transform 0.12s ease;
   }
   .info-wrap:hover .tooltip,
-  .info-wrap:focus-within .tooltip,
+  .info-wrap:has(> .info-icon:focus-visible) .tooltip,
   .info-wrap.open .tooltip,
   .tooltip.show {
     opacity: 1; visibility: visible; transform: translateY(0); pointer-events: auto;
@@ -244,33 +333,34 @@
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .kind { font-size: 11px; padding: 2px 7px; border-radius: 4px; background: #eeeee9; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .kind.hard { background: #eef4fa; color: var(--accent); }
-  tr.violated td { background: #fdf4f3; }
+  .kind { font-size: 12px; padding: 2px 7px; border-radius: 4px; background: var(--tint-neutral); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .kind.hard { background: var(--tint-accent); color: var(--accent); }
+  tr.violated td { background: var(--tint-bad); }
 
   /* -- search difficulty (issue #34) -- */
   .search-stats { margin-top: 16px; }
   .search-stats > summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .difficulty-pill {
-    font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 700;
+    font-size: 12px; padding: 2px 8px; border-radius: 10px; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.04em;
   }
-  .difficulty-easy { background: #e8f6ee; color: var(--good); }
-  .difficulty-moderate { background: #fdf6ea; color: var(--warn); }
-  .difficulty-hard { background: #fdf0ee; color: var(--bad); }
+  .difficulty-easy { background: var(--tint-good-strong); color: var(--good-ink); }
+  .difficulty-moderate { background: var(--tint-warn); color: var(--warn-ink); }
+  .difficulty-hard { background: var(--tint-bad); color: var(--bad-ink); }
   .search-stats .desc { margin-top: 6px; }
 
   /* -- rule contributions as a share of the season's movement (#34) -- */
   .contrib { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .contrib .share-track { display: block; width: 64px; height: 8px; background: #eeeee9; border-radius: 4px; overflow: hidden; }
+  .contrib .share-track { display: block; width: 64px; height: 8px; background: var(--tint-neutral); border-radius: 4px; overflow: hidden; }
   .contrib .share-fill { display: block; height: 100%; border-radius: 4px; background: var(--muted); }
+  .contrib.gain .share-fill, .contrib.cost .share-fill { min-width: 6px; }
   .contrib .share-text { font-weight: 700; font-size: 14px; min-width: 3.2em; text-align: right; }
   .contrib.gain .share-fill { background: var(--good); }
-  .contrib.gain .share-text { color: var(--good); }
-  .contrib.cost .share-fill { background: var(--bad); }
-  .contrib.cost .share-text { color: var(--bad); }
+  .contrib.gain .share-text { color: var(--good-ink); }
+  .contrib.cost .share-fill { background: var(--bad) repeating-linear-gradient(135deg, transparent 0 3px, var(--tint-bad) 3px 6px); }
+  .contrib.cost .share-text { color: var(--bad-ink); }
   .raw { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-  @media (max-width: 480px) {
+  @media (max-width: 600px) {
     .contrib { gap: 6px; }
     .contrib .share-track { width: 36px; }
     .contrib .share-text { min-width: 0; font-size: 13px; }
@@ -282,14 +372,14 @@
 
   /* -- fairness across teams -- */
   .fairness-row { margin: 14px 0 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; }
-  .fairness-row.flagged { border-color: #f0cf98; background: #fdf8ef; }
+  .fairness-row.flagged { border-color: var(--warn-line); background: var(--tint-warn); }
   .fairness-row .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   .fairness-row .fname { font-weight: 600; font-size: 13.5px; }
-  .fairness-row .flag { font-size: 11.5px; color: var(--warn); font-weight: 700; }
+  .fairness-row .flag { font-size: 12px; color: var(--warn-ink); font-weight: 700; }
   .fairness-bars { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; }
   .fairness-bar { display: grid; grid-template-columns: 150px 1fr 28px; align-items: center; gap: 8px; font-size: 12.5px; }
   .fairness-bar .flabel { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .fairness-bar .ftrack { display: block; background: #eeeee9; border-radius: 4px; height: 8px; overflow: hidden; }
+  .fairness-bar .ftrack { display: block; background: var(--tint-neutral); border-radius: 4px; height: 8px; overflow: hidden; }
   .fairness-bar .ffill { display: block; background: var(--accent); height: 100%; border-radius: 4px; }
   .fairness-bar .fcount { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
 
@@ -307,8 +397,8 @@
   .bar-summary { grid-area: sum; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; min-width: 0; }
   .bar-opt { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; }
   .bar-score { font-weight: 700; font-size: 16px; font-variant-numeric: tabular-nums; }
-  .bar-score small { font-size: 11.5px; font-weight: 400; color: var(--muted); }
-  .bar-summary .badge { font-size: 10.5px; padding: 2px 8px; }
+  .bar-score small { font-size: 12px; font-weight: 400; color: var(--muted); }
+  .bar-summary .badge { font-size: 12px; padding: 2px 8px; }
   .bar-actions { grid-area: actions; display: flex; gap: 6px; align-items: center; }
   .bar-btn {
     font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap;
@@ -323,10 +413,10 @@
   .bar-chips { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
   .chip {
     font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; max-width: 100%;
-    border: 1px solid var(--accent); background: #eaf2f8; color: var(--accent);
+    border: 1px solid var(--accent); background: var(--tint-accent); color: var(--accent);
     padding: 2px 10px; border-radius: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .chip:hover { background: var(--accent); color: #fff; }
+  .chip:hover { background: var(--accent); color: var(--on-accent); }
   /* Competitions shown: a pressed button carries a tick as well as its tint. */
   .kind-filter { display: flex; flex-wrap: nowrap; gap: 4px; align-items: center; font-size: 12.5px; }
   .kind-label { color: var(--muted); font-weight: 600; margin-right: 2px; }
@@ -336,7 +426,7 @@
   }
   /* The clear chip is for a phone with Filters closed; there the Show buttons are out of sight. */
   .kind-clear { display: none; }
-  @media (max-width: 480px) { .controls:not(.filters-open) .kind-clear:not([hidden]) { display: inline-block; } }
+  @media (max-width: 600px) { .controls:not(.filters-open) .kind-clear:not([hidden]) { display: inline-block; } }
   /* The line above a view that names what is hidden, and its button. */
   .kind-hint { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
   .kind-hint-btn {
@@ -346,21 +436,27 @@
   .kind-hint-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .kind-hint[hidden] { display: none; }
   .kind-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .kind-btn[aria-pressed="true"] { border-color: var(--accent); background: #eaf2f8; color: var(--accent); }
+  .kind-btn[aria-pressed="true"] { border-color: var(--accent); background: var(--tint-accent); color: var(--accent); }
   .kind-btn[aria-pressed="true"]::before { content: "✓ "; }
   .kind-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .chip[hidden] { display: none; }
   .jump-cal { margin-left: auto; align-self: center; }
   .legend-wrap { display: contents; }
-  .legend-panel {
+  .legend-panel, .export-panel {
     position: absolute; left: var(--panel-pad); top: calc(100% + 6px); width: min(720px, calc(100% - 2 * var(--panel-pad)));
     max-height: min(70vh, 520px); overflow-y: auto; padding: 4px 14px 14px;
     background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
   }
-  .legend-panel[hidden] { display: none; }
-  .legend-panel h4 { margin: 12px 0 0; font-size: 12.5px; }
+  .legend-panel[hidden], .export-panel[hidden] { display: none; }
+  .export-panel h4 { margin: 12px 0 0; font-size: 13px; }
+  .legend-panel h4 { margin: 12px 0 0; font-size: 13px; }
   .legend-panel .legend { margin-top: 8px; }
   .legend-panel .flag-legend { margin-top: 0; }
+  .export-panel { width: min(440px, calc(100% - 2 * var(--panel-pad))); }
+  .export-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+  .export-actions a.bar-btn { text-decoration: none; display: inline-block; }
+  .export-actions .bar-btn:disabled { opacity: 0.5; cursor: default; }
+  .export-note:empty { display: none; }
   .panel[data-current-view="month-calendar"] .legend-cards { display: none; }
   .view-toggle { grid-area: views; display: flex; gap: 6px; flex-wrap: wrap; justify-self: start; min-width: 0; max-width: 100%; }
   .view-btn {
@@ -368,10 +464,10 @@
     padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 12.5px; font-weight: 600;
   }
   .view-short { display: none; }
-  .view-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .view-btn.active { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
   .club-filter { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
   .club-filter select {
-    font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line);
+    font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--control-line);
     background: var(--panel); color: var(--ink);
   }
 
@@ -380,7 +476,7 @@
   .lens-only:has(input:disabled) { opacity: 0.55; }
   .lens-caption {
     margin-top: 12px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
-    padding: 8px 12px; border-left: 3px solid var(--accent); background: #eaf2f8;
+    padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--tint-accent);
     border-radius: 0 6px 6px 0; font-size: 13px;
   }
   .lens-caption[hidden] { display: none; }
@@ -391,7 +487,7 @@
     border: 1px solid var(--accent); color: var(--accent); background: var(--panel);
     padding: 2px 10px; border-radius: 14px;
   }
-  .lens-link:hover { background: var(--accent); color: #fff; }
+  .lens-link:hover { background: var(--accent); color: var(--on-accent); }
   .lens-link:focus-visible, .occ-row:focus-visible,
   .lens-select:focus-visible, .lens-only input:focus-visible, .club-select:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 2px;
@@ -403,19 +499,19 @@
      so the state is not carried by colour alone. */
   .lens-dim { opacity: 0.5; }
   .fx.lens-hit, .day-row.lens-hit { box-shadow: 0 0 0 2px var(--accent); }
-  .day-row.lens-hit { background: #eaf2f8; }
-  .fx-row.lens-hit td { background: #eaf2f8; box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent); }
+  .day-row.lens-hit { background: var(--tint-accent); }
+  .fx-row.lens-hit td { background: var(--tint-accent); box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent); }
   .flag.lens-rule { outline: 2px solid var(--ink); outline-offset: 1px; }
-  .cal-day.lens-hit { border: 2px solid var(--accent); background: #eaf2f8; }
+  .cal-day.lens-hit { border: 2px solid var(--accent); background: var(--tint-accent); }
   .cal-day.lens-dim { opacity: 0.4; }
   .cal-hits {
-    font-size: 10.5px; font-weight: 700; line-height: 1; padding: 2px 5px; border-radius: 8px;
-    background: var(--accent); color: #fff;
+    font-size: 12px; font-weight: 700; line-height: 1; padding: 2px 5px; border-radius: 8px;
+    background: var(--accent); color: var(--on-accent);
   }
   /* Jump target: a ring that fades, so the eye finds the fixture after the scroll. */
   .flash { outline: 3px solid #d35400; outline-offset: 2px; animation: flash-fade 2.2s ease-out; }
-  .fx-row.flash td { background: #fde9cf; }
-  @keyframes flash-fade { 0% { background-color: #ffd9a8; } 100% { background-color: transparent; } }
+  .fx-row.flash td { background: var(--tint-warn-strong); }
+  @keyframes flash-fade { 0% { background-color: var(--flash); } 100% { background-color: transparent; } }
   @media (prefers-reduced-motion: reduce) { .flash { animation: none; } }
 
   /* A rule's fixtures, listed under the scorecard entry that names it. */
@@ -423,12 +519,12 @@
   .rule-fixtures { margin-top: 6px; }
   details.fx-list { margin-top: 6px; }
   details.fx-list > summary { font-size: 12.5px; font-weight: 600; color: var(--accent); }
-  .occ-summary { margin: 4px 0 6px; font-size: 12.5px; color: #45453f; }
-  .occ-groups { max-height: 380px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; background: #fcfcfb; }
+  .occ-summary { margin: 4px 0 6px; font-size: 12.5px; color: var(--ink-2); }
+  .occ-groups { max-height: 380px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
   .occ-groups:focus-visible { outline: 2px solid var(--accent); }
   details.occ-group { margin: 0; border-bottom: 1px solid var(--line); }
   details.occ-group:last-child { border-bottom: none; }
-  details.occ-group > summary { padding: 5px 10px; font-size: 13px; background: #f3f3ef; position: sticky; top: 0; }
+  details.occ-group > summary { padding: 5px 10px; font-size: 13px; background: var(--surface-2); position: sticky; top: 0; }
   .occ-groups ul { list-style: none; margin: 0; padding: 0; }
   .occ-row {
     display: grid; grid-template-columns: 74px minmax(110px, 150px) 1fr auto; gap: 2px 10px; width: 100%;
@@ -436,17 +532,17 @@
     background: none; border: none; border-top: 1px solid var(--line); padding: 5px 10px; cursor: pointer;
   }
   li:first-child > .occ-row { border-top: none; }
-  .occ-row:hover { background: #eaf2f8; }
+  .occ-row:hover { background: var(--tint-accent); }
   .occ-groups .occ-count { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 400; }
   .occ-date { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .occ-fx { font-weight: 600; }
-  .occ-detail { color: #45453f; min-width: 0; overflow-wrap: anywhere; }
+  .occ-detail { color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
   .occ-delta { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; text-align: right; }
-  .occ-delta.good { color: var(--good); }
-  .occ-delta.cost, .occ-delta.broken { color: var(--bad); }
+  .occ-delta.good { color: var(--good-ink); }
+  .occ-delta.cost, .occ-delta.broken { color: var(--bad-ink); }
   .occ-delta.none { color: var(--muted); font-weight: 400; }
   .tooltip.show { pointer-events: none; }
-  .tooltip .tt-hint { display: block; margin-top: 5px; color: #c9c9c4; font-size: 11.5px; }
+  .tooltip .tt-hint { display: block; margin-top: 5px; color: var(--tip-muted); font-size: 12px; }
 
   /* -- calendar -- */
   .cal-wrap { overflow-x: auto; }
@@ -464,7 +560,7 @@
   .comp-name { display: inline; font-size: 16px; margin: 0; }
   .comp .meta { display: block; color: var(--muted); font-size: 13px; margin: 2px 0 0 1em; }
   .group-head {
-    font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
     margin: 22px 0 0;
   }
   .comp-jump { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
@@ -481,21 +577,21 @@
   .round .rlabel b { display: block; color: var(--ink); font-size: 14px; }
   /* Round and week totals: the label's edge takes the net's colour, the text says the figure. */
   .round .rlabel.rl-good { border-left: 3px solid var(--good); padding-left: 8px; }
-  .round .rlabel.rl-cost { border-left: 3px solid var(--warn); padding-left: 8px; }
+  .round .rlabel.rl-cost { border-left: 3px dashed var(--warn); padding-left: 8px; }
   .rsum { margin-top: 3px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .rsum .rnet { font-weight: 700; color: var(--ink); }
-  .rsum .rnet.good { color: var(--good); }
+  .rsum .rnet.good { color: var(--good-ink); }
   .rsum .rnet.cost { color: var(--warn-ink); }
   .rtag {
     display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px;
-    font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
+    font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
   }
   .fixtures { display: flex; flex-wrap: wrap; gap: 8px; }
   /* A day heading takes a whole line of the card flow: "Sun 15 Mar — 14:00 ×4 · 18:00 ×1". */
   .day-head { flex: 0 0 100%; margin: 12px 0 0; font-size: 12.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
   .fixtures > .day-head:first-child { margin-top: 0; }
   /* A cup or European round date: one chip that opens to the teams. */
-  .fx-group { flex: 0 0 100%; margin: 0; border: 1px solid var(--line); border-radius: 7px; background: #fcfcfb; }
+  .fx-group { flex: 0 0 100%; margin: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
   .fx-group > summary { list-style: none; cursor: pointer; padding: 7px 12px; font-size: 13px; font-weight: 600; }
   .fx-group > summary::-webkit-details-marker { display: none; }
   .fx-group > summary::before { content: "▸  "; color: var(--muted); }
@@ -509,34 +605,46 @@
   .fx {
     display: inline-flex; flex-direction: column; align-items: flex-start; gap: 5px;
     border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 7px;
-    padding: 7px 12px 7px 10px; font-size: 13px; background: #fcfcfb; white-space: nowrap;
+    padding: 7px 12px 7px 10px; font-size: 13px; background: var(--surface); white-space: nowrap;
   }
-  .fx-main { display: inline-flex; align-items: center; gap: 5px; }
+  /* The card's one control: the whole line, announced as a sentence, opens the detail (#41). */
+  .fx-main, .tl-main {
+    font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; text-align: left; cursor: pointer;
+    border-radius: 4px;
+  }
+  .fx-main { display: block; }
+  .fx-visual { display: inline-flex; align-items: center; gap: 5px; }
+  .tl-main { display: block; width: 100%; }
+  .day-main { display: contents; }
   .fx .d { color: var(--muted); font-variant-numeric: tabular-nums; }
   .fx .h { font-weight: 600; }
   .fx .vs { color: var(--muted); }
   /* Card edge by net points: green gains, amber costs, red a broken hard rule. */
   .edge-good { border-left-color: var(--good); }
-  .edge-cost { border-left-color: var(--warn); }
-  .edge-broken { border-left-color: var(--bad); }
-  .fx.edge-good { background: #f1f9f4; }
-  .fx.edge-cost { background: #fdf8ee; }
-  .fx.edge-broken { background: #fdf0ee; }
+  .edge-cost { border-left-color: var(--warn); border-left-style: dashed; }
+  .edge-broken { border-left-color: var(--bad); border-left-style: double; }
+  .fx.edge-good { background: var(--tint-good); }
+  .fx.edge-cost { background: var(--tint-warn); }
+  .fx.edge-broken { background: var(--tint-bad); }
   .fx-row td:first-child, .day-row { border-left: 4px solid transparent; }
   .fx-row.edge-good td:first-child, .day-row.edge-good { border-left-color: var(--good); }
-  .fx-row.edge-cost td:first-child, .day-row.edge-cost { border-left-color: var(--warn); }
-  .fx-row.edge-broken td:first-child, .day-row.edge-broken { border-left-color: var(--bad); }
+  .fx-row.edge-cost td:first-child, .day-row.edge-cost { border-left-color: var(--warn); border-left-style: dashed; }
+  .fx-row.edge-broken td:first-child, .day-row.edge-broken { border-left-color: var(--bad); border-left-style: double; }
 
   /* Scoring badges: one per rule a fixture triggers. Also the tooltip anchor. */
   .flags { display: flex; flex-wrap: wrap; gap: 4px; }
   .flag {
-    font: 600 10.5px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0.01em;
+    font: 600 12px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0.01em;
     padding: 0 7px; border-radius: 9px; border: 1px solid transparent; cursor: pointer;
     white-space: nowrap; text-align: left; text-transform: none;
   }
-  .flag-good { background: #e4f3ea; color: var(--good); border-color: #bfe0cc; }
-  .flag-cost { background: #fbefd5; color: #8a5a06; border-color: #ecd199; }
-  .flag-broken { background: var(--bad); color: #fff; }
+  .flag-good { background: var(--tint-good-strong); color: var(--good-ink); border-color: var(--good-line); }
+  .flag-cost { background: var(--tint-warn-strong); color: var(--warn-ink); border-color: var(--warn-line); }
+  .flag-broken { background: var(--bad); color: var(--on-bad); }
+  /* A sign in front of each badge, so good, cost and broken differ without colour; the alt text keeps it out of speech. */
+  .flag-good::before { content: "+ "; content: "+ " / ""; }
+  .flag-cost::before { content: "\2212  "; content: "\2212  " / ""; }
+  .flag-broken::before { content: "! "; content: "! " / ""; }
   .flag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .tooltip { white-space: normal; text-align: left; }
   .tooltip .tt-head { display: block; font-weight: 700; }
@@ -546,8 +654,8 @@
     /* Short names (e.g. "NM(m)") carry their own deliberate case, so no
        text-transform here — unlike a full competition name, which would
        read fine either way. */
-    font-size: 10px; padding: 1px 6px; border-radius: 10px;
-    background: var(--comp-bg, #eeeee9); color: var(--comp-ink, var(--comp-fg, var(--muted))); letter-spacing: 0.03em;
+    font-size: 12px; padding: 1px 6px; border-radius: 10px;
+    background: var(--comp-bg, var(--tint-neutral)); color: var(--comp-ink, var(--comp-fg, var(--muted))); letter-spacing: 0.03em;
   }
   /* Home = square, away = diamond, both filled with the club's own colour
      (data/clubs.yml). Fixed pixel sizes rather than a text glyph — a
@@ -555,8 +663,9 @@
      surrounding text depending on the reader's font, which is what made
      some fixtures look like they had "bigger text" than others. */
   .swatch, .swatch-diamond, .swatch-neutral {
-    display: inline-block; width: 8px; height: 8px;
+    display: inline-block; width: 9px; height: 9px;
     vertical-align: middle; flex: none; background: var(--club, var(--ink));
+    box-shadow: 0 0 0 1px var(--swatch-ring);
   }
   /* A European leg whose home/away is not yet confirmed. */
   .swatch-dim { opacity: 0.4; }
@@ -565,7 +674,7 @@
   /* Combined list: header stays under the bar; a date row heads each day; chip rows open to teams. */
   .list-tools { margin: 12px 0 8px; }
   .list-filter {
-    font: inherit; font-size: 13px; width: min(340px, 100%); padding: 5px 10px; border: 1px solid var(--line);
+    font: inherit; font-size: 13px; width: min(340px, 100%); padding: 5px 10px; border: 1px solid var(--control-line);
     border-radius: 14px; background: var(--panel); color: var(--ink);
   }
   .fx-table { border-collapse: separate; border-spacing: 0; }
@@ -573,7 +682,7 @@
     position: sticky; top: var(--bar-h); z-index: 2; background: var(--panel); box-shadow: inset 0 -1px 0 var(--line);
   }
   .fx-table .date-row th {
-    text-align: left; padding: 10px 6px 4px; font-size: 13px; color: var(--ink); background: #f6f6f3;
+    text-align: left; padding: 10px 6px 4px; font-size: 13px; color: var(--ink); background: var(--surface-2);
     border-bottom: 1px solid var(--line);
   }
   .fx-table .fx-time, .fx-table .fx-round { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--muted); }
@@ -581,7 +690,7 @@
   .fx-group-row td { padding: 6px 0 2px; }
   .fx-group-toggle {
     font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; color: var(--ink);
-    border: 1px solid var(--line); background: #fcfcfb; padding: 5px 12px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--surface); padding: 5px 12px; border-radius: 7px;
   }
   .fx-group-toggle::before { content: "▸  "; color: var(--muted); }
   .fx-group-toggle[aria-expanded="true"]::before { content: "▾  "; }
@@ -596,23 +705,23 @@
     border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 4px;
     vertical-align: middle;
   }
-  .edge-demo.edge-good { background: #f1f9f4; border-left-color: var(--good); }
-  .edge-demo.edge-cost { background: #fdf8ee; border-left-color: var(--warn); }
-  .edge-demo.edge-broken { background: #fdf0ee; border-left-color: var(--bad); }
-  .flag-legend { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
+  .edge-demo.edge-good { background: var(--tint-good); border-left-color: var(--good); }
+  .edge-demo.edge-cost { background: var(--tint-warn); border-left-color: var(--warn); border-left-style: dashed; }
+  .edge-demo.edge-broken { background: var(--tint-bad); border-left-color: var(--bad); border-left-style: double; }
+  .flag-legend { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
   .flag-legend ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px 24px; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); }
   .flag-legend li { display: flex; gap: 8px; align-items: baseline; }
   .flag-legend .flag { cursor: default; flex: none; }
-  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin: 14px 0 0; align-items: center; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin: 14px 0 0; align-items: center; }
   footer { margin-top: 40px; color: var(--muted); font-size: 12.5px; }
 
   /* -- month calendar (issue #77) -- */
   .month { margin-top: 26px; }
-  .month h4 { margin: 0 0 8px; font-size: 15px; }
+  .month h3 { margin: 0 0 8px; font-size: 15px; }
   .month-grid { display: flex; flex-direction: column; gap: 3px; min-width: 420px; }
   .month-grid-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
   .month-grid-head {
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
     text-align: center; padding-bottom: 2px;
   }
   .cal-day {
@@ -620,14 +729,14 @@
     gap: 4px; min-height: 52px; padding: 6px 2px; border: 1px solid var(--line); border-radius: 6px;
     background: var(--panel); color: var(--ink); font: inherit; cursor: pointer;
   }
-  .cal-day:hover, .cal-day:focus-visible { border-color: var(--accent); outline: none; }
-  .cal-day.selected { border-color: var(--accent); background: #eaf2f8; }
+  .cal-day:hover, .cal-day:focus-visible { border-color: var(--accent); }
+  .cal-day.selected { border-color: var(--accent); background: var(--tint-accent); }
   /* Days of the neighbouring months: space in the grid, nothing to tap. */
   .cal-day.cal-pad { border-color: transparent; background: none; }
   .cal-daynum { font-size: 12.5px; font-variant-numeric: tabular-nums; }
-  .cal-comps { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 5px; min-height: 8px; font-size: 10.5px; line-height: 1.2; }
+  .cal-comps { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 5px; min-height: 8px; font-size: 12px; line-height: 1.2; }
   .cal-comp { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
-  .cal-comp .cal-lbl { display: none; font-weight: 600; color: var(--comp-ink, var(--ink)); }
+  .cal-comp .cal-lbl { display: none; font-weight: 600; color: var(--ink); }
   .cal-comp .cal-n { color: var(--ink); }
   @media (min-width: 720px) { .cal-comp .cal-lbl { display: inline; } }
   .month-jump { display: flex; gap: 6px; overflow-x: auto; white-space: nowrap; padding: 2px 0 12px; }
@@ -635,9 +744,9 @@
     font: inherit; font-size: 12.5px; color: var(--ink); background: var(--panel);
     border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; cursor: pointer; flex: none;
   }
-  .month-jump button:hover, .month-jump button:focus-visible { border-color: var(--accent); outline: none; }
+  .month-jump button:hover, .month-jump button:focus-visible { border-color: var(--accent); }
   .other-dates { margin-top: 26px; }
-  .other-dates h4 { margin: 0 0 8px; font-size: 15px; }
+  .other-dates h3 { margin: 0 0 8px; font-size: 15px; }
   .other-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
   .other-month { min-width: 9.5em; font-size: 13px; font-weight: 600; }
   .other-chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -649,9 +758,9 @@
     font: inherit; font-size: 13px; color: var(--accent); background: var(--panel);
     border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer;
   }
-  .day-step button:hover:not(:disabled), .day-step button:focus-visible { border-color: var(--accent); outline: none; }
+  .day-step button:hover:not(:disabled), .day-step button:focus-visible { border-color: var(--accent); }
   .day-step button:disabled { color: var(--muted); cursor: default; }
-  .cal-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--comp-fg, var(--muted)); }
+  .cal-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--comp-fg, var(--muted)); box-shadow: 0 0 0 1px var(--swatch-ring); }
   .legend .cal-dot { margin-right: 5px; }
   .day-details {
     margin: 6px 0 4px; padding: 12px 14px; background: var(--panel);
@@ -668,10 +777,10 @@
   .day-row .d { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
   /* The count and the net each sit on their own line, so a narrow cell wraps nowhere. */
-  .cal-net { display: flex; flex-direction: column; align-items: center; font-size: 10.5px; line-height: 1.15; font-variant-numeric: tabular-nums; color: var(--muted); max-width: 100%; }
+  .cal-net { display: flex; flex-direction: column; align-items: center; font-size: 12px; line-height: 1.15; font-variant-numeric: tabular-nums; color: var(--muted); max-width: 100%; }
   .cal-count, .cal-value { white-space: nowrap; }
   .cal-value { font-weight: 600; }
-  .cal-value.good { color: var(--good); }
+  .cal-value.good { color: var(--good-ink); }
   .cal-value.cost { color: var(--warn-ink); }
 
   /* Season strip: one button per round; each league row scrolls inside itself. */
@@ -683,32 +792,32 @@
   .strip-cells { display: flex; gap: 2px; min-width: 0; overflow-x: auto; padding: 8px 4px 4px 0; }
   .strip-cell {
     position: relative; flex: 1 1 0; min-width: 30px; max-width: 46px; display: flex; flex-direction: column; align-items: center; gap: 1px;
-    padding: 3px 2px 4px; font: inherit; font-size: 11px; line-height: 1.2; color: var(--ink);
+    padding: 3px 2px 4px; font: inherit; font-size: 12px; line-height: 1.2; color: var(--ink);
     background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 5px; cursor: pointer;
   }
   .strip-cell:hover { border-color: var(--accent); }
   .strip-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .strip-cell.sc-good { border-left-color: var(--good); }
-  .strip-cell.sc-cost { border-left-color: var(--warn); }
+  .strip-cell.sc-cost { border-left-color: var(--warn); border-left-style: dashed; }
   .strip-cell.sc-cost .strip-net { color: var(--warn-ink); }
   .strip-cell:disabled { opacity: 0.4; cursor: default; }
   .strip-round { font-weight: 700; font-variant-numeric: tabular-nums; }
-  .strip-net { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .strip-cell.sc-good .strip-net { color: var(--good); }
+  .strip-net { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .strip-cell.sc-good .strip-net { color: var(--good-ink); }
   .strip-hard {
-    position: absolute; top: -6px; right: -6px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
-    background: var(--bad); color: #fff; font-size: 9.5px; font-weight: 700; line-height: 15px; text-align: center;
+    position: absolute; top: -8px; right: -8px; min-width: 17px; height: 17px; padding: 0 3px; border-radius: 9px;
+    background: var(--bad); color: var(--on-bad); font-size: 12px; font-weight: 700; line-height: 17px; text-align: center;
   }
 
   /* Combined list's score column, right-aligned so the signs line up. */
   .fx-score { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .fx-score.good { color: var(--good); font-weight: 600; }
+  .fx-score.good { color: var(--good-ink); font-weight: 600; }
   .fx-score.cost { color: var(--warn-ink); }
 
   /* -- club scope: the scorecard restated for one club -- */
   .scope-banner {
     display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between;
-    margin: 18px 0 0; padding: 8px 12px; border-left: 3px solid var(--accent); background: #eaf2f8;
+    margin: 18px 0 0; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--tint-accent);
     border-radius: 0 6px 6px 0; font-size: 13px;
   }
   .scope-text { flex: 1 1 280px; min-width: 0; }
@@ -717,7 +826,7 @@
     border: 1px solid var(--accent); color: var(--accent); background: var(--panel);
     padding: 2px 10px; border-radius: 14px;
   }
-  .scope-clear:hover { background: var(--accent); color: #fff; }
+  .scope-clear:hover { background: var(--accent); color: var(--on-accent); }
   .scope-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .scope-card .cols { margin-top: 14px; }
   .scope-breakdown { margin-top: 18px; }
@@ -734,21 +843,21 @@
     border: 1px solid var(--accent); color: var(--accent); background: var(--panel);
     padding: 3px 11px; border-radius: 14px;
   }
-  .tl-club-btn:hover { background: var(--accent); color: #fff; }
+  .tl-club-btn:hover { background: var(--accent); color: var(--on-accent); }
   .tl-club-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .tl-grid { --lanes: 2; margin-top: 12px; }
   .tl-head, .tl-row {
     display: grid; grid-template-columns: 96px repeat(var(--lanes), minmax(0, 1fr)); gap: 10px;
   }
-  .tl-head { font-size: 11.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .tl-head { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
   .tl-row { padding: 8px 0; border-bottom: 1px solid var(--line); align-items: start; }
-  .tl-row.tl-clash { background: #fbf1f0; }
+  .tl-row.tl-clash { background: var(--tint-bad); }
   .tl-date { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; font-size: 12.5px; }
   .tl-tag {
-    font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 4px;
-    background: #eeeee9; color: var(--ink); border: 1px solid var(--line);
+    font-size: 12px; font-weight: 600; padding: 1px 6px; border-radius: 4px;
+    background: var(--tint-neutral); color: var(--ink); border: 1px solid var(--line);
   }
-  .tl-tag-bad { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .tl-tag-bad { background: var(--bad); border-color: var(--bad); color: var(--on-bad); }
   .tl-cell { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
   .tl-cell:empty::before { content: "—"; color: var(--muted); font-size: 12.5px; }
   .tl-fx {
@@ -756,17 +865,77 @@
     background: var(--panel); border: 1px solid var(--line); border-left: 4px solid transparent; border-radius: 6px;
   }
   .tl-fx.edge-good { border-left-color: var(--good); }
-  .tl-fx.edge-cost { border-left-color: var(--warn); }
-  .tl-fx.edge-broken { border-left-color: var(--bad); }
+  .tl-fx.edge-cost { border-left-color: var(--warn); border-left-style: dashed; }
+  .tl-fx.edge-broken { border-left-color: var(--bad); border-left-style: double; }
+  .tl-visual { display: block; }
   .tl-top { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-  .tl-ha { font-size: 10.5px; font-weight: 700; padding: 0 4px; border: 1px solid var(--muted); border-radius: 3px; color: var(--muted); }
-  .tl-opp { font-weight: 600; overflow-wrap: anywhere; margin-top: 2px; }
-  .tl-gap { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+  .tl-ha { font-size: 12px; font-weight: 700; padding: 0 4px; border: 1px solid var(--muted); border-radius: 3px; color: var(--muted); }
+  .tl-opp { display: block; font-weight: 600; overflow-wrap: anywhere; margin-top: 2px; }
+  .tl-gap { display: block; font-size: 12px; color: var(--muted); margin-top: 1px; }
   .tl-fx .flags { margin-top: 4px; }
 
-  @media print { .controls { position: static; box-shadow: none; } .legend-wrap, .filters-toggle, .back-to-score, .jump-cal { display: none; } }
+  /* -- score gauge: where the 0-100 result sits, banded so 74 and 94 do not read alike (#39) -- */
+  .gauge { display: inline-flex; align-items: center; gap: 8px; align-self: center; }
+  .gauge-track { position: relative; display: block; width: 170px; height: 10px; border-radius: 5px; background: var(--tint-neutral); overflow: hidden; }
+  .gauge-fill { display: block; height: 100%; border-radius: 5px; background: var(--good); }
+  .gauge-fair .gauge-fill { background: var(--warn); }
+  .gauge-weak .gauge-fill { background: var(--bad); }
+  .gauge-track::before, .gauge-track::after { content: ""; position: absolute; top: 0; bottom: 0; width: 2px; background: var(--panel); }
+  .gauge-track::before { left: {{ band_fair }}%; }
+  .gauge-track::after { left: {{ band_strong }}%; }
+  .gauge-label { font-size: 13px; font-weight: 700; color: var(--good-ink); }
+  .gauge-fair .gauge-label { color: var(--warn-ink); }
+  .gauge-weak .gauge-label { color: var(--bad-ink); }
 
-  @media (max-width: 480px) {
+  /* -- the collapsed sections under the scorecard read as one set (#39) -- */
+  .section-list { margin-top: 26px; border: 1px solid var(--line); border-radius: 8px; padding: 0 16px; }
+  .section-list:not(:has(> details:not([hidden]))) { display: none; }
+  .section-list > details { margin: 0; }
+  .section-list > details + details { border-top: 1px solid var(--line); }
+  .section-list > details > summary { padding: 12px 0; }
+  .section-list > details[open] { padding-bottom: 14px; }
+  .section-list > details[open] > summary { padding-bottom: 6px; }
+  details.generation { border: 1px solid var(--line); border-radius: 8px; padding: 0 16px; }
+  details.generation > summary { padding: 12px 0; }
+  details.generation[open] { padding-bottom: 14px; }
+
+  /* -- weekday is the scheduling signal: bold, and boxed when it is not the league's preferred day (#39) -- */
+  .day-head .wd { font-weight: 800; color: var(--ink); }
+  .day-head .wd.off { color: var(--warn-ink); background: var(--tint-warn); border: 1px solid var(--warn-line); border-radius: 4px; padding: 0 5px; }
+  .fx-table .date-row .wd.off { color: var(--warn-ink); background: var(--tint-warn); border: 1px solid var(--warn-line); border-radius: 4px; padding: 0 5px; }
+
+  /* -- card detail: full team names and the venue, for touch and for anyone who does not hover (#39) -- */
+  .fx.has-detail, .tl-fx.has-detail { cursor: pointer; }
+  .fx-detail { display: block; white-space: normal; max-width: 34ch; font-size: 12px; line-height: 1.4; color: var(--ink-2); }
+  .fx-detail b { font-weight: 600; color: var(--ink); }
+  .tl-fx .fx-detail { max-width: none; margin-top: 4px; }
+  .ha-pill {
+    display: inline-block; font-size: 12px; font-weight: 700; line-height: 1.4; padding: 0 5px; border-radius: 3px;
+    border: 1px solid var(--muted); color: var(--ink-2); flex: none; text-decoration: none;
+  }
+  .ha-pill.home { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+  .abbr-key { margin-top: 12px; }
+  .abbr-key > summary { font-size: 13px; }
+  .abbr-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px 20px; grid-template-columns: repeat(auto-fill, minmax(min(230px, 100%), 1fr)); font-size: 13px; color: var(--muted); }
+  .abbr-list b { display: inline-block; min-width: 3.6em; color: var(--ink); }
+  .abbr-note { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+
+  @media print {
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { background: #fff; color: #000; }
+    .wrap { max-width: none; padding: 0; }
+    .panel { border: 0; padding: 0; }
+    /* The bar keeps the option's name and score; everything you press or filter by goes. */
+    .controls { position: static; display: block; margin: 16px 0 12px; padding: 6px 0; box-shadow: none; }
+    .bar-actions, .view-toggle, .bar-filters, .tabs, .season-strip, .jump-cal, .kind-hint, .lens-caption,
+    .scope-banner, .comp-jump, .list-tools, .day-step, .month-jump, .info-icon { display: none; }
+    .cal-wrap, .view-pane { overflow: visible; }
+    .comp > summary, .view-pane[data-view="combined-list"] thead th { position: static; }
+    .round, .fx, .fx-group, .tl-row, .month, .day-row, .fx-table tr, .day-detail { break-inside: avoid; }
+    .day-head, .comp > summary, .date-row { break-after: avoid; }
+  }
+
+  @media (max-width: 600px) {
     .round { grid-template-columns: 1fr; gap: 4px; }
     .fx { white-space: normal; max-width: 100%; }
     .fx-main { flex-wrap: wrap; }
@@ -804,11 +973,11 @@
     .strip-cell { flex: 0 0 auto; width: 40px; max-width: none; }
     .cal-net { font-size: 9.5px; }
     .fx-row td:first-child { border-left: none; }
-    .fx-row.lens-hit { background: #eaf2f8; box-shadow: inset 0 0 0 2px var(--accent); }
+    .fx-row.lens-hit { background: var(--tint-accent); box-shadow: inset 0 0 0 2px var(--accent); }
     .fx-row.lens-hit td { background: none; box-shadow: none; }
     .fx-row.edge-good { border-left-color: var(--good); }
-    .fx-row.edge-cost { border-left-color: var(--warn); }
-    .fx-row.edge-broken { border-left-color: var(--bad); }
+    .fx-row.edge-cost { border-left-color: var(--warn); border-left-style: dashed; }
+    .fx-row.edge-broken { border-left-color: var(--bad); border-left-style: double; }
     .fairness-bar { grid-template-columns: 110px 1fr 24px; }
     :root { --panel-pad: 12px; }
     .controls {
@@ -822,7 +991,7 @@
     .bar-summary .badge { text-transform: none; letter-spacing: 0; font-size: 11px; padding: 1px 6px; }
     .bar-actions { gap: 2px; }
     .bar-btn { padding: 3px 6px; font-size: 11.5px; }
-    .bar-btn-text, .legend-toggle .caret { display: none; }
+    .bar-btn-text, .legend-toggle .caret, .export-toggle .caret { display: none; }
     .controls.filters-open .bar-chips { display: none; }
     .filters-toggle { display: inline-block; }
     /* Short labels so all four views fit one row. */
@@ -843,6 +1012,92 @@
     .tl-fx { padding: 4px 5px; font-size: 12px; }
     .tl-date { font-size: 12px; }
     .tl-tag { font-size: 10px; }
+
+    /* -- phones (#40): the page opens on the month calendar; the rest is made compact -- */
+    .wrap { padding: 20px 12px 60px; }
+    .tabs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; margin-top: 20px; }
+    .tab { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 4px; font-size: 13px; line-height: 1.3; text-align: center; }
+    .tab .score, .tab .tab-tag { margin-left: 0; }
+    .tab .tab-seed { display: none; }
+    .tab .tab-tag { font-size: 11px; padding: 0 6px; }
+    .headlines { flex-direction: column; gap: 6px; margin-top: 14px; }
+    .headline { display: flex; align-items: baseline; gap: 10px; }
+    .headline .v { font-size: 20px; min-width: 3.2em; }
+    .scoreline { gap: 6px 14px; }
+    .total { font-size: 30px; }
+
+    /* Key button and what sits behind it */
+    .key-long { display: none; }
+    .key-short { display: inline; }
+    .month-legend { display: none; }
+    .panel[data-current-view="month-calendar"] .legend-dots { display: block; }
+    .legend-panel, .export-panel { left: 8px; width: calc(100% - 16px); max-height: min(70vh, 520px); }
+    .legend-panel .legend { gap: 6px 14px; }
+
+    /* Tap targets: info icons and day cells reach 44 x 44 px; the glyph stays small. */
+    .info-icon {
+      width: 44px; height: 44px; margin: -14px -12px -14px -8px; background: none; border-radius: 0; font-size: 0;
+      position: relative; z-index: 1; /* above the description line that follows */
+    }
+    .info-icon::before {
+      content: "i"; display: inline-flex; align-items: center; justify-content: center;
+      width: 18px; height: 18px; border-radius: 50%; background: var(--line); font-size: 11px;
+    }
+    .info-icon:hover, .info-icon:focus-visible { background: none; }
+    .info-icon:hover::before, .info-icon:focus-visible::before { background: var(--accent); color: var(--on-accent); }
+    .cal-day { min-height: 44px; }
+    .cal-day.other-date { min-height: 44px; padding: 4px 12px; }
+    .phone-desc {
+      position: static; width: auto; height: auto; margin: 2px 0 0; overflow: visible; clip: auto; white-space: normal;
+    }
+
+    /* Compact fixture rows: the day heading carries the date; each match is one line. */
+    .fixtures { gap: 0; }
+    .fixtures > .fx {
+      display: flex; flex: 0 0 100%; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 2px 8px;
+      border-width: 0 0 1px 4px; border-radius: 0; padding: 7px 4px 7px 8px; white-space: normal;
+    }
+    .fx-main { flex: 0 1 auto; }
+    .fx .flags { flex: 0 1 auto; }
+    .fx-detail { flex: 0 0 100%; max-width: none; }
+    .fixtures > .day-head { margin-top: 10px; padding-bottom: 4px; }
+    .fixtures > .fx-group { margin-top: 6px; }
+
+    /* Rounds fold under their summary; the whole heading is the button. */
+    .round { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+    .round.collapsible > .rlabel { position: relative; padding-right: 22px; cursor: pointer; }
+    .round.collapsible > .rlabel .round-toggle { cursor: pointer; font-weight: 700; color: var(--ink); }
+    .round.collapsible > .rlabel .round-toggle::after { content: ""; position: absolute; inset: 0; }
+    .round.collapsible > .rlabel::after {
+      content: "▸"; position: absolute; right: 4px; top: 2px; color: var(--muted); font-size: 12px;
+    }
+    .round.collapsible.is-open > .rlabel::after { content: "▾"; }
+    .round.collapsible > .rlabel:has(.round-toggle:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .round.collapsible:not(.is-open) > .fixtures { display: none; }
+    .round-tools { display: block; margin: 12px 0 0; }
+
+    /* The list reads as stacked rows: time, competition tag, teams and score; venue below. */
+    .fx-row {
+      grid-template-columns: auto auto minmax(0, 1fr) auto;
+      grid-template-areas: "time comp team score" "round venue venue venue" "rules rules rules rules";
+    }
+    .fx-row td:nth-child(3) { justify-self: start; }
+    .fx-row td:nth-child(5), .fx-row td:nth-child(2) { color: var(--muted); font-size: 12px; }
+    .fx-row td:nth-child(5):empty { display: none; }
+
+    /* The breakdown tables become one card per rule. */
+    table.breakdown, .breakdown tbody { display: block; }
+    .breakdown thead { display: none; }
+    .breakdown tr { display: block; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .breakdown td { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 3px 0; border: 0; text-align: right; }
+    .breakdown td:first-child { display: block; text-align: left; }
+    .breakdown td[data-label]::before {
+      content: attr(data-label); color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; flex: none;
+    }
+    .breakdown td.col-extra { display: block; text-align: left; }
+    .breakdown td.col-extra::before { display: block; margin-bottom: 2px; }
+    .breakdown tr.violated { background: var(--tint-bad); }
+    .breakdown tr.violated td { background: none; }
   }
 </style>
 <style id="palette">
@@ -850,7 +1105,7 @@
 </style>
 </head>
 <body>
-{% set ns = namespace(tooltip_id=0) %}
+<a class="skip-link" href="#main">Skip to the schedule options</a>
 {# A rule's fixtures are listed by report.js from the fixture flags, so only a rule with some (`row.pinned`) gets a mount and a calendar link. #}
 {# Share as signed text; a non-zero share that rounds to 0 reads "<1%", never a bare "0%" (#34). #}
 {% macro share_text(row) %}
@@ -875,7 +1130,7 @@
 {# One scorecard row: name with its one-line description and coverage, and the share (#34).
    Full rows open onto the detail; compact rows (the all-rules list) only repeat the summary,
    so each rule keeps one set of fixture hooks. #}
-{% macro rule_row(row, kind, ns, compact=false) %}
+{% macro rule_row(row, kind, compact=false) %}
 {% if compact %}
 <div class="item {{ kind }} compact">
   <div class="top">
@@ -886,10 +1141,15 @@
     <span class="name-block">
       <span class="name-row">
         <span class="name">{{ row.name }}</span>
-        {% set ns.tooltip_id = ns.tooltip_id + 1 %}
+        {# Inside a <summary> an icon button would be a control within a control, and the description is printed just below anyway. #}
         <span class="info-wrap">
-          <button type="button" class="info-icon" aria-label="{{ row.name }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
-          <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
+          {% if compact %}
+          <button type="button" class="info-icon" aria-label="{{ row.name }} description">i</button>
+          <span class="tooltip" aria-hidden="true">{{ row.description }}</span>
+          {% else %}
+          <span class="info-icon" aria-hidden="true">i</span>
+          <span class="tooltip" aria-hidden="true">{{ row.description }}</span>
+          {% endif %}
         </span>
       </span>
       <span class="rule-desc">{{ row.description }}</span>
@@ -911,7 +1171,12 @@
       {% for occ in row.occurrences %}<li>{{ occ.label }} <span class="occ-count">×{{ occ.count }}</span></li>{% endfor %}
     </ul>
     {% elif not row.pinned %}
-    <div class="desc">×{{ row.count }}</div>
+    {# No fixture or team to list: say what was counted and show the events the rule recorded (#39). #}
+    <div class="desc">{{ row.count }} event{{ '' if row.count == 1 else 's' }} across the season, not tied to one fixture or team.</div>
+    {% if row.examples %}
+    <ul class="examples">{% for example in row.examples %}<li>{{ example }}</li>{% endfor %}</ul>
+    {% if row.more %}<div class="more">…and {{ row.more }} more</div>{% endif %}
+    {% endif %}
     {% endif %}
   </div>
 </details>
@@ -923,126 +1188,34 @@
 
 <header>
   <h1>{{ title }}</h1>
+  <p class="intro">
+    {% if header.scoring_only %}
+    This page scores one supplied fixture list against the same hard rules and soft preferences the generator uses.
+    Read the score first, then the rule rows for what costs points, then the calendar.
+    {% else %}
+    The generator proposes season fixture lists for related leagues and optimises one thing in particular: clubs that field a team in more than one league get back-to-back home weekends, rather than clashing or being planned independently.
+    Compare the options below, then open one to see its rules, calendar and per-club views.
+    {% endif %}
+  </p>
   <div class="sub">
-    {{ season.start.strftime('%d %B %Y') }} – {{ season.end.strftime('%d %B %Y') }}
-    · solver <b>{{ result.solver }}</b>
-    {% if result.iterations %}· {{ '{:,}'.format(result.iterations) }} iterations{% endif %}
-    · {{ '%.1f'|format(result.elapsed_s) }}s
+    {{ season.start|standalone_date }} – {{ season.end|standalone_date }}
+    · generated {{ header.generated }}{% if header.commit %} from <code>{{ header.commit }}</code>{% endif %}
+    · <a href="{{ header.repo_url }}">source</a>
+    {% if header.json_name %}· <a href="{{ header.json_name }}" download>download JSON</a>{% endif %}
   </div>
 </header>
 
-{% if result.notes %}
-<div class="notes">
-  {% for note in result.notes %}<div>{{ note }}</div>{% endfor %}
-</div>
-{% endif %}
+<main id="main" tabindex="-1">
+{% for note in banner_notes %}
+<div class="notes {{ note.severity }}" role="{{ 'alert' if note.severity == 'error' else 'note' }}">{{ note.text }}</div>
+{% endfor %}
 
-{% if warnings %}
+{% if warnings or data_caveat %}
 <div class="warnings">
-  <div style="font-weight:700;margin-bottom:4px">Coverage notes</div>
+  <h2 class="warn-title">Coverage notes</h2>
   {% for warning in warnings %}<div>⚠ {{ warning }}</div>{% endfor %}
+  {% if data_caveat %}<div>⚠ {{ data_caveat }}</div>{% endif %}
 </div>
-{% endif %}
-
-{% if season_exclusions %}
-<details>
-  <summary>
-    Season exclusions
-    <span style="font-weight:400;color:var(--muted)">
-      · {{ season_exclusions|length }} entr{{ 'y' if season_exclusions|length == 1 else 'ies' }}
-    </span>
-  </summary>
-  <div class="item-body">
-    {% for entry in season_exclusions %}
-    <div class="desc">
-      {{ entry.start.strftime('%d %b %Y') }}{% if entry.end != entry.start %} – {{ entry.end.strftime('%d %b %Y') }}{% endif %}
-      {%- if entry.venue_label %} ({{ entry.venue_label }}){% endif %}
-      {%- if entry.reason %} — {{ entry.reason }}{% endif %}
-    </div>
-    {% endfor %}
-  </div>
-</details>
-{% endif %}
-
-{% if playoff_views %}
-<details>
-  <summary>
-    Play-off weeks
-    <span style="font-weight:400;color:var(--muted)">
-      · dates reserved after or between the league rounds
-    </span>
-  </summary>
-  <div class="item-body">
-    {% for view in playoff_views %}
-    <div class="desc">
-      <strong>{{ view.competition }}</strong> · {{ view.label }}
-      {%- if not view.reserves_league %} (other division's teams){% endif %}
-      · {% for d in view.dates %}{{ d.date.strftime('%a %d %b %Y') }} (week {{ d.iso_week }}){{ ', ' if not loop.last }}{% endfor %}
-    </div>
-    {% endfor %}
-  </div>
-</details>
-{% endif %}
-
-{% if slot_views %}
-<details>
-  <summary>
-    Round slots
-    <span style="font-weight:400;color:var(--muted)">
-      · {% for view in slot_views %}{{ view.rounds }} rounds in {{ view.candidates }} candidate slots{% if view.overlapping %} ({{ view.overlapping }} overlap a weekend){% endif %}{{ ', ' if not loop.last }}{% endfor %}
-    </span>
-  </summary>
-  <div class="item-body">
-    {% for view in slot_views %}
-    <div class="desc" style="font-weight:700;margin-top:8px">{{ view.name }}</div>
-    <div class="desc">
-      {{ '{:,}'.format(view.combinations) }} ways to pick compatible slots; per-match dates
-      ~10<sup>{{ '%.0f'|format(view.dates_log10) }}</sup> within the slots' own days.
-    </div>
-    {% for row in view.rows %}
-    <div class="desc">
-      R{{ row.round }} · {{ row.kind }} ·
-      {{ row.start.strftime('%d %b') }}{% if row.end != row.start %} – {{ row.end.strftime('%d %b') }}{% endif %}
-      · default {{ row.default_day.strftime('%a %d %b') }}
-      {%- if row.clashes %} · ⚠ clashes: {{ row.clashes|join(', ') }}{% endif %}
-    </div>
-    {% endfor %}
-    {% endfor %}
-  </div>
-</details>
-{% endif %}
-
-{% if search_stats %}
-<details class="search-stats">
-  <summary>
-    How hard was this to schedule?
-    <span class="difficulty-pill difficulty-{{ search_stats.difficulty }}">{{ search_stats.difficulty }}</span>
-    <span style="font-weight:400;color:var(--muted)">
-      · {{ '{:,}'.format(search_stats.investigated) }} scenarios investigated ·
-      {{ '%.0f'|format(search_stats.feasible_pct) }}% viable
-    </span>
-  </summary>
-  <div class="item-body">
-    <div class="desc">{{ search_stats.difficulty_label }}</div>
-    <div class="desc">
-      {{ '{:,}'.format(search_stats.feasible) }} scenario{{ '' if search_stats.feasible == 1 else 's' }} came out viable,
-      {{ '{:,}'.format(search_stats.hard_violation_scenarios) }} hit at least one hard-rule violation
-      ({{ '%.0f'|format(search_stats.hard_violation_pct) }}% of everything tried).
-    </div>
-    {% if search_stats.breakdown %}
-    <div style="font-weight:700;margin:14px 0 6px;font-size:13px">Where the dead ends came from</div>
-    <div class="fairness-bars">
-      {% for row in search_stats.breakdown %}
-      <div class="fairness-bar" title="{{ row.description }}">
-        <span class="flabel">{{ row.name }}</span>
-        <span class="ftrack"><span class="ffill" style="width:{{ row.pct }}%"></span></span>
-        <span class="fcount">{{ '{:,}'.format(row.count) }}</span>
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
-  </div>
-</details>
 {% endif %}
 
 {% if comparison %}
@@ -1111,9 +1284,11 @@
 </section>
 {% endif %}
 
-<div class="tabs" role="tablist">
+<div class="tabs" role="tablist" aria-label="Schedule options">
   {% for option in options %}
-  <button class="tab" role="tab" data-panel="panel-{{ loop.index }}"
+  <button class="tab" role="tab" id="tab-{{ loop.index }}" data-panel="panel-{{ loop.index }}"
+          aria-controls="panel-{{ loop.index }}" tabindex="{{ 0 if loop.first else -1 }}"
+          aria-label="{{ option.label }}{% if option.seed %}, seed {{ option.seed }}{% endif %}{% if option.tag %}, {{ option.tag }}{% endif %}, score {{ option.points_text }}"
           aria-selected="{{ 'true' if loop.first else 'false' }}">
     {{ option.label }}{% if option.seed %}<span class="tab-seed">seed {{ option.seed }}</span>{% endif %}{% if option.tag %}<span class="tab-tag">{{ option.tag }}</span>{% endif %}<span class="score">{{ option.points_text }}</span>
   </button>
@@ -1121,12 +1296,17 @@
 </div>
 
 {% for option in options %}
-<section class="panel" id="panel-{{ loop.index }}" role="tabpanel" {% if not loop.first %}hidden{% endif %}>
+<section class="panel" id="panel-{{ loop.index }}" role="tabpanel" aria-labelledby="tab-{{ loop.index }}" {% if not loop.first %}hidden{% endif %}>
 {# Panels other than the first stay inert in a <template> until their tab is opened (#42). #}
 {% if not loop.first %}<template>{% endif %}
 
+  <h2 class="sr-only">{{ option.label }}: score and rules</h2>
   <div class="scoreline">
     <div class="total">{{ option.points_text }}<small>/ 100</small></div>
+    <span class="gauge gauge-{{ option.band }}" title="The 0–100 score; the marks are {{ band_fair }} and {{ band_strong }}, where weak, fair and strong meet">
+      <span class="gauge-track" aria-hidden="true"><span class="gauge-fill" style="width:{{ '%.1f'|format(option.points) }}%"></span></span>
+      <span class="gauge-label">{{ option.band }}</span>
+    </span>
     {% if option.feasible %}
       <span class="badge ok">feasible · 0 hard violations</span>
     {% else %}
@@ -1166,14 +1346,14 @@
       <div class="top">
         <span class="name-row">
           <span class="name">{{ row.name }}</span>
-          {% set ns.tooltip_id = ns.tooltip_id + 1 %}
           <span class="info-wrap">
-            <button type="button" class="info-icon" aria-label="{{ row.name }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
-            <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
+            <button type="button" class="info-icon" aria-label="{{ row.name }} description">i</button>
+            <span class="tooltip" aria-hidden="true">{{ row.description }}</span>
           </span>
         </span>
         <span class="delta">{{ row.count }} violation{{ '' if row.count == 1 else 's' }}</span>
       </div>
+      <div class="rule-desc phone-desc">{{ row.description }}</div>
       <div class="rule-actions">{{ lens_link(row) }}</div>
       {{ fixture_list(row) }}
       {% if row.examples %}
@@ -1194,7 +1374,7 @@
   <div class="cols season-part">
     <div class="col">
       <h3>{{ 'Every upside' if option.full else 'Biggest upsides' }}</h3>
-      {% for row in option.upsides %}{{ rule_row(row, 'up', ns) }}
+      {% for row in option.upsides %}{{ rule_row(row, 'up') }}
       {% else %}
       <div class="desc">Nothing scored positively.</div>
       {% endfor %}
@@ -1202,7 +1382,7 @@
 
     <div class="col">
       <h3>{{ 'Every problem (including the hard rules above)' if option.full else 'Biggest problems' }}</h3>
-      {% for row in option.problems %}{{ rule_row(row, 'down', ns) }}
+      {% for row in option.problems %}{{ rule_row(row, 'down') }}
       {% else %}
       <div class="desc">Nothing scored negatively.</div>
       {% endfor %}
@@ -1210,21 +1390,22 @@
   </div>
 
   {% set soft = option.soft %}
+  {# With a club selected, report.js draws the club's upsides, problems and breakdown here. #}
+  <div class="scope-card"></div>
+
+  <div class="section-list">
   <details class="season-part all-soft">
     <summary>Show all {{ soft.count }} soft rules: helping, hurting, neutral</summary>
     <p class="soft-sum">Helped by <b class="gain-text">{{ '%+.1f'|format(soft.helped)|replace('-', '−') }}</b>, hurt by <b class="cost-text">{{ '%+.1f'|format(soft.hurt)|replace('-', '−') }}</b>, net <b>{{ '%+.1f'|format(soft.net)|replace('-', '−') }}</b>.</p>
     <div class="split-bar" aria-hidden="true"><span class="split-gain" style="width:{{ '%.1f'|format(soft.gain_pct) }}%"></span><span class="split-cost" style="width:{{ '%.1f'|format(100 - soft.gain_pct) }}%"></span></div>
     <p class="desc">The gains and costs together are the rules’ gross movement of {{ '%.1f'|format(soft.helped - soft.hurt) }} points; the net is the raw soft score in the explanation above.</p>
     <h4 class="group-head">Helping ({{ soft.helping|length }})</h4>
-    {% for row in soft.helping %}{{ rule_row(row, 'up', ns, true) }}{% else %}<div class="desc">None.</div>{% endfor %}
+    {% for row in soft.helping %}{{ rule_row(row, 'up', true) }}{% else %}<div class="desc">None.</div>{% endfor %}
     <h4 class="group-head">Hurting ({{ soft.hurting|length }})</h4>
-    {% for row in soft.hurting %}{{ rule_row(row, 'down', ns, true) }}{% else %}<div class="desc">None.</div>{% endfor %}
+    {% for row in soft.hurting %}{{ rule_row(row, 'down', true) }}{% else %}<div class="desc">None.</div>{% endfor %}
     <h4 class="group-head">Neutral, zero or did not apply ({{ soft.neutral|length }})</h4>
     {% if soft.neutral %}<p class="neutral-list">{{ soft.neutral|join(', ') }}</p>{% else %}<div class="desc">None.</div>{% endif %}
   </details>
-
-  {# With a club selected, report.js draws the club's upsides, problems and breakdown here. #}
-  <div class="scope-card"></div>
 
   <details class="season-part">
     <summary>Full score breakdown — every rule</summary>
@@ -1236,7 +1417,7 @@
       <p class="desc">{{ satisfied|map(attribute='name')|join(', ') }}</p>
     </details>
     {% endif %}
-    <table>
+    <table class="breakdown">
       <thead>
         <tr><th>Rule</th><th>Type</th><th class="num">Contribution</th><th class="num">Events</th><th class="col-extra">Examples</th></tr>
       </thead>
@@ -1246,18 +1427,18 @@
           <td>
             <span class="name-row">
               <b>{{ row.name }}</b>
-              {% set ns.tooltip_id = ns.tooltip_id + 1 %}
               <span class="info-wrap">
-                <button type="button" class="info-icon" aria-label="{{ row.name }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
-                <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
+                <button type="button" class="info-icon" aria-label="{{ row.name }} description">i</button>
+                <span class="tooltip" aria-hidden="true">{{ row.description }}</span>
               </span>
             </span>
+            <div class="rule-desc phone-desc">{{ row.description }}</div>
             {% if row.coverage %}<div class="coverage">{{ row.coverage.achieved }} of {{ row.coverage.opportunities }} {{ row.coverage.unit }} ({{ '%.0f'|format(row.coverage.pct) }}%)</div>{% endif %}
           </td>
-          <td><span class="kind {{ row.kind }}">{{ row.kind }}</span></td>
-          <td class="num">{% if row.share is not none %}{{ contribution(row) }}<div class="raw">{{ '%+.1f'|format(row.total) }}</div>{% else %}{{ '%+.1f'|format(row.total) if row.total else '—' }}{% endif %}</td>
-          <td class="num">{{ row.count }}</td>
-          <td class="col-extra">
+          <td data-label="Type"><span class="kind {{ row.kind }}">{{ row.kind }}</span></td>
+          <td class="num" data-label="Contribution">{% if row.share is not none %}{{ contribution(row) }}<div class="raw">{{ '%+.1f'|format(row.total) }}</div>{% else %}{{ '%+.1f'|format(row.total) if row.total else '—' }}{% endif %}</td>
+          <td class="num" data-label="Events">{{ row.count }}</td>
+          <td class="col-extra" data-label="Examples">
             {% if row.pinned %}<div class="rule-actions">{{ lens_link(row) }}</div>{{ fixture_list(row) }}{% endif %}
             {% if row.examples %}
             <ul class="examples" style="margin:0;padding-left:16px">
@@ -1274,7 +1455,7 @@
   </details>
 
   {% if option.fairness %}
-  <details>
+  <details class="fairness">
     <summary>Fairness across teams — is any one team favoured or penalised?</summary>
     <div class="desc" style="margin-top:8px">
       Per-rule counts for every team (or, for the two club-coupling rules,
@@ -1282,26 +1463,10 @@
       best- and worst-treated team than the rule's own average — worth a
       look before this schedule is accepted.
     </div>
-    {% for row in option.fairness %}
-    <div class="fairness-row {{ 'flagged' if row.flagged }}">
-      <div class="head">
-        <span class="fname">{{ row.name }}</span>
-        {% if row.flagged %}<span class="flag">⚠ uneven — {{ row.min }}–{{ row.max }} across entries</span>{% endif %}
-      </div>
-      <div class="desc">{{ row.description }}</div>
-      <div class="fairness-bars">
-        {% for entry in row.entries %}
-        <div class="fairness-bar">
-          <span class="flabel" title="{{ entry.label }}">{{ entry.label }}</span>
-          <span class="ftrack"><span class="ffill" style="width:{{ (100 * entry.count / row.max) if row.max else 0 }}%"></span></span>
-          <span class="fcount">{{ entry.count }}</span>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-    {% endfor %}
+    <div class="fairness-rows"></div>
   </details>
   {% endif %}
+  </div>
 
   <noscript><div class="warnings">This report draws its fixtures with JavaScript; enable it to see them.</div></noscript>
 
@@ -1318,7 +1483,7 @@
     <div class="bar-actions">
       <button type="button" class="bar-btn back-to-score" aria-label="Back to score"><span aria-hidden="true">↑</span><span class="bar-btn-text"> Score</span></button>
       <div class="legend-wrap">
-        <button type="button" class="bar-btn legend-toggle" aria-expanded="false" aria-controls="legend-{{ loop.index }}">Legend<span class="caret"> ▾</span></button>
+        <button type="button" class="bar-btn legend-toggle" aria-expanded="false" aria-controls="legend-{{ loop.index }}"><span class="key-long">Legend</span><span class="key-short">Key</span><span class="caret"> ▾</span></button>
         <div class="legend-panel" id="legend-{{ loop.index }}" hidden>
           <div class="legend-cards">
             <h4>Fixture cards</h4>
@@ -1329,9 +1494,31 @@
               <span><span class="swatch" style="margin-right:5px" aria-hidden="true"></span>square = home club colour</span>
               <span><span class="swatch-diamond" style="margin-right:5px" aria-hidden="true"></span>diamond = away club colour</span>
               <span><span class="swatch-neutral" style="margin-right:5px" aria-hidden="true"></span>circle = cup final, neutral ground</span>
+              <span>with one club chosen, each card reads “H vs …” or “A at …” from that club’s side; click a card for full names and venue</span>
               <span>round, week and day totals: net points of the badges on the games shown; midweek means all games Mon–Thu</span>
             </div>
           </div>
+          {% if option.calendar_legend %}
+          <div class="legend-dots">
+            <h4>Month calendar dots</h4>
+            <div class="legend">
+              {% for comp in option.calendar_legend %}
+              <span><span class="cal-dot {{ comp.cls }}" aria-hidden="true"></span><b>{{ comp.short }}</b> {{ comp.name }}</span>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+          <div class="legend-keys">
+            <h4>Keyboard</h4>
+            <p class="desc">Tab moves between sections. Each round, each day’s list and the season strip is one tab stop: inside it the arrow keys move between fixtures and badges, and Home and End jump to the first and last. The calendar’s days work the same way. Enter opens a fixture’s details.</p>
+          </div>
+          <details class="abbr-key">
+            <summary>Club abbreviations</summary>
+            <ul class="abbr-list">
+              {% for club in club_key %}<li><b>{{ club.short }}</b>{{ club.name }}</li>{% endfor %}
+            </ul>
+            <p class="abbr-note">A trailing K marks the women’s team of a club that also has a men’s side; a letter in brackets is a reserve or youth level.</p>
+          </details>
           {% if flag_legend %}
           <div class="flag-legend">
             <h4>What the badges mean (tap any badge on a fixture for details)</h4>
@@ -1347,14 +1534,28 @@
           {% endif %}
         </div>
       </div>
+      <div class="legend-wrap">
+        <button type="button" class="bar-btn export-toggle" aria-expanded="false" aria-controls="export-{{ loop.index }}">Export<span class="caret"> ▾</span></button>
+        <div class="export-panel" id="export-{{ loop.index }}" hidden>
+          <h4>Export this schedule</h4>
+          <p class="desc export-scope"></p>
+          <div class="export-actions">
+            <button type="button" class="bar-btn export-csv">CSV</button>
+            <button type="button" class="bar-btn export-ics">Calendar (.ics)</button>
+            {% if header.json_name %}<a class="bar-btn" href="{{ header.json_name }}" download>JSON, whole run</a>{% endif %}
+          </div>
+          <p class="desc">The CSV can be scored again with <code>cli.py score</code>. Choose a club or team first for just its games.</p>
+          <p class="desc export-note" role="status"></p>
+        </div>
+      </div>
       <button type="button" class="bar-btn filters-toggle" aria-expanded="false" aria-controls="filters-{{ loop.index }}">Filters</button>
     </div>
-    <div class="view-toggle">
-      <button type="button" class="view-btn" data-view="by-competition" aria-label="By competition"><span class="view-full">By competition</span><span class="view-short" aria-hidden="true">Rounds</span></button>
-      <button type="button" class="view-btn" data-view="month-calendar" aria-label="Month calendar"><span class="view-full">Month calendar</span><span class="view-short" aria-hidden="true">Month</span></button>
-      <button type="button" class="view-btn" data-view="combined-calendar" aria-label="Combined calendar"><span class="view-full">Combined · calendar</span><span class="view-short" aria-hidden="true">Calendar</span></button>
-      <button type="button" class="view-btn" data-view="combined-list" aria-label="Combined list"><span class="view-full">Combined · list</span><span class="view-short" aria-hidden="true">List</span></button>
-      <button type="button" class="view-btn" data-view="club-timeline" aria-label="Club timeline"><span class="view-full">Club timeline</span><span class="view-short" aria-hidden="true">Timeline</span></button>
+    <div class="view-toggle" role="radiogroup" aria-label="View">
+      <button type="button" class="view-btn" role="radio" aria-checked="false" tabindex="-1" data-view="by-competition" aria-label="By competition"><span class="view-full">By competition</span><span class="view-short" aria-hidden="true">Rounds</span></button>
+      <button type="button" class="view-btn" role="radio" aria-checked="false" tabindex="-1" data-view="month-calendar" aria-label="Month calendar"><span class="view-full">Month calendar</span><span class="view-short" aria-hidden="true">Month</span></button>
+      <button type="button" class="view-btn" role="radio" aria-checked="false" tabindex="-1" data-view="combined-calendar" aria-label="Combined calendar"><span class="view-full">Combined · calendar</span><span class="view-short" aria-hidden="true">Calendar</span></button>
+      <button type="button" class="view-btn" role="radio" aria-checked="false" tabindex="-1" data-view="combined-list" aria-label="Combined list"><span class="view-full">Combined · list</span><span class="view-short" aria-hidden="true">List</span></button>
+      <button type="button" class="view-btn" role="radio" aria-checked="false" tabindex="-1" data-view="club-timeline" aria-label="Club timeline"><span class="view-full">Club timeline</span><span class="view-short" aria-hidden="true">Timeline</span></button>
     </div>
     <div class="bar-filters">
       <div class="bar-fields" id="filters-{{ loop.index }}">
@@ -1395,6 +1596,8 @@
     </div>
   </div>
 
+  <h2 class="sr-only">{{ option.label }}: fixtures</h2>
+
   <div class="lens-caption" hidden>
     <span class="lens-text" role="status"></span>
     <span class="lens-count" aria-live="polite" hidden></span>
@@ -1416,7 +1619,7 @@
       tap a day to list its games under that week. A figure under a day is the net rule points of its games shown.
     </div>
     {% if option.calendar_legend %}
-    <div class="legend">
+    <div class="legend month-legend">
       {% for comp in option.calendar_legend %}
       <span><span class="cal-dot {{ comp.cls }}" aria-hidden="true"></span><b>{{ comp.short }}</b> {{ comp.name }}</span>
       {% endfor %}
@@ -1450,9 +1653,125 @@
 </section>
 {% endfor %}
 
+<details class="generation">
+  <summary>
+    How this schedule was generated
+    <span style="font-weight:400;color:var(--muted)">
+      · solver, search effort, season exclusions, round slots
+    </span>
+  </summary>
+  <div class="item-body">
+    <div class="desc">
+      Solver <b>{{ run_facts.solver }}</b>
+      {%- if run_facts.seeds %} · option seeds {{ run_facts.seeds|join(', ') }}{% endif %}
+      {%- if run_facts.iterations %} · {{ '{:,}'.format(run_facts.iterations) }} iterations{% endif %}
+      · {{ run_facts.elapsed }}
+    </div>
+    {% for note in info_notes %}<div class="desc">{{ note }}</div>{% endfor %}
+    {% if season_exclusions %}
+    <details>
+      <summary>
+        Season exclusions
+        <span style="font-weight:400;color:var(--muted)">
+          · {{ season_exclusions|length }} entr{{ 'y' if season_exclusions|length == 1 else 'ies' }}
+        </span>
+      </summary>
+      <div class="item-body">
+        {% for entry in season_exclusions %}
+        <div class="desc">
+          {{ entry.start|standalone_date }}{% if entry.end != entry.start %} – {{ entry.end|standalone_date }}{% endif %}
+          {%- if entry.venue_label %} ({{ entry.venue_label }}){% endif %}
+          {%- if entry.reason %} — {{ entry.reason }}{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+    {% if playoff_views %}
+    <details>
+      <summary>
+        Play-off weeks
+        <span style="font-weight:400;color:var(--muted)">
+          · dates reserved after or between the league rounds
+        </span>
+      </summary>
+      <div class="item-body">
+        {% for view in playoff_views %}
+        <div class="desc">
+          <strong>{{ view.competition }}</strong> · {{ view.label }}
+          {%- if not view.reserves_league %} (other division's teams){% endif %}
+          · {% for d in view.dates %}{{ d.date|standalone_date }} (week {{ d.iso_week }}){{ ', ' if not loop.last }}{% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+    {% if slot_views %}
+    <details>
+      <summary>
+        Round slots
+        <span style="font-weight:400;color:var(--muted)">
+          · {% for view in slot_views %}{{ view.name }}: {{ view.rounds }} rounds in {{ view.candidates }} candidate slots{% if view.overlapping %} ({{ view.overlapping }} overlap a weekend){% endif %}{{ '; ' if not loop.last }}{% endfor %}
+        </span>
+      </summary>
+      <div class="item-body">
+        {% for view in slot_views %}
+        <div class="desc" style="font-weight:700;margin-top:8px">{{ view.name }}</div>
+        <div class="desc">
+          {{ '{:,}'.format(view.combinations) }} ways to pick compatible slots; per-match dates
+          ~10<sup>{{ '%.0f'|format(view.dates_log10) }}</sup> within the slots' own days.
+        </div>
+        {% for row in view.rows %}
+        <div class="desc">
+          R{{ row.round }} · {{ row.kind }} ·
+          {{ row.start|short_date }}{% if row.end != row.start %} – {{ row.end|short_date }}{% endif %}
+          · default {{ row.default_day|short_date }}
+          {%- if row.clashes %} · ⚠ clashes: {{ row.clashes|join(', ') }}{% endif %}
+        </div>
+        {% endfor %}
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+    {% if search_stats %}
+    <details class="search-stats">
+      <summary>
+        How hard was this to schedule?
+        <span class="difficulty-pill difficulty-{{ search_stats.difficulty }}">{{ search_stats.difficulty }}</span>
+        <span style="font-weight:400;color:var(--muted)">
+          · {{ '{:,}'.format(search_stats.investigated) }} scenarios investigated ·
+          {{ '%.0f'|format(search_stats.feasible_pct) }}% viable
+        </span>
+      </summary>
+      <div class="item-body">
+        <div class="desc">{{ search_stats.difficulty_label }}</div>
+        <div class="desc">
+          {{ '{:,}'.format(search_stats.feasible) }} scenario{{ '' if search_stats.feasible == 1 else 's' }} came out viable,
+          {{ '{:,}'.format(search_stats.hard_violation_scenarios) }} hit at least one hard-rule violation
+          ({{ '%.0f'|format(search_stats.hard_violation_pct) }}% of everything tried).
+        </div>
+        {% if search_stats.breakdown %}
+        <div style="font-weight:700;margin:14px 0 6px;font-size:13px">Where the dead ends came from</div>
+        <div class="fairness-bars">
+          {% for row in search_stats.breakdown %}
+          <div class="fairness-bar" title="{{ row.description }}">
+            <span class="flabel">{{ row.name }}</span>
+            <span class="ftrack"><span class="ffill" style="width:{{ '%.1f'|format(row.pct) }}%"></span></span>
+            <span class="fcount">{{ '{:,}'.format(row.count) }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
+</details>
+
+</main>
+
 <footer>
-  Generated by terminliste. Club, venue and league data is assembled from public sources
-  and marked <code>verified: false</code> — check <code>data/</code> before using this for anything real.
+  Generated by <a href="{{ header.repo_url }}">terminliste</a>.
 </footer>
 
 </div>

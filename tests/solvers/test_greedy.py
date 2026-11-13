@@ -12,6 +12,7 @@ from datetime import date, timedelta
 
 import factories as f
 
+from terminliste.display import short_date
 from terminliste.model.calendar import build_calendar, calendars_by_competition
 from terminliste.solvers.greedy import plan_competitions, resolve_round_pins
 
@@ -73,7 +74,7 @@ def test_final_round_pin_stays_put_and_flags_when_every_team_is_committed():
     chosen = pins[("men", final_round)]
     assert chosen == anchor
     assert len(warnings) == 1
-    assert "men" in warnings[0] and str(anchor) in warnings[0]
+    assert "men" in warnings[0] and short_date(anchor) in warnings[0]
 
 
 def test_full_round_requirement_pin_cannot_move_and_flags_instead():

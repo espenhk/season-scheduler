@@ -55,6 +55,8 @@ from .base import (
     SearchStats,
     SolveRequest,
     SolverResult,
+    error,
+    info,
     resolve_slot_plans,
     select_diverse,
 )
@@ -245,8 +247,10 @@ class LocalSearchScheduler:
 
         if not any(c.score.feasible for c in chosen):
             notes.append(
-                "No fully feasible schedule found — see the hard-rule rows in the breakdown "
-                "for what is still broken."
+                error(
+                    "No fully feasible schedule found — see the hard-rule rows in the breakdown "
+                    "for what is still broken."
+                )
             )
 
         return SolverResult(
@@ -349,7 +353,7 @@ def _polish_candidates(
 
     if improved:
         notes.append(
-            f"polish phase refined {improved} of {len(chosen)} shortlisted candidate(s)"
+            info(f"polish phase refined {improved} of {len(chosen)} shortlisted candidate(s)")
         )
     return total_iterations, stats
 

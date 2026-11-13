@@ -9,8 +9,6 @@ or a `chromium-*` build under `PLAYWRIGHT_BROWSERS_PATH`.
 
 from __future__ import annotations
 
-import glob
-import os
 import re
 from collections import Counter
 from datetime import date
@@ -20,185 +18,14 @@ import pytest
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
-from terminliste.report.render import render_report  # noqa: E402
-from terminliste.scoring.base import EvalContext, evaluate  # noqa: E402
-from terminliste.scoring.hard import OneMatchPerTeamPerDay  # noqa: E402
-from terminliste.scoring.registry import rule_name  # noqa: E402
-from terminliste.scoring.soft import (  # noqa: E402
-    ConsecutiveHomeDays,
-    PreferredWeekday,
-    RestComfort,
-)
-from terminliste.solvers.base import Candidate, SolverResult  # noqa: E402
-
-
-class _FixedTravel:
-    def hours(self, a, b):
-        return 1.0
-
-
-def _world():
-    va, vb, vc = f.venue("va"), f.venue("vb"), f.venue("vc")
-    a_m = f.team("a_m", "club_a", "va", gender="men")
-    a_w = f.team("a_w", "club_a", "va", gender="women")
-    b_m = f.team("b_m", "club_b", "vb", gender="men")
-    b_w = f.team("b_w", "club_b", "vb", gender="women")
-    opp_m = f.team("opp_m", "opp1", "vc", gender="men")
-    opp_w = f.team("opp_w", "opp2", "vc", gender="women")
-    clubs = [
-        f.club("club_a", [a_m, a_w], color="#112233"),
-        f.club("club_b", [b_m, b_w], color="#445566"),
-        f.club("opp1", [opp_m], color="#778899"),
-        f.club("opp2", [opp_w], color="#aabbcc"),
-    ]
-    comp_m = f.competition("elite", ["a_m", "b_m", "opp_m"], gender="men")
-    comp_w = f.competition("topp", ["a_w", "b_w", "opp_w"], gender="women")
-    return f.world(clubs, [va, vb, vc], [comp_m, comp_w]), f.season(competitions=["elite", "topp"])
-
-
-# Everything on 6 June is club A's: a league match, a cup round and a European
-# leg. Club A's women play at home the next day, so both are a back-to-back pair.
-DAY = "2026-06-06"
-OPPONENT = "Union Saint-Gilloise"
+from report_support import DAY, OPPONENT, _base_matches, _report_url, _world  # noqa: E402
 
 
 @pytest.fixture(scope="module")
 def world():
     return _world()[0]
 
-
-def _base_matches():
-    return [
-        f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va", kickoff_time="18:00"),
-        f.match("topp", "a_w", "opp_w", date(2026, 6, 7), "va"),
-        f.match("elite", "b_m", "opp_m", date(2026, 6, 13), "vb", round_index=1),
-    ]
-
-
-@pytest.fixture(scope="module")
-def report_url(tmp_path_factory):
-    return _report_url(tmp_path_factory, _base_matches())
-
-
-@pytest.fixture(scope="module")
-def midweek_url(tmp_path_factory):
-    # A Tuesday league match in a round of its own: the only midweek round.
-    extra = f.match("elite", "b_m", "opp_m", date(2026, 6, 9), "vb", round_index=2)
-    return _report_url(tmp_path_factory, _base_matches() + [extra])
-
-
-@pytest.fixture(scope="module")
-def other_months_url(tmp_path_factory):
-    # League fixtures in June only; the cup round and the European leg fall in
-    # July and September, months with no league fixture, so they are listed under
-    # "Other dates".
-    return _report_url(
-        tmp_path_factory, _base_matches(), cup_on=date(2026, 7, 8), europe_on=date(2026, 9, 17)
-    )
-
-
-@pytest.fixture(scope="module")
-def rules_url(tmp_path_factory):
-    # Club A's men play twice on 6 June (a hard break: one match per team per day).
-    # Round 4's two games each come four days after the team's previous one, a
-    # rest of three days, which RestComfort scores as a short-rest cost.
-    extra = [
-        f.match("elite", "opp_m", "a_m", date(2026, 6, 6), "vc", round_index=2),
-        f.match("elite", "a_m", "opp_m", date(2026, 6, 10), "va", round_index=3),
-        f.match("elite", "b_m", "opp_m", date(2026, 6, 17), "vb", round_index=3),
-    ]
-    return _report_url(tmp_path_factory, _base_matches() + extra, rest=True)
-
-
-def _report_url(
-    tmp_path_factory,
-    matches,
-    rest=False,
-    cup_venue="away",
-    with_europe=True,
-    cup_on=date(2026, 6, 6),
-    europe_on=date(2026, 6, 6),
-    cup_dates=None,
-):
-    world, season = _world()
-    ctx = EvalContext(world=world, season=season, travel=_FixedTravel(), detail=True)
-    comps = [world.competition("elite"), world.competition("topp")]
-    constraints = [PreferredWeekday(competitions=comps), ConsecutiveHomeDays(competitions=comps)]
-    if rest:
-        constraints += [RestComfort(competitions=comps), OneMatchPerTeamPerDay()]
-    candidate = Candidate(matches=matches, score=evaluate(matches, constraints, ctx), label="Option 1")
-    # A second option with a rule set of its own, for the per-option lens state.
-    other = Candidate(
-        matches=matches,
-        score=evaluate(matches, [ConsecutiveHomeDays(competitions=comps)], ctx),
-        label="Option 2",
-    )
-    cup = f.cup_schedule(
-        "cup1",
-        [f.cup_placement("r1", cup_dates or {"a_m": cup_on}, round_name="Round 1", venue_type=cup_venue)],
-        competition_name="NM Cup",
-        competition_short_name="NM",
-    )
-    round_ = f.european_round(
-        "q3",
-        forced_date=europe_on,
-        ties=[f.european_tie("a_m", opponent=OPPONENT, home_leg="first")],
-    )
-    europe = f.competition("cl", ["a_m"], format="european", european_rounds=[round_])
-    path = render_report(
-        world,
-        season,
-        SolverResult(candidates=[candidate, other], solver="test"),
-        tmp_path_factory.mktemp("report") / "report.html",
-        cup_schedules=[cup],
-        european_competitions=[europe] if with_europe else None,
-        resolved_legs={("cl", "q3"): (europe_on, europe_on)} if with_europe else None,
-    )
-    return path.as_uri()
-
-
-def _browser_executable() -> str | None:
-    explicit = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
-    if explicit:
-        return explicit
-    root = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")
-    for pattern in ("chromium-*/chrome-linux*/chrome", "chromium-*/chrome-*/chrome"):
-        found = sorted(glob.glob(os.path.join(root, pattern)))
-        if found:
-            return found[-1]
-    return None
-
-
-def _no_browser(reason: str):
-    # CI installs Chromium, so a missing browser there is a broken setup, not a reason to skip.
-    if os.environ.get("CI"):
-        pytest.fail(reason)
-    pytest.skip(reason)
-
-
-@pytest.fixture(scope="module")
-def browser():
-    with sync_api.sync_playwright() as playwright:
-        instance, reason = _launch_chromium(playwright)
-        if instance is None:
-            _no_browser(reason)
-        yield instance
-        instance.close()
-
-
-def _launch_chromium(playwright):
-    """The launched browser, or None and why it could not start."""
-    try:
-        return playwright.chromium.launch(), ""
-    except sync_api.Error:
-        pass
-    executable = _browser_executable()
-    if not executable:
-        return None, "no Chromium available for Playwright"
-    try:
-        return playwright.chromium.launch(executable_path=executable), ""
-    except sync_api.Error as exc:
-        return None, f"Chromium could not be launched: {exc}"
+from terminliste.scoring.registry import rule_name  # noqa: E402
 
 
 @pytest.fixture
@@ -219,7 +46,17 @@ def _view(page, name):
 
 
 def _texts(locator):
-    return [" ".join(t.split()) for t in locator.all_inner_texts()]
+    """What a sighted reader sees: the visually hidden sentences (#41) are left out."""
+    texts = locator.evaluate_all(
+        """els => els.map(e => {
+          const hidden = Array.from(e.querySelectorAll('.sr-only'));
+          hidden.forEach(n => { n.style.display = 'none'; });
+          const text = e.innerText;
+          hidden.forEach(n => { n.style.display = ''; });
+          return text;
+        })"""
+    )
+    return [" ".join(t.split()) for t in texts]
 
 
 def _show_cups_and_europe(page, panel="#panel-1"):
@@ -436,7 +273,8 @@ def test_hovering_a_badge_shows_the_events_detail_and_points(page):
     text_off = " ".join(tooltip.inner_text().split())
     assert "Saturday; elite prefers Sunday (misses +1)" in text_off
     assert "reward forgone" in text_off
-    assert off_day.get_attribute("aria-label") == "off-day"
+    # Starts with the visible label, then says what the colour only shows.
+    assert off_day.get_attribute("aria-label") == "off-day, Preferred weekday, reward forgone"
 
 
 def test_tapping_a_badge_toggles_its_tooltip_on_touch_screens(touch_page):
@@ -624,8 +462,8 @@ def test_opening_a_scorecard_entry_lists_its_fixtures_grouped_by_team(page, worl
     assert groups == ["Club A ×2"]
     rows = _texts(item.locator(".occ-row"))
     assert len(rows) == 2
-    assert rows[0].startswith("Sat 06/06") and "+12.5" in rows[0] and "1 of 2 fixtures" in rows[0]
-    assert rows[1].startswith("Sun 07/06")
+    assert rows[0].startswith("Sat 6 Jun") and "+12.5" in rows[0] and "1 of 2 fixtures" in rows[0]
+    assert rows[1].startswith("Sun 7 Jun")
 
     off_day = page.locator(f'#panel-1 details.item[data-rule="{OFF_DAY}"]')
     off_day.locator("summary").click()
@@ -677,6 +515,7 @@ def test_clicking_a_badge_selects_its_rule_while_hover_still_shows_its_tooltip(p
 def test_the_second_tap_on_a_badge_selects_its_rule_on_touch_screens(touch_page):
     page = touch_page
     body = _view(page, "combined-calendar")
+    body.locator(".expand-all").tap()  # a phone folds the weeks
     badge = _club_a_men(body, ".fx").locator(f'.flag[data-rule="{PAIR}"]')
 
     badge.tap()
@@ -913,7 +752,7 @@ def test_all_five_phone_view_buttons_fit_the_bar_without_scrolling(browser, repo
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
         strip = page.locator("#panel-1 .view-toggle")
         assert strip.evaluate("e => e.scrollWidth <= e.clientWidth")
-        assert page.get_by_role("button", name="Combined calendar").count() >= 1
+        assert page.get_by_role("radio", name="Combined calendar").count() >= 1
         context.close()
 
 
@@ -1044,7 +883,7 @@ def test_the_season_strip_has_a_button_per_round_in_both_league_rows(page):
     assert strip.locator(".strip-cells").evaluate_all("els => els.every(e => e.scrollWidth <= e.clientWidth)")
     assert len(_texts(strip.locator(".strip-name"))) == 2
     cells = strip.locator(".strip-cell")
-    assert _texts(cells) == ["1 +12.5", "2 0", "1 +12.5"]
+    assert _texts(cells) == ["1 +13", "2 0", "1 +13"]  # whole points fit the cell; the label keeps the decimal
     assert cells.first.get_attribute("aria-label") == "Round 1: +12.5 pts · 1 game"
 
     _view(page, "combined-calendar")
@@ -1341,7 +1180,10 @@ def test_a_dual_club_opens_on_a_timeline_of_both_teams_in_date_order(page):
     assert page.locator("#panel-1 .tl-lane").all_text_contents() == [data["teams"][tid]["label"] for tid in teams]
 
     rows = page.locator("#panel-1 .tl-row")
-    assert _texts(rows.locator(".tl-date b")) == [date.fromisoformat(d).strftime("%a %d/%m") for d in dates]
+    assert _texts(rows.locator(".tl-date b")) == [
+        f"{date.fromisoformat(d):%a} {date.fromisoformat(d).day} {date.fromisoformat(d):%b}"
+        for d in dates
+    ]
     for i, d in enumerate(dates):
         for j, tid in enumerate(teams):
             lane = rows.nth(i).locator(".tl-cell").nth(j)
@@ -1417,7 +1259,8 @@ def test_a_tie_with_no_venue_decided_is_marked_and_never_paired(tbd_url, browser
     assert _texts(rows.nth(1).locator(".tl-tag")) == []  # 6 June: the tie is not an away venue
     cup = rows.nth(1).locator(".tl-cell").nth(0).locator(".tl-fx").filter(has_text="TBD")
     assert cup.locator(".tl-ha").inner_text() == "?"
-    assert cup.locator(".tl-ha").get_attribute("aria-label") == "Venue not decided"
+    assert cup.locator(".tl-ha").get_attribute("title") == "Venue not decided"
+    assert "venue not decided" in cup.locator(".tl-main .sr-only").text_content()
     context.close()
 
 
@@ -1572,19 +1415,23 @@ def test_all_rules_list_groups_every_soft_rule_and_states_the_net(page):
     assert re.match(r"^Helped by [+−]\d+\.\d, hurt by [+−]\d+\.\d, net [+−]\d+\.\d\.$", net), net
 
 
-def test_the_club_breakdown_hides_rank_and_fixtures_on_a_phone(browser, report_url):
+def test_the_club_breakdown_is_a_card_per_rule_on_a_phone(browser, report_url):
     context = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
     page = context.new_page()
     page.goto(report_url)
     _open_filters(page)
     page.select_option("#panel-1 .club-select", "club_a")
     page.locator("#panel-1 .scope-breakdown > summary").click()
-    assert page.locator("#panel-1 .scope-breakdown .col-extra").first.is_hidden()
-    assert page.locator("#panel-1 .scope-breakdown .col-type").first.is_hidden()
-    assert page.locator("#panel-1 .scope-breakdown th", has_text="Events").is_visible()
+    table = "#panel-1 .scope-breakdown table.breakdown"
+    assert page.locator(f"{table} thead").is_hidden()
+    row = page.locator(f"{table} tbody tr").first
+    assert row.evaluate("r => getComputedStyle(r).display") == "block"
+    assert row.locator(".phone-desc").first.is_visible()
+    labels = row.evaluate("r => [...r.querySelectorAll('td[data-label]')].map(td => td.dataset.label)")
+    assert labels == ["Type", "Contribution", "Events", "Rank", "Fixtures"]
+    assert row.locator("td.col-extra").first.is_visible()  # nothing is scrolled out of sight
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     context.close()
-
 
 
 # -- comparing the options (#35) ----------------------------------------------
@@ -1751,7 +1598,7 @@ def test_months_without_a_league_fixture_are_listed_under_other_dates_and_open_i
     body = _view(other_page, "month-calendar")
     assert body.locator('.month[data-month-key="2026-06"]').count() == 1
     assert body.locator('.month[data-month-key="2026-07"]').count() == 0
-    assert body.locator(".other-dates h4").inner_text().strip() == "Other dates"
+    assert body.locator(".other-dates h3").inner_text().strip() == "Other dates"
     assert _texts(body.locator('.other-row[data-month-key="2026-07"] .other-day')) == ["Wed 8"]
     assert _texts(body.locator('.other-row[data-month-key="2026-09"] .other-day')) == ["Thu 17"]
 
@@ -1973,7 +1820,7 @@ def test_a_cup_round_date_is_one_chip_that_opens_to_its_teams_and_a_club_filter_
     pane = _visible_pane(page)
     assert pane.locator("details.fx-group").count() == 0
     cards = _texts(pane.locator(".fx"))
-    assert len(cards) == 2 and sum("v TBD" in card for card in cards) == 1
+    assert len(cards) == 2 and sum("TBD" in card for card in cards) == 1
 
 
 def test_fixtures_in_a_day_read_in_kickoff_order_under_one_day_heading(kickoff_page):
@@ -2120,3 +1967,485 @@ def test_a_list_chip_collapses_and_reopens_while_the_text_filter_is_on(chip_page
     assert members.first.is_hidden()
     toggle.click()
     assert toggle.get_attribute("aria-expanded") == "true" and members.first.is_visible()
+
+
+def test_generation_details_sit_below_the_options_and_start_collapsed(page):
+    section = page.locator("details.generation")
+    assert section.get_attribute("open") is None
+    assert section.bounding_box()["y"] > page.locator("#panel-1").bounding_box()["y"]
+    assert page.locator("header h1").inner_text().endswith("proposed fixture list")
+    section.locator("summary").click()
+    assert section.get_attribute("open") is not None
+    assert "Solver" in section.inner_text()
+
+
+# -- polish (#39) ----------------------------------------------------------------
+
+
+def _visibility(page, selector):
+    return page.eval_on_selector(selector, "n => getComputedStyle(n).visibility")
+
+
+def test_a_mouse_click_on_a_rules_info_icon_does_not_pin_its_tooltip_open(page):
+    icon = page.locator("#panel-1 summary.top .info-icon").first
+    tooltip = page.locator("#panel-1 summary.top .tooltip").first
+    icon.hover()
+    assert _visibility(page, "#panel-1 summary.top .tooltip") == "visible"
+    icon.click()
+    # The click is on the icon inside a <summary>: it must not toggle the rule open either.
+    assert page.locator("#panel-1 details.item").first.evaluate("d => d.open") is False
+    assert _visibility(page, "#panel-1 summary.top .tooltip") == "visible"
+    page.mouse.move(5, 5)
+    assert not tooltip.evaluate("n => n.parentElement.classList.contains('open')")
+    assert _visibility(page, "#panel-1 summary.top .tooltip") == "hidden"
+
+
+def test_keyboard_focus_still_shows_a_rules_tooltip(page):
+    # The icons in the scorecard rows are pictures (a button inside a <summary> is not allowed);
+    # the table's and the hard-rule box's are buttons.
+    page.evaluate("document.querySelectorAll('#panel-1 .section-list > details').forEach(d => d.open = true)")
+    page.locator("#panel-1 table.breakdown summary, #panel-1 .section-list > details > summary").last.focus()
+    for _ in range(40):
+        if page.evaluate("document.activeElement.classList.contains('info-icon')"):
+            break
+        page.keyboard.press("Tab")
+    assert page.evaluate("document.activeElement.classList.contains('info-icon')")
+    assert (
+        page.evaluate(
+            "getComputedStyle(document.activeElement.parentElement.querySelector('.tooltip')).visibility"
+        )
+        == "visible"
+    )
+
+
+def test_rule_names_sit_next_to_their_arrow_with_the_score_at_the_far_edge(page):
+    row = page.locator("#panel-1 details.item > summary.top").first
+    box = row.bounding_box()
+    name = page.locator("#panel-1 details.item > summary.top .name").first.bounding_box()
+    score = page.locator("#panel-1 details.item > summary.top .contrib").first.bounding_box()
+    assert name["x"] - box["x"] < 40
+    assert box["x"] + box["width"] - (score["x"] + score["width"]) < 20
+
+
+def _scroll_overflow(page):
+    return page.evaluate(
+        "document.documentElement.scrollWidth - document.documentElement.clientWidth"
+    )
+
+
+def test_the_page_never_scrolls_sideways_and_nothing_masks_it(page):
+    assert page.eval_on_selector("html", "n => getComputedStyle(n).overflowX") == "visible"
+    assert page.eval_on_selector("body", "n => getComputedStyle(n).overflowX") == "visible"
+    _show_cups_and_europe(page)
+    for view in (
+        "by-competition",
+        "month-calendar",
+        "combined-calendar",
+        "combined-list",
+        "club-timeline",
+    ):
+        _view(page, view)
+        assert _scroll_overflow(page) <= 0, view
+
+
+def test_the_page_never_scrolls_sideways_on_a_phone_either(touch_page):
+    page = touch_page
+    for view in (
+        "by-competition",
+        "month-calendar",
+        "combined-calendar",
+        "combined-list",
+        "club-timeline",
+    ):
+        _view(page, view)
+        assert _scroll_overflow(page) <= 0, view
+
+
+def test_a_click_on_a_card_opens_its_full_names_and_venue_and_a_second_closes_it(page):
+    body = _view(page, "by-competition")
+    card = body.locator(".fx").first
+    assert card.locator(".fx-detail").count() == 0
+    card.click(position={"x": 4, "y": 4})
+    detail = " ".join(card.locator(".fx-detail").inner_text().split())
+    assert detail == "Club A v Opp1 · Va"  # both teams in full, then the home ground
+    card.click(position={"x": 4, "y": 4})
+    assert card.locator(".fx-detail").count() == 0
+
+
+def test_a_click_on_a_badge_picks_the_rule_and_leaves_the_card_closed(page):
+    body = _view(page, "by-competition")
+    card = body.locator(".fx", has=page.locator(".flag")).first
+    card.locator(".flag").first.click()
+    assert card.locator(".fx-detail").count() == 0
+
+
+def test_with_a_club_chosen_each_card_says_home_or_away_and_names_the_opponent_in_full(page):
+    _view(page, "by-competition")
+    page.select_option(
+        "#panel-1 .club-select", "opp1"
+    )  # a single-team club stays in the round view
+    cards = _texts(_visible_pane(page).locator(".fx"))
+    assert cards and all(re.search(r"\bA at Club [AB]\b", card) for card in cards)
+    page.select_option("#panel-1 .club-select", "")
+    assert not _texts(_visible_pane(page).locator(".ha-pill"))
+
+
+def test_the_home_away_label_reaches_the_list_and_the_month_detail(page):
+    page.select_option("#panel-1 .club-select", "opp1")
+    rows = _texts(_view(page, "combined-list").locator(".fx-row .fx-team"))
+    assert rows and all(re.fullmatch(r"A at Club [AB]", row) for row in rows)
+    _view(page, "month-calendar").locator('button[data-date="2026-06-13"]').click()
+    day = _texts(page.locator("#panel-1 .day-row"))
+    assert day and all(re.search(r"A at Club B\b", row) for row in day)
+
+
+def test_a_home_fixture_reads_h_and_vs(browser, rules_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(rules_url)
+    _view(page, "by-competition")
+    page.select_option("#panel-1 .club-select", "opp1")
+    cards = _texts(_visible_pane(page).locator(".fx"))
+    assert any("H vs Club A" in card for card in cards) and any(
+        "A at Club" in card for card in cards
+    )
+    page.close()
+
+
+def test_a_weekday_off_the_leagues_preferred_day_is_boxed_in_the_day_heading(page):
+    body = _view(page, "by-competition")
+    heads = {_texts(h)[0].split(" —")[0]: h for h in body.locator(".day-head").all()}
+    assert (
+        "off" in heads["Sat 6 Jun"].locator(".wd").get_attribute("class").split()
+    )  # elite prefers Sunday
+    assert "off" not in heads["Sun 7 Jun"].locator(".wd").get_attribute("class").split()
+    assert "Sunday" in heads["Sat 6 Jun"].locator(".wd").get_attribute("title")
+    weight = heads["Sun 7 Jun"].locator(".wd").evaluate("n => getComputedStyle(n).fontWeight")
+    assert int(weight) >= 700
+
+
+def test_the_list_boxes_an_off_day_weekday_in_its_date_row(page):
+    rows = _view(page, "combined-list").locator(".date-row")
+    classes = {_texts(r)[0].lower(): r.locator(".wd").get_attribute("class") for r in rows.all()}
+    assert "off" in classes["sat 6 jun"].split()
+
+
+def test_club_swatches_carry_a_thin_outline(page):
+    body = _view(page, "by-competition")
+    for shape in (".swatch", ".swatch-diamond"):
+        ring = body.locator(shape).first.evaluate("n => getComputedStyle(n).boxShadow")
+        assert ring != "none" and "1px" in ring
+
+
+def test_the_dark_theme_turns_the_page_and_its_tints_dark(browser, report_url):
+    colours = {}
+    for scheme in ("light", "dark"):
+        page = browser.new_page(viewport={"width": 1280, "height": 900}, color_scheme=scheme)
+        page.goto(report_url)
+        _view(page, "by-competition")
+        colours[scheme] = page.evaluate(
+            """() => [document.body, document.querySelector('.panel'), document.querySelector('.fx')]
+                 .map(n => getComputedStyle(n).backgroundColor)"""
+        )
+        page.close()
+
+    def luminance(css):
+        r, g, b = (int(v) for v in re.findall(r"\d+", css)[:3])
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    assert all(luminance(c) > 200 for c in colours["light"])
+    assert all(luminance(c) < 60 for c in colours["dark"])
+
+
+def test_the_printed_page_drops_the_controls_and_opens_the_views_collapsed_sections(
+    browser, chip_url
+):
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(chip_url)
+    _show_cups_and_europe(page)
+    body = _view(page, "combined-calendar")
+    chip = body.locator("details.fx-group").first
+    assert chip.evaluate("d => d.open") is False
+    page.emulate_media(media="print")
+    for selector in (
+        "#panel-1 .view-toggle",
+        "#panel-1 .bar-filters",
+        ".tabs",
+        "#panel-1 .season-strip",
+    ):
+        assert page.eval_on_selector(selector, "n => getComputedStyle(n).display") == "none", (
+            selector
+        )
+    assert (
+        page.eval_on_selector("#panel-1 .controls", "n => getComputedStyle(n).position") == "static"
+    )
+    assert page.eval_on_selector("#panel-1 .fx", "n => getComputedStyle(n).breakInside") == "avoid"
+    page.evaluate("window.dispatchEvent(new Event('beforeprint'))")
+    assert chip.evaluate("d => d.open") is True
+    page.evaluate("window.dispatchEvent(new Event('afterprint'))")
+    assert chip.evaluate("d => d.open") is False
+    page.close()
+
+
+# -- phone layout (#40) --------------------------------------------------------
+
+PHONE_VIEWS = ("by-competition", "month-calendar", "combined-calendar", "combined-list", "club-timeline")
+
+
+@pytest.fixture
+def phone(browser, report_url):
+    context = browser.new_context(
+        viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True
+    )
+    page = context.new_page()
+    page.problems = []
+    page.on("console", lambda m: page.problems.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: page.problems.append(str(e)))
+    page.goto(report_url)
+    yield page
+    assert page.problems == []
+    context.close()
+
+
+def _box(locator):
+    return locator.evaluate(
+        "n => { const r = n.getBoundingClientRect(); return {x: r.x, y: r.y, w: r.width, h: r.height}; }"
+    )
+
+
+def test_a_phone_opens_on_the_month_calendar_and_a_desktop_on_the_rounds(phone, page):
+    assert phone.locator("#panel-1 .view-pane[data-view='month-calendar']").is_visible()
+    assert phone.locator("#panel-1 .view-btn[data-view='month-calendar']").get_attribute(
+        "aria-checked"
+    ) == "true"
+    assert page.locator("#panel-1 .view-pane[data-view='by-competition']").is_visible()
+
+
+def test_no_view_scrolls_sideways_on_a_phone_with_everything_open(phone):
+    _open_filters(phone)
+    _show_cups_and_europe(phone)
+    for view in PHONE_VIEWS:
+        body = _view(phone, view)
+        for button in body.locator(".expand-all").all():
+            button.tap()
+        assert _scroll_overflow(phone) <= 0, view
+    _open_filters(phone)
+    phone.select_option("#panel-1 .club-select", "club_a")
+    for view in PHONE_VIEWS:
+        _view(phone, view)
+        assert _scroll_overflow(phone) <= 0, f"club_a {view}"
+
+
+def test_info_icons_and_day_cells_are_at_least_44_px_on_a_phone(phone, other_months_url):
+    icons = phone.locator("#panel-1 .info-icon:visible")
+    assert icons.count() > 0
+    for box in [_box(icon) for icon in icons.all()]:
+        assert box["w"] >= 44 and box["h"] >= 44
+    _view(phone, "month-calendar")
+    cells = phone.locator("#panel-1 .cal-day:not(.cal-pad)")
+    assert cells.count() > 0
+    for box in [_box(cell) for cell in cells.all()]:
+        assert box["w"] >= 44 and box["h"] >= 44
+    phone.goto(other_months_url)
+    chips = phone.locator("#panel-1 .cal-day.other-date")
+    assert chips.count() > 0
+    assert all(_box(chip)["h"] >= 44 for chip in chips.all())
+
+
+def test_a_desktop_keeps_its_small_info_icons_and_day_cells(page):
+    assert _box(page.locator("#panel-1 .info-icon").first)["w"] == 15
+    _view(page, "month-calendar")
+    cell = page.locator("#panel-1 .cal-day:not(.cal-pad)").first
+    assert cell.evaluate("n => getComputedStyle(n).minHeight") == "52px"
+
+
+def test_the_key_button_holds_the_legend_and_the_month_dots_on_a_phone(phone):
+    toggle = phone.locator("#panel-1 .legend-toggle")
+    panel = phone.locator("#panel-1 .legend-panel")
+    assert toggle.inner_text().split()[0] == "Key"
+    assert not panel.is_visible()
+    assert phone.locator("#panel-1 .month-legend").is_hidden()  # no dot list inline
+    toggle.tap()
+    assert panel.is_visible()
+    assert panel.locator(".legend-dots").is_visible()
+    assert panel.locator(".legend-dots .cal-dot").count() > 0
+    assert _box(panel)["x"] >= 0 and _box(panel)["x"] + _box(panel)["w"] <= 390
+    toggle.tap()
+    assert not panel.is_visible()
+    _view(phone, "combined-list")
+    toggle.tap()
+    assert panel.locator(".legend-dots").is_hidden()
+
+
+def test_a_desktop_keeps_its_legend_label_and_inline_month_dots(page):
+    assert page.locator("#panel-1 .legend-toggle").inner_text().startswith("Legend")
+    _view(page, "month-calendar")
+    assert page.locator("#panel-1 .month-legend").is_visible()
+    page.locator("#panel-1 .legend-toggle").click()
+    assert page.locator("#panel-1 .legend-dots").is_hidden()
+
+
+def test_the_option_tabs_fit_one_row_on_a_phone(phone):
+    tabs = [_box(tab) for tab in phone.locator(".tab").all()]
+    assert len({round(t["y"]) for t in tabs}) == 1
+    assert max(t["x"] + t["w"] for t in tabs) <= 390
+    assert phone.locator(".tab .tab-seed").first.is_hidden()
+
+
+def test_a_phone_folds_each_round_under_its_summary_and_expand_all_opens_them(phone):
+    body = _view(phone, "by-competition")
+    rounds = body.locator(".round.collapsible")
+    assert rounds.count() == 3
+    first = rounds.first
+    assert first.locator(".fixtures").is_hidden()
+    assert first.locator(".rlabel .rsum").is_visible()  # the summary stays in view
+    toggle = first.locator(".round-toggle")
+    assert toggle.get_attribute("aria-expanded") == "false"
+    toggle.tap()
+    assert toggle.get_attribute("aria-expanded") == "true" and first.locator(".fixtures").is_visible()
+    toggle.tap()
+    assert first.locator(".fixtures").is_hidden()
+
+    body.locator(".expand-all").tap()
+    assert body.locator(".round .fixtures:visible").count() == 3
+    assert body.locator(".expand-all").inner_text() == "Collapse all rounds"
+    _view(phone, "combined-calendar")  # one choice for every round-like view
+    assert phone.locator("#panel-1 .round .fixtures:visible").count() > 0
+    _view(phone, "by-competition").locator(".expand-all").tap()
+    assert body.locator(".round .fixtures:visible").count() == 0
+
+
+def test_a_fold_the_reader_opened_survives_a_redraw_and_a_strip_jump_opens_its_round(phone):
+    body = _view(phone, "by-competition")
+    body.locator(".round.collapsible").nth(1).locator(".round-toggle").tap()
+    _open_filters(phone)
+    phone.locator("#panel-1 .kind-btn[data-kind='cup']").tap()  # redraws the view
+    assert phone.locator("#panel-1 .round.collapsible .round-toggle[aria-expanded='true']").count() == 1
+    last = phone.locator("#panel-1 .strip-cell").last
+    last.tap()
+    assert phone.locator("#panel-1 .round.collapsible.is-open").count() >= 2
+    assert phone.locator("#panel-1 .round.is-open .fixtures").last.is_visible()
+
+
+def test_a_club_filter_opens_the_rounds_on_a_phone(phone):
+    _open_filters(phone)
+    phone.select_option("#panel-1 .club-select", "club_b")
+    body = _view(phone, "by-competition")
+    assert body.locator(".round.collapsible.is-open").count() == body.locator(".round").count()
+
+
+def test_a_desktop_shows_every_round_open_with_no_expand_all(page):
+    body = _view(page, "by-competition")
+    assert body.locator(".round.collapsible").count() == 0
+    assert body.locator(".expand-all").count() == 0
+    assert body.locator(".round .fixtures").first.is_visible()
+
+
+def test_fixtures_are_one_compact_row_each_under_a_day_heading_on_a_phone(phone):
+    body = _view(phone, "by-competition")
+    body.locator(".expand-all").tap()
+    card = body.locator(".fx").first
+    box = _box(card)
+    assert box["h"] < 48
+    assert box["w"] > 390 * 0.8  # a full-width row, not a bordered chip
+    assert card.evaluate("n => getComputedStyle(n).borderTopLeftRadius") == "0px"
+    day = _box(body.locator(".day-head").first)
+    assert day["y"] < box["y"]
+    card.tap(position={"x": 20, "y": 8})  # the detail line opens inside the row
+    assert card.locator(".fx-detail").is_visible() and _box(card)["w"] == box["w"]
+
+
+def test_a_desktop_keeps_bordered_fixture_cards(page):
+    body = _view(page, "by-competition")
+    card = body.locator(".fx").first
+    assert _box(card)["w"] < 400  # a chip that wraps with its neighbours, not a full row
+    assert card.evaluate("n => getComputedStyle(n).borderTopLeftRadius") == "7px"
+
+
+def test_the_combined_list_is_stacked_rows_with_the_venue_on_a_muted_second_line(phone):
+    body = _view(phone, "combined-list")
+    row = body.locator("tr.fx-row").first
+    assert row.evaluate("r => getComputedStyle(r).display") == "grid"
+    tag, team = _box(row.locator(".comp-tag")), _box(row.locator(".fx-team"))
+    venue = _box(row.locator(".fx-venue"))
+    assert abs(tag["y"] - team["y"]) < 12  # competition tag and teams share the first line
+    assert venue["y"] > team["y"] + team["h"] - 2
+    assert body.locator("thead").is_hidden()
+    assert _scroll_overflow(phone) <= 0
+
+
+def test_the_breakdown_is_a_card_per_rule_with_inline_descriptions_on_a_phone(phone):
+    for details in phone.locator("#panel-1 .section-list > details").all():
+        details.evaluate("d => { d.open = true; }")
+    table = phone.locator("#panel-1 table.breakdown").first
+    assert table.locator("thead").is_hidden()
+    row = table.locator("tbody tr").first
+    assert row.evaluate("r => getComputedStyle(r).display") == "block"
+    assert row.locator(".phone-desc").is_visible()
+    assert row.locator("td.col-extra").is_visible()  # Examples no longer needs a sideways scroll
+    assert _box(table)["w"] <= 390
+
+
+def test_a_desktop_keeps_the_breakdown_table_without_inline_descriptions(page):
+    page.evaluate("document.querySelectorAll('#panel-1 .section-list > details').forEach(d => d.open = true)")
+    table = page.locator("#panel-1 table.breakdown").first
+    assert table.locator("thead").is_visible()
+    # Not drawn (a 1px clipped box), but still in the page for assistive technology (#41).
+    assert _box(table.locator("tbody .phone-desc").first)["w"] <= 1
+
+
+def test_season_strip_figures_stay_inside_their_cells(page, phone):
+    for target in (page, phone):
+        _view(target, "by-competition")
+        for cell in target.locator("#panel-1 .strip-cell:not(:disabled)").all():
+            inner = _box(cell.locator(".strip-net"))
+            outer = _box(cell)
+            assert inner["x"] >= outer["x"] + 3 and inner["x"] + inner["w"] <= outer["x"] + outer["w"] - 1
+            assert "." not in cell.locator(".strip-net").inner_text()
+
+
+def test_choosing_a_club_opens_its_rounds_after_collapse_all(phone):
+    body = _view(phone, "by-competition")
+    body.locator(".expand-all").tap()
+    body.locator(".expand-all").tap()  # collapse all
+    assert body.locator(".round.is-open").count() == 0
+    _open_filters(phone)
+    phone.select_option("#panel-1 .club-select", "club_b")
+    body = _view(phone, "by-competition")
+    assert body.locator(".round.collapsible.is-open").count() == body.locator(".round").count() > 0
+
+
+def test_a_phones_info_icon_is_not_covered_by_the_description_below_it(phone):
+    icon = phone.locator("#panel-1 .col .item .info-icon").first
+    icon.scroll_into_view_if_needed()
+    box = _box(icon)
+    for fx, fy in ((0.5, 0.97), (0.1, 0.97), (0.9, 0.97), (0.5, 0.5), (0.1, 0.03), (0.9, 0.03)):
+        hit = phone.evaluate(
+            "([x, y]) => !!document.elementFromPoint(x, y).closest('.info-icon')",
+            [box["x"] + box["w"] * fx, box["y"] + box["h"] * fy],
+        )
+        assert hit, (fx, fy)
+
+
+def test_the_round_folds_follow_a_viewport_crossing_600px(phone):
+    body = _view(phone, "by-competition")
+    assert body.locator(".round.collapsible").count() == 3
+    phone.set_viewport_size({"width": 1280, "height": 900})
+    phone.wait_for_function("!document.querySelector('#panel-1 .round.collapsible')")  # the redraw is async
+    assert body.locator(".round.collapsible").count() == 0
+    assert body.locator(".round .fixtures:visible").count() == 3
+    phone.set_viewport_size({"width": 390, "height": 844})
+    phone.wait_for_function("document.querySelector('#panel-1 .round.collapsible')")
+    assert body.locator(".round.collapsible").count() == 3
+    assert body.locator(".round .fixtures:visible").count() == 0
+
+
+def test_the_fold_state_carries_to_the_other_option(phone):
+    body = _view(phone, "by-competition")
+    body.locator(".round.collapsible").first.locator(".round-toggle").tap()
+    phone.locator(".tab").nth(1).tap()
+    other = phone.locator("#panel-2 .view-pane[data-view='by-competition'] .pane-body")
+    assert other.locator(".round.collapsible").first.get_attribute("class").count("is-open") == 1
+    assert other.locator(".round.is-open").count() == 1
+    phone.locator("#panel-2 .expand-all").tap()
+    phone.locator(".tab").nth(0).tap()
+    assert phone.locator("#panel-1 .round.is-open").count() == 3

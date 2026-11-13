@@ -9,12 +9,13 @@ import math
 import re
 import tempfile
 from collections import Counter
-from datetime import date
+from datetime import UTC, date
 from pathlib import Path
 
 import factories as f
 import pytest
 
+from terminliste.display import short_date
 from terminliste.report import payload
 from terminliste.report.payload import json_for_script
 from terminliste.report.render import (
@@ -1298,7 +1299,7 @@ def test_render_report_shows_season_exclusions_with_their_reasons():
     assert "Season exclusions" in rendered
     assert "national day" in rendered
     assert "international break" in rendered
-    assert "01 Jun 2026" in rendered and "14 Jun 2026" in rendered
+    assert "Mon 1 Jun 2026" in rendered and "Sun 14 Jun 2026" in rendered
 
 
 def test_render_report_omits_season_exclusions_section_when_none_configured():
@@ -1401,7 +1402,145 @@ def test_render_report_lists_the_round_slots_and_search_space():
     assert f"{comp_m.rounds} rounds in {len(plans['elite'].candidates)} candidate slots" in rendered
     assert "ways to pick compatible slots" in rendered
     first = plans["elite"].chosen[0]
-    assert f"default {first.default_day.strftime('%a %d %b')}" in rendered
+    assert f"default {short_date(first.default_day)}" in rendered
+
+
+# -- top of page (#38) -------------------------------------------------------
+
+
+def _top_world():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    return world, season, _candidate(world, season, matches, [])
+
+
+def _render_result(world, season, result, **kwargs) -> str:
+    with tempfile.TemporaryDirectory() as tmp:
+        return render_report(world, season, result, Path(tmp) / "out.html", **kwargs).read_text(
+            encoding="utf-8"
+        )
+
+
+def _body(rendered: str) -> str:
+    return rendered.split("<script")[0]
+
+
+def test_default_title_names_the_leagues_from_the_world():
+    world, season, candidate = _top_world()
+    title = re.search(r"<h1>(.*?)</h1>", _render(world, season, [candidate])).group(1)
+    names = [world.competition(c).name for c in season.competitions]
+    assert title == f"{names[0]} & {names[1]} {season.year} — proposed fixture list"
+
+
+def test_an_explicit_title_wins():
+    world, season, candidate = _top_world()
+    assert "<h1>Custom</h1>" in _render(world, season, [candidate], title="Custom")
+
+
+def test_header_intro_stamp_commit_and_links(monkeypatch):
+    from datetime import datetime
+
+    monkeypatch.setattr("terminliste.report.render._git_short_commit", lambda: "abc1234")
+    world, season, candidate = _top_world()
+    result = SolverResult(candidates=[candidate], solver="test")
+    rendered = _render_result(
+        world, season, result,
+        json_name="2026.json", generated_at=datetime(2026, 11, 13, 9, 5, tzinfo=UTC),
+    )
+    header = rendered.split("<header>")[1].split("</header>")[0]
+    assert "back-to-back home weekends" in header
+    assert "generated Fri 13 Nov 2026 09:05 UTC" in header
+    assert "<code>abc1234</code>" in header
+    assert 'href="https://github.com/espenhk/season-scheduler"' in header
+    assert 'href="2026.json"' in header
+    assert "iterations" not in header
+
+
+def test_header_degrades_without_git_or_json(monkeypatch):
+    monkeypatch.setattr("terminliste.report.render._git_short_commit", lambda: None)
+    world, season, candidate = _top_world()
+    header = _render(world, season, [candidate]).split("<header>")[1].split("</header>")[0]
+    assert "generated " in header
+    assert "<code>" not in header
+    assert "download JSON" not in header
+
+
+def test_git_short_commit_is_none_when_git_cannot_run(monkeypatch):
+    import subprocess
+
+    from terminliste.report import render
+
+    def boom(*args, **kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert render._git_short_commit() is None
+
+
+def test_notes_are_styled_by_severity_and_info_moves_to_the_diagnostics_section():
+    from terminliste.solvers.base import error, info
+
+    world, season, candidate = _top_world()
+    result = SolverResult(
+        candidates=[candidate],
+        solver="test",
+        notes=[info("polish phase refined 3 of 3"), "a plain warning", error("nothing feasible")],
+    )
+    body = _body(_render_result(world, season, result))
+    banner, generation = body.split('<details class="generation">')
+    assert 'class="notes warning"' in banner and "a plain warning" in banner
+    assert 'class="notes error"' in banner and "nothing feasible" in banner
+    assert "polish phase" not in banner
+    assert "polish phase refined 3 of 3" in generation
+
+
+def test_data_caveat_sits_with_the_coverage_notes_when_data_is_unverified():
+    world, season, candidate = _top_world()
+    world.unverified_data = ["club", "venue"]
+    body = _body(_render(world, season, [candidate]))
+    top = body.split('<details class="generation">')[0]
+    assert "Club and venue data is marked verified: false" in top
+    assert "Coverage notes" in top
+    assert "verified: false" not in body.split("<footer>")[1]
+
+
+def test_no_data_caveat_when_everything_is_verified():
+    world, season, candidate = _top_world()
+    assert "verified: false" not in _body(_render(world, season, [candidate]))
+
+
+def test_diagnostics_follow_the_option_panels_in_one_collapsed_section():
+    from terminliste.model.calendar import build_calendar
+    from terminliste.model.schema import DatedNote
+    from terminliste.slot_planner import plan_slots
+
+    world, _, comp_m, comp_w = _two_dual_clubs_world()
+    season = f.season(
+        competitions=["elite", "topp"], start=date(2026, 3, 1), end=date(2026, 6, 30),
+        global_blackouts=[DatedNote(date=date(2026, 5, 17), reason="national day")],
+    )
+    plans = plan_slots(world, season, [comp_m, comp_w], build_calendar(world, season))
+    candidate = _candidate(
+        world, season, [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")], []
+    )
+    stats = SearchStats(investigated=10, feasible=1, hard_violation_scenarios=9)
+    result = SolverResult(
+        candidates=[candidate], solver="test", iterations=10, slot_plans=plans, search_stats=stats
+    )
+    body = _body(_render_result(world, season, result))
+
+    start = body.index('<details class="generation">')
+    assert "<details class=\"generation\" open" not in body
+    assert start > body.rindex('role="tabpanel"')
+    assert start < body.index("<footer>")
+    section = body[start:body.index("<footer>")]
+    for heading in ("Season exclusions", "Round slots", "How hard was this to schedule?"):
+        assert heading in section
+        assert heading not in body[:start]
+    assert "option seeds" not in section  # all seeds are 0 in this fixture
+    # Each league's clause names it, not just "16 rounds in 24 candidate slots".
+    for competition in (comp_m, comp_w):
+        assert f"{competition.name}: {competition.rounds} rounds in" in section
 
 
 # -- rule lens (#30) ---------------------------------------------------------
@@ -1958,3 +2097,374 @@ def test_a_cup_round_date_keeps_one_round_for_all_its_teams_and_each_view_names_
     assert {data["shared"][uid]["t"] for uid in cup_round["ids"]} == {"a_m", "b_m"}
     (league_view,) = data["options"][0]["byCompetition"]
     assert league_view["kind"] == "league"
+
+
+def test_write_json_emits_notes_with_their_severity(tmp_path):
+    from terminliste.report.render import write_json
+    from terminliste.solvers.base import error, info
+
+    result = SolverResult(solver="test", notes=[info("fyi"), "careful", error("broken")])
+    data = json.loads(write_json(result, tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert data["notes"] == [
+        {"text": "fyi", "severity": "info"},
+        {"text": "careful", "severity": "warning"},
+        {"text": "broken", "severity": "error"},
+    ]
+
+
+# -- polish (#39) ----------------------------------------------------------------
+
+
+def _stylesheet(rendered: str) -> str:
+    return re.search(r"<style>(.*?)</style>", rendered, re.S).group(1)
+
+
+class _NoTeams(_Unpinned):
+    """Like `_Unpinned`, but its event names no team either."""
+
+    def evaluate(self, index, ctx):
+        return ConstraintResult(
+            "home_away_balance",
+            "soft",
+            -6.0,
+            3,
+            [Event(delta=-2.0, detail="drifted", team_ids=()) for _ in range(3)],
+        )
+
+
+def test_a_rule_with_no_fixture_or_team_expands_to_what_it_counted_not_a_bare_count():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    rendered = _render(world, season, [_candidate(world, season, matches, [_NoTeams()])])
+    row = next(
+        m.group(0)
+        for m in re.finditer(r'<details class="item (?:up|down)">.*?</details>', rendered, re.S)
+        if "drifted" in m.group(0)
+    )
+    assert "3 events across the season, not tied to one fixture or team" in row
+    assert row.count("<li>drifted</li>") == 3
+    assert re.search(r">×\d+<", row) is None
+
+
+def test_the_head_carries_a_description_open_graph_tags_and_a_favicon():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 14), "va")]
+    rendered = _render(
+        world,
+        season,
+        [_candidate(world, season, matches, []), _candidate(world, season, matches, [])],
+    )
+    head = rendered[: rendered.index("</head>")]
+    description = re.search(r'<meta name="description" content="([^"]+)"', head).group(1)
+    assert "2 scored fixture lists" in description and "elite" in description
+    assert f'<meta property="og:description" content="{description}">' in head
+    assert re.search(r'<meta property="og:title" content="[^"]+">', head)
+    assert '<link rel="icon" href="data:image/svg+xml,' in head
+
+
+def test_the_collapsed_sections_sit_in_one_bordered_list_after_the_club_scorecard():
+    rendered, _ = _lens_page()
+    panel = rendered[rendered.index('role="tabpanel"') :]
+    start = panel.index('<div class="section-list">')
+    listed = panel[start : panel.index("<noscript>")]
+    assert panel.index('class="scope-card"') < start
+    for summary in ("Show all", "Full score breakdown", "Fairness across teams"):
+        assert summary in listed
+    assert listed.count("<details") >= 3
+
+
+def test_the_score_gets_a_banded_gauge():
+    from terminliste.report.render import SCORE_FAIR, SCORE_STRONG, _score_band
+
+    assert [
+        _score_band(p) for p in (SCORE_STRONG, SCORE_STRONG - 0.1, SCORE_FAIR, SCORE_FAIR - 0.1, 24)
+    ] == ["strong", "fair", "fair", "weak", "weak"]
+    rendered, _ = _lens_page()
+    gauge = re.search(
+        r'class="gauge gauge-(\w+)".*?width:([\d.]+)%.*?gauge-label">(\w+)<', rendered, re.S
+    )
+    assert gauge
+    band, width, label = gauge.groups()
+    assert band == label == _score_band(float(width))
+
+
+def test_the_payload_gives_each_leagues_preferred_weekday_as_a_browser_day_number():
+    _, data = _lens_page()
+    assert data["preferred"] == {"elite": 0, "topp": 0}  # Sunday is 0 in a browser
+
+
+def test_the_legend_keys_every_clubs_abbreviation_to_its_name():
+    rendered, _ = _lens_page()
+    key = rendered[rendered.index('class="abbr-key"') :]
+    key = key[: key.index("</details>")]
+    assert "<b>CLU</b>Club A" in key and "<b>OPP</b>Opp1" in key
+    assert "women" in key  # what a trailing K means
+
+
+def test_every_colour_the_stylesheet_uses_is_a_variable_so_the_dark_theme_can_restate_it():
+    rendered, _ = _lens_page()
+    css = _stylesheet(rendered)
+    assert "prefers-color-scheme: dark" in css and "color-scheme: light dark" in css
+    outside = re.sub(r":root \{[^}]*\}", "", css)
+    hexes = set(re.findall(r"#[0-9a-fA-F]{3,6}\b", outside.split("@media print")[0]))
+    assert hexes <= {"#d35400", "#000"}  # the jump flash's outline and a mask's opaque stop
+
+
+def test_nothing_in_the_stylesheet_masks_horizontal_overflow():
+    css = _stylesheet(_lens_page()[0])
+    assert not re.search(r"(?:^|\s)(?:html|body)\s*\{[^}]*overflow-x:\s*(?:hidden|clip)", css)
+
+
+def test_no_text_is_set_below_twelve_pixels_outside_the_phone_rules():
+    css = _stylesheet(_lens_page()[0])
+    desktop = css[: css.rindex("@media (max-width: 600px) {")]
+    sizes = []
+    for line in desktop.splitlines():
+        if "content: '▸'" in line or "700 10px/1" in line or "transition: transform" in line:
+            continue  # the disclosure arrow and the "i" glyph
+        sizes += [float(n) for n in re.findall(r"font(?:-size)?:[^;]*?(\d+(?:\.\d+)?)px", line)]
+    assert sizes and min(sizes) >= 12
+
+
+def test_the_print_rules_drop_the_controls_and_keep_rounds_whole():
+    css = _stylesheet(_lens_page()[0])
+    printed = css[css.index("@media print") :]
+    printed = printed[: printed.index("@media (max-width: 600px)")]
+    for hook in (".view-toggle", ".bar-filters", ".tabs", "break-inside: avoid", ".round"):
+        assert hook in printed
+
+
+# -- phone layout (#40) -------------------------------------------------------
+
+
+def test_the_breakdown_table_carries_its_column_names_and_an_inline_description_for_a_phone():
+    rendered, _ = _lens_page()
+    table = rendered[rendered.index('<table class="breakdown">') :]
+    table = table[: table.index("</table>")]
+    assert 'data-label="Contribution"' in table and 'data-label="Events"' in table
+    assert 'data-label="Type"' in table and 'data-label="Examples"' in table
+    assert table.count('class="rule-desc phone-desc"') == table.count('class="info-icon"')
+
+
+def test_the_legend_button_has_a_short_phone_label_and_the_month_dots_sit_in_the_key():
+    rendered, _ = _lens_page()
+    assert '<span class="key-long">Legend</span><span class="key-short">Key</span>' in rendered
+    panel = rendered[rendered.index('class="legend-panel"') :]
+    panel = panel[: panel.index("</section>")]
+    assert 'class="legend-dots"' in panel and "cal-dot" in panel
+    assert 'class="legend month-legend"' in rendered  # the desktop keeps the list beside the calendar
+
+
+
+# -- accessibility (#41) -------------------------------------------------------
+
+
+def _top_render() -> str:
+    world, season, candidate = _top_world()
+    second = _candidate(world, season, candidate.matches, [], label="Option 2")
+    return _render(world, season, [candidate, second])
+
+
+def test_the_page_opens_with_a_skip_link_and_wraps_its_content_in_main():
+    rendered = _top_render()
+    body = _body(rendered)
+    assert body.index('<a class="skip-link" href="#main">') < body.index("<header>")
+    assert body.index("<header>") < body.index('<main id="main" tabindex="-1">')
+    assert body.index("</main>") < body.index("<footer>")
+    assert body.index('role="tabpanel"') > body.index("<main")
+    assert body.index("</header>") < body.index("<main")  # the banner stays outside main
+
+
+def test_option_tabs_are_wired_to_their_panels_for_the_aria_tabs_pattern():
+    body = _body(_top_render())
+    assert '<div class="tabs" role="tablist" aria-label="Schedule options">' in body
+    for number, tabindex in ((1, 0), (2, -1)):
+        tab = re.search(rf'<button class="tab" role="tab" id="tab-{number}"[^>]*>', body).group(0)
+        assert f'aria-controls="panel-{number}"' in tab and f'tabindex="{tabindex}"' in tab
+        panel = re.search(rf'<section class="panel" id="panel-{number}"[^>]*>', body).group(0)
+        assert f'aria-labelledby="tab-{number}"' in panel and 'role="tabpanel"' in panel
+
+
+def test_the_view_switcher_is_a_labelled_radio_group():
+    body = _body(_top_render())
+    assert body.count('role="radiogroup" aria-label="View"') == 2  # one per option
+    buttons = re.findall(r'<button[^>]*class="view-btn"[^>]*>', body)
+    assert len(buttons) == 10
+    assert all('role="radio"' in b and "aria-pressed" not in b and 'aria-checked="false"' in b for b in buttons)
+
+
+def test_every_option_panel_has_headings_for_its_score_and_its_fixtures():
+    body = _body(_top_render())
+    for label in ("Option 1", "Option 2"):
+        assert f'<h2 class="sr-only">{label}: score and rules</h2>' in body
+        assert f'<h2 class="sr-only">{label}: fixtures</h2>' in body
+
+
+def test_a_rule_row_never_nests_a_button_inside_its_summary():
+    body = _body(_top_render())
+    for summary in re.findall(r"<summary class=\"top\">.*?</summary>", body, re.S):
+        assert "<button" not in summary
+        assert 'class="info-icon" aria-hidden="true"' in summary
+
+
+def test_dates_share_one_format_with_the_year_only_where_a_date_stands_alone():
+    rendered = _top_render()
+    body = _body(rendered)
+    season_line = re.search(r'<div class="sub">(.*?)</div>', body, re.S).group(1)
+    assert re.search(r"[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d{4} – [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d{4}", season_line)
+    assert not re.search(r"\b0\d [A-Z][a-z]{2}\b", body)  # no zero before the day
+
+
+def _tokens(css: str) -> tuple[dict[str, str], dict[str, str]]:
+    light = dict(re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-f]{6})", re.search(r":root \{(.*?)\n  \}", css, re.S).group(1)))
+    dark_block = re.search(r"prefers-color-scheme: dark\) \{\s*:root \{(.*?)\n    \}", css, re.S).group(1)
+    return light, {**light, **dict(re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-f]{6})", dark_block))}
+
+
+def _luminance(colour: str) -> float:
+    def channel(value: int) -> float:
+        c = value / 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (channel(int(colour[i : i + 2], 16)) for i in (1, 3, 5))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _ratio(a: str, b: str) -> float:
+    high, low = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+SURFACES = ("bg", "panel", "surface", "surface-2", "tint-neutral", "tint-accent", "tint-good", "tint-warn", "tint-bad")
+# Each text colour with the fills it is set on and the ratio it must reach: 4.5 is AA, and the small
+# muted text is held to 5.5.
+TEXT_ON = [
+    ("ink", SURFACES, 7.0),
+    ("ink-2", SURFACES, 7.0),
+    ("muted", SURFACES, 5.5),
+    ("muted", ("line",), 4.5),  # the "i" glyph on its grey disc
+    ("accent", ("bg", "panel", "surface", "tint-accent", "tint-neutral"), 4.5),
+    ("good-ink", ("bg", "panel", "surface", "tint-good", "tint-good-strong"), 4.5),
+    ("bad-ink", ("bg", "panel", "surface", "tint-bad", "tint-bad-strong", "tint-neutral"), 4.5),
+    ("warn-ink", ("bg", "panel", "surface", "tint-warn", "tint-warn-strong"), 4.5),
+    ("on-ink", ("ink",), 7.0),
+    ("on-ink-muted", ("ink",), 4.5),
+    ("on-bad", ("bad",), 4.5),
+    ("on-accent", ("accent",), 4.5),
+    ("tip-fg", ("tip-bg",), 7.0),
+    ("tip-muted", ("tip-bg",), 4.5),
+]
+
+
+@pytest.mark.parametrize("scheme", [0, 1], ids=["light", "dark"])
+def test_every_text_colour_clears_its_contrast_target_on_the_fills_it_sits_on(scheme):
+    tokens = _tokens(_stylesheet(_top_render()))[scheme]
+    failures = [
+        f"{fg} on {bg}: {_ratio(tokens[fg], tokens[bg]):.2f} < {need}"
+        for fg, fills, need in TEXT_ON
+        for bg in fills
+        if _ratio(tokens[fg], tokens[bg]) < need
+    ]
+    assert not failures, failures
+
+
+@pytest.mark.parametrize("scheme", [0, 1], ids=["light", "dark"])
+def test_edges_form_controls_and_swatch_outlines_reach_three_to_one(scheme):
+    css = _stylesheet(_top_render())
+    tokens = _tokens(css)[scheme]
+    for edge in ("good", "bad", "warn", "control-line"):
+        for fill in ("bg", "panel", "surface"):
+            assert _ratio(tokens[edge], tokens[fill]) >= 3, (edge, fill)
+    # The swatch ring is translucent: blend it over the fill before measuring.
+    rings = re.findall(r"--swatch-ring: rgba\((\d+), (\d+), (\d+), ([\d.]+)\)", css)
+    red, green, blue, alpha = (float(v) for v in rings[scheme])
+    for fill in ("panel", "surface"):
+        base = tokens[fill]
+        mixed = "#" + "".join(
+            f"{round(c * alpha + int(base[i : i + 2], 16) * (1 - alpha)):02x}"
+            for c, i in zip((red, green, blue), (1, 3, 5), strict=True)
+        )
+        assert _ratio(mixed, base) >= 3, fill
+
+
+# -- weight, links and export (#42) ----------------------------------------------
+
+
+def _dual_club_candidates():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va"),
+        f.match("topp", "a_w", "opp_w", date(2026, 6, 7), "va"),
+        f.match("elite", "b_m", "opp_m", date(2026, 6, 13), "vb", round_index=1),
+    ]
+    constraints = [ConsecutiveHomeDays(competitions=[comp_m, comp_w])]
+    return world, season, [
+        _candidate(world, season, matches, constraints),
+        _candidate(world, season, matches, constraints, label="Option 2"),
+    ]
+
+
+def test_the_fairness_rows_are_data_the_page_draws_when_the_section_opens():
+    world, season, candidates = _dual_club_candidates()
+    rendered = _render(world, season, candidates)
+    body = _body(rendered)
+    assert body.count('<details class="fairness">') == 2
+    assert 'class="fairness-row' not in body.replace('class="fairness-rows"', "") and 'class="fairness-bar"' not in body
+    data = _report_data(rendered)
+    rule_ids = [rule["id"] for rule in data["rules"]]
+    for option in data["options"]:
+        assert option["fairness"], "the option carries its fairness rows"
+        for rule, flagged, entries in option["fairness"]:
+            assert rule_ids[rule] and flagged in (0, 1)
+            counts = [count for _, count in entries]
+            assert counts == sorted(counts, reverse=True)
+
+
+def test_each_option_has_an_export_panel_that_the_bar_button_controls():
+    world, season, candidates = _dual_club_candidates()
+    body = _body(_render(world, season, candidates, json_name="2026.json"))
+    for number in (1, 2):
+        button = re.search(rf'<button[^>]*class="bar-btn export-toggle"[^>]*aria-controls="export-{number}"[^>]*>', body)
+        assert button and 'aria-expanded="false"' in button.group(0)
+        panel = re.search(rf'<div class="export-panel" id="export-{number}" hidden>.*?</div>\s*</div>', body, re.S).group(0)
+        assert 'class="bar-btn export-csv"' in panel and 'class="bar-btn export-ics"' in panel
+        assert '<a class="bar-btn" href="2026.json" download>' in panel
+        assert 'role="status"' in panel
+
+
+def test_the_export_panel_links_no_json_when_the_report_has_none():
+    world, season, candidates = _dual_club_candidates()
+    assert 'download>JSON' not in _body(_render(world, season, candidates))
+
+
+def test_the_page_names_the_season_for_the_files_it_builds():
+    world, season, candidates = _dual_club_candidates()
+    assert _report_data(_render(world, season, candidates))["export"] == {"season": season.id}
+
+
+def test_the_markup_carries_no_template_indentation_but_the_script_is_left_as_written():
+    world, season, candidates = _dual_club_candidates()
+    rendered = _render(world, season, candidates)
+    assert not re.search(r"\n[ \t]+<(div|span|details|section)", _body(rendered).split("</style>")[1])
+    assert "\n  // ------" in rendered.split("<script>")[1], "script bodies keep their own indentation"
+
+
+def test_a_rule_row_takes_no_namespace_argument():
+    template = (Path(__file__).parents[2] / "terminliste/report/templates/season.html.j2").read_text(encoding="utf-8")
+    assert "{% macro rule_row(row, kind, compact=false) %}" in template
+    assert not re.search(r"rule_row\([^)]*\bns\b", template)
+
+
+def test_drop_indentation_keeps_script_and_style_bodies_whatever_their_case():
+    from terminliste.report.render import _drop_indentation
+
+    html = (
+        "<div>\n    <p>a</p>\n</div>\n"
+        "<SCRIPT>\n    var s = '  x';\n</SCRIPT >\n"
+        "<style media=print>\n  p { x: 1 }\n</Style>\n  <b>z</b>"
+    )
+    assert _drop_indentation(html) == (
+        "<div>\n<p>a</p>\n</div>\n"
+        "<SCRIPT>\n    var s = '  x';\n</SCRIPT >\n"
+        "<style media=print>\n  p { x: 1 }\n</Style>\n<b>z</b>"
+    )

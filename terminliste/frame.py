@@ -292,7 +292,9 @@ def build_season_frame(world: World, season: Season) -> tuple[SeasonFrame, list[
         )
     if season.cup_competitions:
         cups = [world.competition(c) for c in season.cup_competitions]
-        frame.cup_schedules, cup_warnings = schedule_cups(cups, season, frame.commitments)
+        frame.cup_schedules, cup_warnings = schedule_cups(
+            cups, season, frame.commitments, world.team_label
+        )
         frame.cup_trees = build_cup_trees(cups, frame.cup_schedules)
         cup_set = CommitmentSet(
             c for tree in frame.cup_trees.values() for c in tree.commitments(threshold)

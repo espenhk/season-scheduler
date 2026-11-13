@@ -127,6 +127,34 @@ class Candidate:
         return {m.key: m.date for m in self.matches}
 
 
+class Note(str):
+    """A result note that knows how loudly to speak: "info" is routine solver
+    output, "warning" (the default for a plain string) qualifies the result,
+    "error" says the result is not usable as asked. A `str` subclass so every
+    consumer that treats notes as text keeps working (#38)."""
+
+    severity: str = "warning"
+
+    def __new__(cls, text: str, severity: str = "warning") -> Note:
+        if severity not in ("info", "warning", "error"):
+            raise ValueError(f"unknown note severity {severity!r}")
+        note = super().__new__(cls, text)
+        note.severity = severity
+        return note
+
+
+def info(text: str) -> Note:
+    return Note(text, "info")
+
+
+def error(text: str) -> Note:
+    return Note(text, "error")
+
+
+def severity_of(note: str) -> str:
+    return getattr(note, "severity", "warning")
+
+
 @dataclass
 class SolverResult:
     candidates: list[Candidate] = field(default_factory=list)

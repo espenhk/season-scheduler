@@ -87,8 +87,16 @@ def test_no_cup_date_is_within_rest_days_of_an_entrants_uefa_leg(frame):
 def test_validate_warns_when_a_forced_cup_date_sits_in_a_uefa_week(frame_and_warnings):
     _, warnings = frame_and_warnings
     assert any(
-        "Round 1" in w and "forced to 2026-08-22" in w and "UEFA week" in w for w in warnings
+        "Round 1" in w and "forced to Sat 22 Aug" in w and "UEFA week" in w for w in warnings
     )
+
+
+def test_cup_warnings_name_teams_and_not_their_ids(frame_and_warnings, world):
+    _, warnings = frame_and_warnings
+    uefa = [w for w in warnings if "UEFA week" in w]
+    assert uefa
+    assert not any(team_id in w for w in uefa for team_id in world.teams)
+    assert not any("2026-" in w for w in warnings)
 
 
 def test_blackouts_cover_the_2027_dates_the_cups_run_into(season):

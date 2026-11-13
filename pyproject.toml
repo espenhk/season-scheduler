@@ -16,6 +16,7 @@ jinja2 = ">=3.1"
 [tool.poetry.group.football-scheduler-test.dependencies]
 pytest = ">=8.0"
 playwright = ">=1.40"
+axe-playwright-python = ">=0.1.8"
 
 [tool.poetry.group.football-scheduler-cpsat]
 optional = true
@@ -33,6 +34,7 @@ ignore = [
     "E501",  # line-too-long: no formatter yet; not worth a wholesale reformat
     "B017",  # assert-raises-exception: tests assert bare Exception on purpose
 ]
+
 
 [build-system]
 requires = ["poetry-core"]

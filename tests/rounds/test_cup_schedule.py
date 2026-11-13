@@ -257,6 +257,44 @@ def test_forced_round_inside_a_uefa_week_warns_but_keeps_its_date():
     assert len(warnings) == 1 and "UEFA" in warnings[0] and "t1" in warnings[0]
 
 
+def test_uefa_clash_warning_uses_team_labels_and_short_dates():
+    cup = f.competition(
+        "cup",
+        ["t1"],
+        format="cup",
+        cup_rounds=[f.cup_round("r1", forced_date=date(2026, 8, 22), name="Round 1")],
+    )
+    commitments = f.commitment_set(_uefa("t1", date(2026, 8, 22)))
+    _, warnings = schedule_cup(
+        cup, blackouts=set(), european_commitments=commitments, team_label=str.upper
+    )
+    assert warnings == [
+        f"{cup.name}: Round 1 is forced to Sat 22 Aug, inside a UEFA week for T1"
+    ]
+
+
+def test_short_date_adds_the_year_only_when_it_differs_from_the_season():
+    from terminliste.display import short_date
+
+    assert short_date(date(2026, 8, 22)) == "Sat 22 Aug"
+    assert short_date(date(2026, 8, 22), 2026) == "Sat 22 Aug"
+    assert short_date(date(2027, 5, 15), 2026) == "Sat 15 May 2027"
+
+
+def test_cup_warning_for_a_date_in_the_next_year_names_the_year():
+    cup = f.competition(
+        "cup",
+        ["t1"],
+        format="cup",
+        cup_rounds=[f.cup_round("r1", forced_date=date(2027, 5, 15), name="Final")],
+    )
+    commitments = f.commitment_set(_uefa("t1", date(2027, 5, 15)))
+    _, warnings = schedule_cup(
+        cup, blackouts=set(), european_commitments=commitments, year=2026
+    )
+    assert "Sat 15 May 2027" in warnings[0]
+
+
 def test_forced_round_clear_of_uefa_does_not_warn():
     cup = f.competition(
         "cup",
@@ -298,7 +336,7 @@ def test_team_override_on_a_blackout_date_warns():
         ],
     )
     _, warnings = schedule_cup(cup, blackouts={date(2026, 9, 2)})
-    assert len(warnings) == 1 and "t2" in warnings[0] and "2026-09-02" in warnings[0]
+    assert len(warnings) == 1 and "t2" in warnings[0] and "Wed 2 Sep" in warnings[0]
 
 
 def test_a_weekend_preference_keeps_the_final_on_one_weekend_date():

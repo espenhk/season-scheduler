@@ -14,13 +14,16 @@ from __future__ import annotations
 
 import calendar
 import json
+import re
+import subprocess
 from collections import defaultdict
 from dataclasses import replace
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from ..display import short_date
 from ..frame import build_playoff_weeks
 from ..model.calendar import build_calendar, calendars_by_competition
 from ..model.loader import World
@@ -44,10 +47,12 @@ from ..scoring.registry import (
 )
 from ..scoring.soft import PreferredWeekday
 from ..slot_planner import search_space_log10
-from ..solvers.base import Candidate, SearchStats, SolverResult
+from ..solvers.base import Candidate, SearchStats, SolverResult, severity_of
 from . import payload
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
+
+REPO_URL = "https://github.com/espenhk/season-scheduler"
 
 # Fallback for a competition with no declared `color` (#77). The loader
 # catches this in the shipped data, but a `World` built without it — a test
@@ -75,6 +80,8 @@ def render_report(
     cup_schedules: list[CupSchedule] | None = None,
     european_competitions: list[Competition] | None = None,
     resolved_legs: ResolvedLegs | None = None,
+    json_name: str | None = None,
+    generated_at: datetime | None = None,
 ) -> Path:
     """Render a solver result (or a single scored schedule) as one HTML page.
 
@@ -86,6 +93,9 @@ def render_report(
     `cup_schedules`, and `european_competitions` + `resolved_legs` (pass both
     or neither), arrive already resolved — the caller resolves once rather
     than this doing it per render.
+
+    `json_name` is the machine-readable twin written next to the page, linked
+    from the header when given. `generated_at` defaults to now (UTC).
     """
     env = Environment(
         loader=FileSystemLoader(TEMPLATE_DIR),
@@ -93,6 +103,8 @@ def render_report(
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    env.filters["short_date"] = short_date
+    env.filters["standalone_date"] = _standalone_date
     template = env.get_template("season.html.j2")
 
     # Every team's marker is filled from its club's colour, dual club or not;
@@ -152,16 +164,29 @@ def render_report(
             payload.rule_table(rule_ids, hard_ids, frozenset(_INVERSE_RULES)),
             dual_club_ids,
         ),
+        "export": {"season": season.id},
         "tint": {"good": TINT_GOOD, "cost": TINT_COST},
+        "preferred": _preferred_days(world, competitions),
         "shared": [payload.shared_entry_wire(entry) for entry in shared_entries],
         "sharedByCompetition": payload.by_competition_wire(shared_views),
         "options": [option["client"] for option in options],
     }
 
     html = template.render(
-        title=title or f"{season.year} season schedule",
+        title=title or _default_title(world, season),
+        header=_header_view(
+            full_diagnostics, generated_at or datetime.now(UTC), json_name
+        ),
         season=season,
         result=result,
+        banner_notes=[
+            {"text": str(n), "severity": severity_of(n)}
+            for n in result.notes
+            if severity_of(n) != "info"
+        ],
+        info_notes=[str(n) for n in result.notes if severity_of(n) == "info"],
+        data_caveat=_data_caveat(world),
+        run_facts=_run_facts(result),
         options=options,
         comparison=comparison,
         search_stats=_search_stats_view(result.search_stats),
@@ -170,6 +195,10 @@ def render_report(
         season_exclusions=_season_exclusions(world, season),
         slot_views=_slot_views(world, season, result),
         flag_legend=_flag_legend(options, hard_ids),
+        description=_description(world, season, result),
+        club_key=_club_key(world),
+        band_strong=SCORE_STRONG,
+        band_fair=SCORE_FAIR,
         tint_good=TINT_GOOD,
         tint_cost=-TINT_COST,
         palette_css=payload.palette_css(club_colors, competitions),
@@ -178,8 +207,98 @@ def render_report(
         playoff_views=_playoff_views(world, season),
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(html, encoding="utf-8")
+    output_path.write_text(_drop_indentation(html), encoding="utf-8")
     return output_path
+
+
+_VERBATIM_BLOCK = re.compile(
+    r"(<(script|style)\b.*?</\2\b[^>]*>)", re.DOTALL | re.IGNORECASE
+)
+_INDENT = re.compile(r"\n[ \t]+")
+
+
+def _drop_indentation(html: str) -> str:
+    """The page without its template indentation, about 3% of the page (#42).
+
+    Each newline stays, so rendered whitespace is unchanged; script and style bodies are left as written.
+    """
+    pieces = _VERBATIM_BLOCK.split(html)
+    # split() yields text, block, tag name, text, ...; keep blocks, drop the tag-name groups.
+    return "".join(
+        piece if i % 3 == 1 else _INDENT.sub("\n", piece)
+        for i, piece in enumerate(pieces)
+        if i % 3 != 2
+    )
+
+
+def _league_names(world: World, season: Season) -> str:
+    names = [world.competition(c).name for c in season.competitions]
+    return " & ".join([", ".join(names[:-1]), names[-1]] if len(names) > 2 else names)
+
+
+def _default_title(world: World, season: Season) -> str:
+    return f"{_league_names(world, season)} {season.year} — proposed fixture list"
+
+
+def _description(world: World, season: Season, result: SolverResult) -> str:
+    """The page's meta description (#39)."""
+    options = len(result.candidates)
+    return (
+        f"{_league_names(world, season)} {season.year}: "
+        f"{options} scored fixture list{'' if options == 1 else 's'}, "
+        "with the rules each one satisfies or bends, and calendar and per-club views."
+    )
+
+
+def _git_short_commit() -> str | None:
+    """The checked-out commit, or `None` outside a git checkout (a tarball, a
+    container without git)."""
+    try:
+        done = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() or None
+
+
+def _header_view(full_diagnostics: bool, generated_at: datetime, json_name: str | None) -> dict:
+    stamp = f"{_standalone_date(generated_at.date())} {generated_at:%H:%M}"
+    if generated_at.tzinfo is not None:
+        stamp += f" {generated_at.tzname()}"
+    return {
+        "scoring_only": full_diagnostics,
+        "generated": stamp,
+        "commit": _git_short_commit(),
+        "repo_url": REPO_URL,
+        "json_name": json_name,
+    }
+
+
+def _data_caveat(world: World) -> str | None:
+    kinds = world.unverified_data
+    if not kinds:
+        return None
+    listed = " and ".join([", ".join(kinds[:-1]), kinds[-1]] if len(kinds) > 2 else kinds)
+    return (
+        f"{listed.capitalize()} data is marked verified: false (assembled from web search) — "
+        "check data/ before relying on this for anything real."
+    )
+
+
+def _run_facts(result: SolverResult) -> dict:
+    seeds = sorted({c.seed for c in result.candidates})
+    return {
+        "solver": result.solver,
+        "seeds": seeds if seeds != [0] else [],
+        "iterations": result.iterations,
+        "elapsed": f"{result.elapsed_s:.1f}s",
+    }
 
 
 def _build_option(
@@ -218,6 +337,7 @@ def _build_option(
         "hard_violations": score.hard_violations,
         "soft_total": score.soft_total,
         "points": score.points,
+        "band": _score_band(score.points),
         "scoring": _scoring_view(score, gross),
         "headlines": headlines,
         "hard_violation_detail": (
@@ -253,6 +373,7 @@ def _build_option(
             score_order=[rule_index[r.constraint_id] for r in _ordered_results(score)],
             club_unpinned=_club_unpinned(world, candidate, rule_index),
             club_ranks=_club_ranks(fairness),
+            fairness=fairness,
             limit=limit,
             full=full_diagnostics,
         ),
@@ -305,7 +426,12 @@ def _fixture_identity(match: Match) -> tuple:
 
 
 def _day_label(day: date) -> str:
-    return f"{day:%a} {day.day} {day:%b}"
+    return short_date(day)
+
+
+def _standalone_date(day: date) -> str:
+    """A date away from the fixture views, where nothing implies the year: "Sat 22 Aug 2026"."""
+    return f"{short_date(day)} {day.year}"
 
 
 def _fixture_diff(world: World, baseline: list[Match], other: list[Match]) -> dict:
@@ -1042,6 +1168,33 @@ def _match_entries(
 TINT_GOOD = 5.0
 TINT_COST = -3.0
 
+# Score bands for the gauge beside the total (#39): at or above STRONG is strong,
+# at or above FAIR is fair, below is weak.
+SCORE_STRONG = 80
+SCORE_FAIR = 60
+
+
+def _score_band(points: float) -> str:
+    return "strong" if points >= SCORE_STRONG else "fair" if points >= SCORE_FAIR else "weak"
+
+
+def _club_key(world: World) -> list[dict]:
+    """Every club's short name beside its full name, for the legend's abbreviation key (#39)."""
+    return [
+        {"short": club.short_name, "name": club.name, "cls": payload.club_class(club.id)}
+        for club in sorted(world.clubs.values(), key=lambda c: c.name)
+    ]
+
+
+def _preferred_days(world: World, competition_ids) -> dict[str, int]:
+    """Each league's preferred weekday as the browser numbers days (0 = Sunday)."""
+    return {
+        competition.id: (WEEKDAYS.index(competition.preferred_weekday) + 1) % 7
+        for competition in world.competitions.values()
+        if competition.id in competition_ids
+    }
+
+
 # Rules whose reward is the common case: their fixtures stay quiet and the
 # report badges the exceptions instead (#29).
 _INVERSE_RULES = {"preferred_weekday"}
@@ -1352,11 +1505,9 @@ def _cup_views(cup_schedules: list[CupSchedule], cup_entries: list[dict]) -> lis
 
 def _cup_round(placement: CupRoundPlacement, fixtures: list[dict]) -> dict:
     if placement.spread_days == 0:
-        dates = placement.earliest_date.strftime("%d %b %Y")
+        dates = _standalone_date(placement.earliest_date)
     else:
-        dates = (
-            f"{placement.earliest_date.strftime('%d %b')} – {placement.latest_date.strftime('%d %b %Y')}"
-        )
+        dates = f"{short_date(placement.earliest_date)} – {_standalone_date(placement.latest_date)}"
     venue_summary = _cup_venue_summary(placement.venue_type)
     return {
         "note": placement.note,
@@ -1536,8 +1687,8 @@ def _european_venue_label(world: World, team_id: str, venue_type: str) -> str:
 def _european_round_date_label(leg_dates: tuple[date, date]) -> str:
     first_date, second_date = leg_dates
     if first_date == second_date:
-        return first_date.strftime("%d %b %Y")
-    return f"{first_date.strftime('%d %b')} – {second_date.strftime('%d %b %Y')}"
+        return _standalone_date(first_date)
+    return f"{short_date(first_date)} – {_standalone_date(second_date)}"
 
 
 def _fairness_rows(world: World, candidate: Candidate) -> list[dict]:
@@ -1647,8 +1798,8 @@ def _round_date_label(entries: list[dict]) -> str:
     if not days:
         return ""
     if len(days) == 1:
-        return days[0].strftime("%d %b")
-    return f"{days[0].strftime('%d %b')} – {days[-1].strftime('%d %b')}"
+        return short_date(days[0])
+    return f"{short_date(days[0])} – {short_date(days[-1])}"
 
 
 def write_json(result: SolverResult, output_path: Path) -> Path:
@@ -1658,7 +1809,7 @@ def write_json(result: SolverResult, output_path: Path) -> Path:
         "solver": result.solver,
         "iterations": result.iterations,
         "elapsed_s": round(result.elapsed_s, 2),
-        "notes": result.notes,
+        "notes": [{"text": str(n), "severity": severity_of(n)} for n in result.notes],
         "search_stats": {
             "investigated": stats.investigated,
             "feasible": stats.feasible,
