@@ -7,6 +7,7 @@ from bisect import bisect_right
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
+from .display import short_date
 from .frame import SeasonFrame
 from .model.calendar import SeasonCalendar, calendars_by_competition, competition_window
 from .model.loader import World
@@ -185,8 +186,9 @@ def plan_league_slots(
     for round_index, slot in plan.clashing_rounds.items():
         teams = ", ".join(world.team_label(t) for t in slot)
         plan.warnings.append(
-            f"{competition.id}: round {round_index + 1} on {plan.chosen[round_index].default_day} "
-            f"clashes with a hard cup or UEFA commitment for {teams}; no clear slot was available"
+            f"{competition.name}: round {round_index + 1} on "
+            f"{short_date(plan.chosen[round_index].default_day, season.year)} clashes with a "
+            f"hard cup or UEFA commitment for {teams}; no clear slot was available"
         )
     return plan
 

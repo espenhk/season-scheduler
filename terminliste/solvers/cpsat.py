@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import NamedTuple
 
+from ..display import short_date
 from ..frame import SeasonFrame
 from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
 from ..model.loader import World
@@ -43,6 +44,8 @@ from .base import (
     SearchStats,
     SolveRequest,
     SolverResult,
+    error,
+    info,
     resolve_slot_plans,
     select_diverse,
 )
@@ -323,7 +326,9 @@ class CpSatScheduler:
             candidate.label = f"Option {position}"
         if chosen and not any(c.score.feasible for c in chosen):
             notes.append(
-                "No fully feasible schedule found — see the hard-rule rows in the breakdown."
+                error(
+                    "No fully feasible schedule found — see the hard-rule rows in the breakdown."
+                )
             )
 
         best_plans = plans_by_candidate.get(id(chosen[0])) if chosen else None
@@ -379,8 +384,10 @@ def _run_pass(
 
         if attempt == 0 and pass_index == 0:
             notes.append(
-                f"cpsat level 1 (rounds -> slots, home/away): {level_one.counts[0]} variables, "
-                f"{level_one.counts[1]} constraints"
+                info(
+                    f"cpsat level 1 (rounds -> slots, home/away): {level_one.counts[0]} variables, "
+                    f"{level_one.counts[1]} constraints"
+                )
             )
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             if status != cp_model.INFEASIBLE:
@@ -389,7 +396,7 @@ def _run_pass(
                 give_up_on_level_two()
             elif cuts:
                 # Level 1 was feasible before the diversity cuts, so only they close it.
-                notes.append(f"pass {pass_index}: no further distinct slot assignment exists")
+                notes.append(info(f"pass {pass_index}: no further distinct slot assignment exists"))
             else:
                 culprits = _culprits(solver, status, level_one.assumptions, cp_model)
                 stats.investigated += 1
@@ -416,8 +423,10 @@ def _run_pass(
         status2 = two.Solve(built.model)
         if attempt == 0 and pass_index == 0:
             notes.append(
-                f"cpsat level 2 (match days): {built.counts[0]} variables, "
-                f"{built.counts[1]} constraints"
+                info(
+                    f"cpsat level 2 (match days): {built.counts[0]} variables, "
+                    f"{built.counts[1]} constraints"
+                )
             )
         if status2 == cp_model.INFEASIBLE and request.relax_min_rest:
             relaxed = _build_level_two(cp_model, problem, placed, previous_dates, relax=True)
@@ -437,8 +446,10 @@ def _run_pass(
         if status2 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             if failed_culprits:
                 notes.append(
-                    f"pass {pass_index}: {len(failed_culprits)} level 1 choice(s) rejected by "
-                    "level 2 before one fit"
+                    info(
+                        f"pass {pass_index}: {len(failed_culprits)} level 1 choice(s) rejected by "
+                        "level 2 before one fit"
+                    )
                 )
             matches = _extract(two, built.placed, built.days)
             return solution, matches, _slot_plans(problem, solution)
@@ -831,8 +842,9 @@ def _slot_plans(problem: _Problem, solution: _LevelOneSolution) -> dict[str, Slo
         for round_index, slot in plan.clashing_rounds.items():
             teams = ", ".join(problem.world.team_label(t) for t in slot)
             plan.warnings.append(
-                f"{lg.id}: round {round_index + 1} on {chosen[round_index].default_day} "
-                f"clashes with a hard cup or UEFA commitment for {teams}"
+                f"{problem.world.competition(lg.id).name}: round {round_index + 1} on "
+                f"{short_date(chosen[round_index].default_day, problem.season.year)} clashes with "
+                f"a hard cup or UEFA commitment for {teams}"
             )
         plans[lg.id] = plan
     return plans
@@ -1123,8 +1135,9 @@ def _slot_shortage(problem: _Problem) -> list[str]:
         if usable >= lg.rounds:
             continue
         notes.append(
-            f"{lg.id}: {usable} usable round slots for {lg.rounds} rounds — "
-            f"{len(lg.closed)} of {len(lg.slot_plan.candidates)} candidate slots are closed by the frame"
+            f"{problem.world.competition(lg.id).name}: {usable} usable round slots for "
+            f"{lg.rounds} rounds — {len(lg.closed)} of {len(lg.slot_plan.candidates)} "
+            f"candidate slots are closed by the frame"
         )
         notes.extend(_closed_slot_lines(problem, lg))
     return notes

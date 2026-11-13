@@ -17,6 +17,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from ..display import short_date
 from ..frame import SeasonFrame
 from ..model.calendar import (
     SeasonCalendar,
@@ -282,6 +283,7 @@ def resolve_round_pins(
             commitments,
             movable=True,
             slot=plan.slots.get(final_round),
+            year=season.year,
         )
         pins[(plan.competition.id, final_round)] = chosen
         if warning:
@@ -293,7 +295,7 @@ def resolve_round_pins(
             if round_index not in plan.anchors:
                 continue
             _, warning = _clear_pin_date(
-                fixed.date, plan, None, commitments, movable=False
+                fixed.date, plan, None, commitments, movable=False, year=season.year
             )
             pins[(plan.competition.id, round_index)] = fixed.date
             if warning:
@@ -307,7 +309,7 @@ def resolve_round_pins(
             continue
         round_index = round_for_date(plan.slots, plan.anchors, requirement.date)
         _, warning = _clear_pin_date(
-            requirement.date, plan, None, commitments, movable=False
+            requirement.date, plan, None, commitments, movable=False, year=season.year
         )
         pins[(plan.competition.id, round_index)] = requirement.date
         if warning:
@@ -323,6 +325,7 @@ def _clear_pin_date(
     commitments: CommitmentSet,
     movable: bool,
     slot: RoundSlot | None = None,
+    year: int | None = None,
 ) -> tuple[date, str | None]:
     """The pin date to use, plus a warning if it still conflicts.
 
@@ -343,8 +346,8 @@ def _clear_pin_date(
     round_desc = "final round" if movable else "full-round requirement"
     resolution = "no clear nearby date was found" if movable else "the date cannot move"
     return anchor, (
-        f"{plan.competition.id}: {round_desc} on {anchor} conflicts with a hard cup or "
-        f"European commitment for at least one team, and {resolution}"
+        f"{plan.competition.name}: {round_desc} on {short_date(anchor, year)} conflicts with "
+        f"a hard cup or European commitment for at least one team, and {resolution}"
     )
 
 
@@ -538,9 +541,9 @@ def build_initial_schedule(
         claimed.add((fixture.competition_id, fixture.round_index, fixture.home_team, fixture.away_team))
         if not plan.slots[fixture.round_index].contains(requirement.date):
             pin_warnings.append(
-                f"{requirement.competition}: fixed requirement {requirement.id} on "
-                f"{requirement.date} lies outside every round slot; the match is placed "
-                f"there regardless of its round's slot"
+                f"{plan.competition.name}: fixed requirement {requirement.id} on "
+                f"{short_date(requirement.date, season.year)} lies outside every round slot; "
+                f"the match is placed there regardless of its round's slot"
             )
         venue = world.team(fixture.home_team).home_venue
         match = Match(

@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import calendar
 import json
+import subprocess
 from collections import defaultdict
 from dataclasses import replace
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -44,10 +45,12 @@ from ..scoring.registry import (
 )
 from ..scoring.soft import PreferredWeekday
 from ..slot_planner import search_space_log10
-from ..solvers.base import Candidate, SearchStats, SolverResult
+from ..solvers.base import Candidate, SearchStats, SolverResult, severity_of
 from . import payload
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
+
+REPO_URL = "https://github.com/espenhk/season-scheduler"
 
 # Fallback for a competition with no declared `color` (#77). The loader
 # catches this in the shipped data, but a `World` built without it — a test
@@ -75,6 +78,8 @@ def render_report(
     cup_schedules: list[CupSchedule] | None = None,
     european_competitions: list[Competition] | None = None,
     resolved_legs: ResolvedLegs | None = None,
+    json_name: str | None = None,
+    generated_at: datetime | None = None,
 ) -> Path:
     """Render a solver result (or a single scored schedule) as one HTML page.
 
@@ -86,6 +91,9 @@ def render_report(
     `cup_schedules`, and `european_competitions` + `resolved_legs` (pass both
     or neither), arrive already resolved — the caller resolves once rather
     than this doing it per render.
+
+    `json_name` is the machine-readable twin written next to the page, linked
+    from the header when given. `generated_at` defaults to now (UTC).
     """
     env = Environment(
         loader=FileSystemLoader(TEMPLATE_DIR),
@@ -159,9 +167,20 @@ def render_report(
     }
 
     html = template.render(
-        title=title or f"{season.year} season schedule",
+        title=title or _default_title(world, season),
+        header=_header_view(
+            full_diagnostics, generated_at or datetime.now(UTC), json_name
+        ),
         season=season,
         result=result,
+        banner_notes=[
+            {"text": str(n), "severity": severity_of(n)}
+            for n in result.notes
+            if severity_of(n) != "info"
+        ],
+        info_notes=[str(n) for n in result.notes if severity_of(n) == "info"],
+        data_caveat=_data_caveat(world),
+        run_facts=_run_facts(result),
         options=options,
         comparison=comparison,
         search_stats=_search_stats_view(result.search_stats),
@@ -180,6 +199,66 @@ def render_report(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")
     return output_path
+
+
+def _league_names(world: World, season: Season) -> str:
+    names = [world.competition(c).name for c in season.competitions]
+    return " & ".join([", ".join(names[:-1]), names[-1]] if len(names) > 2 else names)
+
+
+def _default_title(world: World, season: Season) -> str:
+    return f"{_league_names(world, season)} {season.year} — proposed fixture list"
+
+
+def _git_short_commit() -> str | None:
+    """The checked-out commit, or `None` outside a git checkout (a tarball, a
+    container without git)."""
+    try:
+        done = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() or None
+
+
+def _header_view(full_diagnostics: bool, generated_at: datetime, json_name: str | None) -> dict:
+    stamp = generated_at.strftime("%d %b %Y %H:%M")
+    if generated_at.tzinfo is not None:
+        stamp += f" {generated_at.tzname()}"
+    return {
+        "scoring_only": full_diagnostics,
+        "generated": stamp,
+        "commit": _git_short_commit(),
+        "repo_url": REPO_URL,
+        "json_name": json_name,
+    }
+
+
+def _data_caveat(world: World) -> str | None:
+    kinds = world.unverified_data
+    if not kinds:
+        return None
+    listed = " and ".join([", ".join(kinds[:-1]), kinds[-1]] if len(kinds) > 2 else kinds)
+    return (
+        f"{listed.capitalize()} data is marked verified: false (assembled from web search) — "
+        "check data/ before relying on this for anything real."
+    )
+
+
+def _run_facts(result: SolverResult) -> dict:
+    seeds = sorted({c.seed for c in result.candidates})
+    return {
+        "solver": result.solver,
+        "seeds": seeds if seeds != [0] else [],
+        "iterations": result.iterations,
+        "elapsed": f"{result.elapsed_s:.1f}s",
+    }
 
 
 def _build_option(
@@ -1658,7 +1737,7 @@ def write_json(result: SolverResult, output_path: Path) -> Path:
         "solver": result.solver,
         "iterations": result.iterations,
         "elapsed_s": round(result.elapsed_s, 2),
-        "notes": result.notes,
+        "notes": [{"text": str(n), "severity": severity_of(n)} for n in result.notes],
         "search_stats": {
             "investigated": stats.investigated,
             "feasible": stats.feasible,

@@ -2120,3 +2120,13 @@ def test_a_list_chip_collapses_and_reopens_while_the_text_filter_is_on(chip_page
     assert members.first.is_hidden()
     toggle.click()
     assert toggle.get_attribute("aria-expanded") == "true" and members.first.is_visible()
+
+
+def test_generation_details_sit_below_the_options_and_start_collapsed(page):
+    section = page.locator("details.generation")
+    assert section.get_attribute("open") is None
+    assert section.bounding_box()["y"] > page.locator("#panel-1").bounding_box()["y"]
+    assert page.locator("header h1").inner_text().endswith("proposed fixture list")
+    section.locator("summary").click()
+    assert section.get_attribute("open") is not None
+    assert "Solver" in section.inner_text()
