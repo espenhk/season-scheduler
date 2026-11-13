@@ -19,15 +19,18 @@
     --panel: #ffffff;
     --ink: #1c1c1a;
     --ink-2: #45453f;
-    --muted: #6b6b66;
+    --muted: #595953;
     --line: #e0e0da;
     --good: #1e8449;
     --bad: #c0392b;
     --warn: #b9770e;
-    --accent: #2471a3;
+    --accent: #1d5f8a;
     /* Text in the cost colour: --warn stays for edges, this one clears 4.5:1 on the panel and page. */
     --warn-ink: #94620a;
     --good-ink: #14653a;
+    --bad-ink: #a52e22;
+    /* Borders of form controls and other boundaries that must read at 3:1; --line is only a divider. */
+    --control-line: #85857f;
     --panel-pad: 24px;
     /* Surfaces and tints: every fill the page uses is a variable, so the dark theme only re-states these. */
     --surface: #fcfcfb;
@@ -53,7 +56,7 @@
     --tip-fg: #ffffff;
     --tip-muted: #c9c9c4;
     /* A thin ring on club swatches: two navies, or a pale yellow on white, stay apart. */
-    --swatch-ring: rgba(0, 0, 0, 0.45);
+    --swatch-ring: rgba(0, 0, 0, 0.5);
   }
   @media screen and (prefers-color-scheme: dark) {
     :root {
@@ -61,7 +64,7 @@
       --panel: #1e1e1c;
       --ink: #ecece8;
       --ink-2: #c8c8c2;
-      --muted: #a4a49d;
+      --muted: #aeaea7;
       --line: #3b3b36;
       --good: #4fbf7f;
       --bad: #ef7a6d;
@@ -69,6 +72,8 @@
       --accent: #5aa9dd;
       --warn-ink: #e6b04c;
       --good-ink: #6fd39a;
+      --bad-ink: #ef7a6d;
+      --control-line: #85857e;
       --surface: #242422;
       --surface-2: #2a2a27;
       --tint-neutral: #343430;
@@ -118,11 +123,12 @@
     background: var(--tint-warn); font-size: 14px;
   }
   .warnings div { margin: 2px 0; }
+  .warn-title { margin: 0 0 4px; font-size: 14px; }
   .hardbox {
     margin-top: 22px; padding: 16px 18px; border-radius: 8px;
     border: 1px solid var(--bad-line); background: var(--tint-bad);
   }
-  .hardbox h3 { margin: 0 0 10px; font-size: 14px; color: var(--bad); text-transform: uppercase; letter-spacing: 0.05em; }
+  .hardbox h3 { margin: 0 0 10px; font-size: 14px; color: var(--bad-ink); text-transform: uppercase; letter-spacing: 0.05em; }
   .hardbox .item { border-left-color: var(--bad); }
 
   /* -- option tabs -- */
@@ -203,10 +209,18 @@
   .cmp-list { margin: 6px 0 0; padding-left: 18px; font-size: 13.5px; }
   .cmp-list li { margin: 2px 0; }
   .cmp-date { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 4px; }
-  .sr-only {
+  /* A rule's description stays in the page for assistive technology where it is not drawn (#41). */
+  .sr-only, .phone-desc {
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
     clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
   }
+  .skip-link {
+    position: absolute; left: 8px; top: -64px; z-index: 40; padding: 8px 14px; border-radius: 6px;
+    background: var(--ink); color: var(--on-ink); font-weight: 600; text-decoration: none;
+  }
+  .skip-link:focus { top: 8px; }
+  main:focus { outline: none; }
+  :where(a, button, summary, select, input, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .panel {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: 0 8px 8px 8px; padding: var(--panel-pad);
@@ -221,8 +235,8 @@
     font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 20px;
     text-transform: uppercase; letter-spacing: 0.04em;
   }
-  .badge.ok { background: var(--tint-good-strong); color: var(--good); }
-  .badge.fail { background: var(--tint-bad-strong); color: var(--bad); }
+  .badge.ok { background: var(--tint-good-strong); color: var(--good-ink); }
+  .badge.fail { background: var(--tint-bad-strong); color: var(--bad-ink); }
 
   .headlines { display: flex; gap: 28px; margin: 20px 0 4px; flex-wrap: wrap; }
   .headline .v { font-size: 24px; font-weight: 700; }
@@ -241,7 +255,8 @@
      gets padding from summary.top/.item-body instead, further down. */
   .item:not(details) { padding: 8px 0 8px 12px; }
   .item.up { border-left-color: var(--good); }
-  .item.down { border-left-color: var(--bad); }
+  /* Cost edges are dashed and upside edges solid, so the two differ without colour (#41). */
+  .item.down { border-left-color: var(--bad); border-left-style: dashed; }
   .item .top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
   details.item > summary.top { cursor: pointer; padding: 8px 8px 8px 4px; list-style: none; }
   details.item > summary.top::-webkit-details-marker { display: none; }
@@ -253,11 +268,11 @@
   details.item > summary.top .name-block { margin-right: auto; min-width: 0; display: flex; flex-direction: column; }
   .rule-desc { color: var(--muted); font-size: 12.5px; line-height: 1.35; margin-top: 2px; }
   .coverage { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; margin-top: 1px; }
-  .gain-text { color: var(--good); }
-  .cost-text { color: var(--bad); }
+  .gain-text { color: var(--good-ink); }
+  .cost-text { color: var(--bad-ink); }
   .split-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--tint-neutral); margin: 10px 0 6px; max-width: 600px; }
   .split-gain { display: block; height: 100%; background: var(--good); }
-  .split-cost { display: block; height: 100%; background: var(--bad); }
+  .split-cost { display: block; height: 100%; background: var(--bad) repeating-linear-gradient(135deg, transparent 0 3px, var(--tint-bad) 3px 6px); }
   .all-soft { margin-top: 22px; }
   .all-soft > summary { cursor: pointer; color: var(--accent); font-size: 13.5px; font-weight: 600; }
   .all-soft .soft-sum { font-size: 13.5px; margin: 10px 0 0; }
@@ -265,14 +280,14 @@
   .item.compact .name-block { margin-right: auto; min-width: 0; display: flex; flex-direction: column; }
   .all-soft .neutral-list { font-size: 13px; color: var(--muted); margin: 0; }
   .hard-ok { margin: 8px 0 10px; font-size: 13px; }
-  .hard-ok > summary { cursor: pointer; color: var(--good); font-weight: 600; }
-  .phone-desc, .legend-dots, .key-short, .round-tools { display: none; }
+  .hard-ok > summary { cursor: pointer; color: var(--good-ink); font-weight: 600; }
+  .legend-dots, .key-short, .round-tools { display: none; }
   .round-toggle { all: unset; }
   .item-body { padding: 0 8px 10px 16px; }
   .item .name { font-weight: 600; font-size: 14px; }
   .item .delta { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; white-space: nowrap; }
-  .up .delta { color: var(--good); }
-  .down .delta { color: var(--bad); }
+  .up .delta { color: var(--good-ink); }
+  .down .delta { color: var(--bad-ink); }
   .desc { color: var(--muted); font-size: 13px; margin-top: 2px; }
   .examples, .occurrences { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); }
   .examples li, .occurrences li { margin: 2px 0; }
@@ -329,9 +344,9 @@
     font-size: 12px; padding: 2px 8px; border-radius: 10px; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.04em;
   }
-  .difficulty-easy { background: var(--tint-good-strong); color: var(--good); }
-  .difficulty-moderate { background: var(--tint-warn); color: var(--warn); }
-  .difficulty-hard { background: var(--tint-bad); color: var(--bad); }
+  .difficulty-easy { background: var(--tint-good-strong); color: var(--good-ink); }
+  .difficulty-moderate { background: var(--tint-warn); color: var(--warn-ink); }
+  .difficulty-hard { background: var(--tint-bad); color: var(--bad-ink); }
   .search-stats .desc { margin-top: 6px; }
 
   /* -- rule contributions as a share of the season's movement (#34) -- */
@@ -340,9 +355,9 @@
   .contrib .share-fill { display: block; height: 100%; border-radius: 4px; background: var(--muted); }
   .contrib .share-text { font-weight: 700; font-size: 14px; min-width: 3.2em; text-align: right; }
   .contrib.gain .share-fill { background: var(--good); }
-  .contrib.gain .share-text { color: var(--good); }
-  .contrib.cost .share-fill { background: var(--bad); }
-  .contrib.cost .share-text { color: var(--bad); }
+  .contrib.gain .share-text { color: var(--good-ink); }
+  .contrib.cost .share-fill { background: var(--bad) repeating-linear-gradient(135deg, transparent 0 3px, var(--tint-bad) 3px 6px); }
+  .contrib.cost .share-text { color: var(--bad-ink); }
   .raw { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
   @media (max-width: 600px) {
     .contrib { gap: 6px; }
@@ -359,7 +374,7 @@
   .fairness-row.flagged { border-color: var(--warn-line); background: var(--tint-warn); }
   .fairness-row .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   .fairness-row .fname { font-weight: 600; font-size: 13.5px; }
-  .fairness-row .flag { font-size: 12px; color: var(--warn); font-weight: 700; }
+  .fairness-row .flag { font-size: 12px; color: var(--warn-ink); font-weight: 700; }
   .fairness-bars { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; }
   .fairness-bar { display: grid; grid-template-columns: 150px 1fr 28px; align-items: center; gap: 8px; font-size: 12.5px; }
   .fairness-bar .flabel { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -445,7 +460,7 @@
   .view-btn.active { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
   .club-filter { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
   .club-filter select {
-    font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line);
+    font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--control-line);
     background: var(--panel); color: var(--ink);
   }
 
@@ -516,8 +531,8 @@
   .occ-fx { font-weight: 600; }
   .occ-detail { color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
   .occ-delta { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; text-align: right; }
-  .occ-delta.good { color: var(--good); }
-  .occ-delta.cost, .occ-delta.broken { color: var(--bad); }
+  .occ-delta.good { color: var(--good-ink); }
+  .occ-delta.cost, .occ-delta.broken { color: var(--bad-ink); }
   .occ-delta.none { color: var(--muted); font-weight: 400; }
   .tooltip.show { pointer-events: none; }
   .tooltip .tt-hint { display: block; margin-top: 5px; color: var(--tip-muted); font-size: 12px; }
@@ -555,10 +570,10 @@
   .round .rlabel b { display: block; color: var(--ink); font-size: 14px; }
   /* Round and week totals: the label's edge takes the net's colour, the text says the figure. */
   .round .rlabel.rl-good { border-left: 3px solid var(--good); padding-left: 8px; }
-  .round .rlabel.rl-cost { border-left: 3px solid var(--warn); padding-left: 8px; }
+  .round .rlabel.rl-cost { border-left: 3px dashed var(--warn); padding-left: 8px; }
   .rsum { margin-top: 3px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .rsum .rnet { font-weight: 700; color: var(--ink); }
-  .rsum .rnet.good { color: var(--good); }
+  .rsum .rnet.good { color: var(--good-ink); }
   .rsum .rnet.cost { color: var(--warn-ink); }
   .rtag {
     display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px;
@@ -585,21 +600,29 @@
     border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 7px;
     padding: 7px 12px 7px 10px; font-size: 13px; background: var(--surface); white-space: nowrap;
   }
-  .fx-main { display: inline-flex; align-items: center; gap: 5px; }
+  /* The card's one control: the whole line, announced as a sentence, opens the detail (#41). */
+  .fx-main, .tl-main {
+    font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; text-align: left; cursor: pointer;
+    border-radius: 4px;
+  }
+  .fx-main { display: block; }
+  .fx-visual { display: inline-flex; align-items: center; gap: 5px; }
+  .tl-main { display: block; width: 100%; }
+  .day-main { display: contents; }
   .fx .d { color: var(--muted); font-variant-numeric: tabular-nums; }
   .fx .h { font-weight: 600; }
   .fx .vs { color: var(--muted); }
   /* Card edge by net points: green gains, amber costs, red a broken hard rule. */
   .edge-good { border-left-color: var(--good); }
-  .edge-cost { border-left-color: var(--warn); }
-  .edge-broken { border-left-color: var(--bad); }
+  .edge-cost { border-left-color: var(--warn); border-left-style: dashed; }
+  .edge-broken { border-left-color: var(--bad); border-left-style: double; }
   .fx.edge-good { background: var(--tint-good); }
   .fx.edge-cost { background: var(--tint-warn); }
   .fx.edge-broken { background: var(--tint-bad); }
   .fx-row td:first-child, .day-row { border-left: 4px solid transparent; }
   .fx-row.edge-good td:first-child, .day-row.edge-good { border-left-color: var(--good); }
-  .fx-row.edge-cost td:first-child, .day-row.edge-cost { border-left-color: var(--warn); }
-  .fx-row.edge-broken td:first-child, .day-row.edge-broken { border-left-color: var(--bad); }
+  .fx-row.edge-cost td:first-child, .day-row.edge-cost { border-left-color: var(--warn); border-left-style: dashed; }
+  .fx-row.edge-broken td:first-child, .day-row.edge-broken { border-left-color: var(--bad); border-left-style: double; }
 
   /* Scoring badges: one per rule a fixture triggers. Also the tooltip anchor. */
   .flags { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -608,9 +631,13 @@
     padding: 0 7px; border-radius: 9px; border: 1px solid transparent; cursor: pointer;
     white-space: nowrap; text-align: left; text-transform: none;
   }
-  .flag-good { background: var(--tint-good-strong); color: var(--good); border-color: var(--good-line); }
+  .flag-good { background: var(--tint-good-strong); color: var(--good-ink); border-color: var(--good-line); }
   .flag-cost { background: var(--tint-warn-strong); color: var(--warn-ink); border-color: var(--warn-line); }
   .flag-broken { background: var(--bad); color: var(--on-bad); }
+  /* A sign in front of each badge, so good, cost and broken differ without colour; the alt text keeps it out of speech. */
+  .flag-good::before { content: "+ "; content: "+ " / ""; }
+  .flag-cost::before { content: "\2212  "; content: "\2212  " / ""; }
+  .flag-broken::before { content: "! "; content: "! " / ""; }
   .flag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .tooltip { white-space: normal; text-align: left; }
   .tooltip .tt-head { display: block; font-weight: 700; }
@@ -640,7 +667,7 @@
   /* Combined list: header stays under the bar; a date row heads each day; chip rows open to teams. */
   .list-tools { margin: 12px 0 8px; }
   .list-filter {
-    font: inherit; font-size: 13px; width: min(340px, 100%); padding: 5px 10px; border: 1px solid var(--line);
+    font: inherit; font-size: 13px; width: min(340px, 100%); padding: 5px 10px; border: 1px solid var(--control-line);
     border-radius: 14px; background: var(--panel); color: var(--ink);
   }
   .fx-table { border-collapse: separate; border-spacing: 0; }
@@ -672,8 +699,8 @@
     vertical-align: middle;
   }
   .edge-demo.edge-good { background: var(--tint-good); border-left-color: var(--good); }
-  .edge-demo.edge-cost { background: var(--tint-warn); border-left-color: var(--warn); }
-  .edge-demo.edge-broken { background: var(--tint-bad); border-left-color: var(--bad); }
+  .edge-demo.edge-cost { background: var(--tint-warn); border-left-color: var(--warn); border-left-style: dashed; }
+  .edge-demo.edge-broken { background: var(--tint-bad); border-left-color: var(--bad); border-left-style: double; }
   .flag-legend { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
   .flag-legend ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px 24px; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); }
   .flag-legend li { display: flex; gap: 8px; align-items: baseline; }
@@ -683,7 +710,7 @@
 
   /* -- month calendar (issue #77) -- */
   .month { margin-top: 26px; }
-  .month h4 { margin: 0 0 8px; font-size: 15px; }
+  .month h3 { margin: 0 0 8px; font-size: 15px; }
   .month-grid { display: flex; flex-direction: column; gap: 3px; min-width: 420px; }
   .month-grid-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
   .month-grid-head {
@@ -695,7 +722,7 @@
     gap: 4px; min-height: 52px; padding: 6px 2px; border: 1px solid var(--line); border-radius: 6px;
     background: var(--panel); color: var(--ink); font: inherit; cursor: pointer;
   }
-  .cal-day:hover, .cal-day:focus-visible { border-color: var(--accent); outline: none; }
+  .cal-day:hover, .cal-day:focus-visible { border-color: var(--accent); }
   .cal-day.selected { border-color: var(--accent); background: var(--tint-accent); }
   /* Days of the neighbouring months: space in the grid, nothing to tap. */
   .cal-day.cal-pad { border-color: transparent; background: none; }
@@ -710,9 +737,9 @@
     font: inherit; font-size: 12.5px; color: var(--ink); background: var(--panel);
     border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; cursor: pointer; flex: none;
   }
-  .month-jump button:hover, .month-jump button:focus-visible { border-color: var(--accent); outline: none; }
+  .month-jump button:hover, .month-jump button:focus-visible { border-color: var(--accent); }
   .other-dates { margin-top: 26px; }
-  .other-dates h4 { margin: 0 0 8px; font-size: 15px; }
+  .other-dates h3 { margin: 0 0 8px; font-size: 15px; }
   .other-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
   .other-month { min-width: 9.5em; font-size: 13px; font-weight: 600; }
   .other-chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -724,7 +751,7 @@
     font: inherit; font-size: 13px; color: var(--accent); background: var(--panel);
     border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer;
   }
-  .day-step button:hover:not(:disabled), .day-step button:focus-visible { border-color: var(--accent); outline: none; }
+  .day-step button:hover:not(:disabled), .day-step button:focus-visible { border-color: var(--accent); }
   .day-step button:disabled { color: var(--muted); cursor: default; }
   .cal-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--comp-fg, var(--muted)); box-shadow: 0 0 0 1px var(--swatch-ring); }
   .legend .cal-dot { margin-right: 5px; }
@@ -746,7 +773,7 @@
   .cal-net { display: flex; flex-direction: column; align-items: center; font-size: 12px; line-height: 1.15; font-variant-numeric: tabular-nums; color: var(--muted); max-width: 100%; }
   .cal-count, .cal-value { white-space: nowrap; }
   .cal-value { font-weight: 600; }
-  .cal-value.good { color: var(--good); }
+  .cal-value.good { color: var(--good-ink); }
   .cal-value.cost { color: var(--warn-ink); }
 
   /* Season strip: one button per round; each league row scrolls inside itself. */
@@ -764,12 +791,12 @@
   .strip-cell:hover { border-color: var(--accent); }
   .strip-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .strip-cell.sc-good { border-left-color: var(--good); }
-  .strip-cell.sc-cost { border-left-color: var(--warn); }
+  .strip-cell.sc-cost { border-left-color: var(--warn); border-left-style: dashed; }
   .strip-cell.sc-cost .strip-net { color: var(--warn-ink); }
   .strip-cell:disabled { opacity: 0.4; cursor: default; }
   .strip-round { font-weight: 700; font-variant-numeric: tabular-nums; }
   .strip-net { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .strip-cell.sc-good .strip-net { color: var(--good); }
+  .strip-cell.sc-good .strip-net { color: var(--good-ink); }
   .strip-hard {
     position: absolute; top: -8px; right: -8px; min-width: 17px; height: 17px; padding: 0 3px; border-radius: 9px;
     background: var(--bad); color: var(--on-bad); font-size: 12px; font-weight: 700; line-height: 17px; text-align: center;
@@ -777,7 +804,7 @@
 
   /* Combined list's score column, right-aligned so the signs line up. */
   .fx-score { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .fx-score.good { color: var(--good); font-weight: 600; }
+  .fx-score.good { color: var(--good-ink); font-weight: 600; }
   .fx-score.cost { color: var(--warn-ink); }
 
   /* -- club scope: the scorecard restated for one club -- */
@@ -831,12 +858,13 @@
     background: var(--panel); border: 1px solid var(--line); border-left: 4px solid transparent; border-radius: 6px;
   }
   .tl-fx.edge-good { border-left-color: var(--good); }
-  .tl-fx.edge-cost { border-left-color: var(--warn); }
-  .tl-fx.edge-broken { border-left-color: var(--bad); }
+  .tl-fx.edge-cost { border-left-color: var(--warn); border-left-style: dashed; }
+  .tl-fx.edge-broken { border-left-color: var(--bad); border-left-style: double; }
+  .tl-visual { display: block; }
   .tl-top { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
   .tl-ha { font-size: 12px; font-weight: 700; padding: 0 4px; border: 1px solid var(--muted); border-radius: 3px; color: var(--muted); }
-  .tl-opp { font-weight: 600; overflow-wrap: anywhere; margin-top: 2px; }
-  .tl-gap { font-size: 12px; color: var(--muted); margin-top: 1px; }
+  .tl-opp { display: block; font-weight: 600; overflow-wrap: anywhere; margin-top: 2px; }
+  .tl-gap { display: block; font-size: 12px; color: var(--muted); margin-top: 1px; }
   .tl-fx .flags { margin-top: 4px; }
 
   /* -- score gauge: where the 0-100 result sits, banded so 74 and 94 do not read alike (#39) -- */
@@ -850,7 +878,7 @@
   .gauge-track::after { left: {{ band_strong }}%; }
   .gauge-label { font-size: 13px; font-weight: 700; color: var(--good-ink); }
   .gauge-fair .gauge-label { color: var(--warn-ink); }
-  .gauge-weak .gauge-label { color: var(--bad); }
+  .gauge-weak .gauge-label { color: var(--bad-ink); }
 
   /* -- the collapsed sections under the scorecard read as one set (#39) -- */
   .section-list { margin-top: 26px; border: 1px solid var(--line); border-radius: 8px; padding: 0 16px; }
@@ -941,8 +969,8 @@
     .fx-row.lens-hit { background: var(--tint-accent); box-shadow: inset 0 0 0 2px var(--accent); }
     .fx-row.lens-hit td { background: none; box-shadow: none; }
     .fx-row.edge-good { border-left-color: var(--good); }
-    .fx-row.edge-cost { border-left-color: var(--warn); }
-    .fx-row.edge-broken { border-left-color: var(--bad); }
+    .fx-row.edge-cost { border-left-color: var(--warn); border-left-style: dashed; }
+    .fx-row.edge-broken { border-left-color: var(--bad); border-left-style: double; }
     .fairness-bar { grid-template-columns: 110px 1fr 24px; }
     :root { --panel-pad: 12px; }
     .controls {
@@ -1012,7 +1040,9 @@
     .info-icon:hover::before, .info-icon:focus-visible::before { background: var(--accent); color: var(--on-accent); }
     .cal-day { min-height: 44px; }
     .cal-day.other-date { min-height: 44px; padding: 4px 12px; }
-    .phone-desc { display: block; }
+    .phone-desc {
+      position: static; width: auto; height: auto; margin: 2px 0 0; overflow: visible; clip: auto; white-space: normal;
+    }
 
     /* Compact fixture rows: the day heading carries the date; each match is one line. */
     .fixtures { gap: 0; }
@@ -1068,6 +1098,7 @@
 </style>
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to the schedule options</a>
 {% set ns = namespace(tooltip_id=0) %}
 {# A rule's fixtures are listed by report.js from the fixture flags, so only a rule with some (`row.pinned`) gets a mount and a calendar link. #}
 {# Share as signed text; a non-zero share that rounds to 0 reads "<1%", never a bare "0%" (#34). #}
@@ -1105,9 +1136,15 @@
       <span class="name-row">
         <span class="name">{{ row.name }}</span>
         {% set ns.tooltip_id = ns.tooltip_id + 1 %}
+        {# Inside a <summary> an icon button would be a control within a control, and the description is printed just below anyway. #}
         <span class="info-wrap">
+          {% if compact %}
           <button type="button" class="info-icon" aria-label="{{ row.name }} description" aria-describedby="tt-{{ ns.tooltip_id }}">i</button>
           <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
+          {% else %}
+          <span class="info-icon" aria-hidden="true">i</span>
+          <span class="tooltip" aria-hidden="true">{{ row.description }}</span>
+          {% endif %}
         </span>
       </span>
       <span class="rule-desc">{{ row.description }}</span>
@@ -1156,20 +1193,21 @@
     {% endif %}
   </p>
   <div class="sub">
-    {{ season.start.strftime('%d %b %Y') }} – {{ season.end.strftime('%d %b %Y') }}
+    {{ season.start|standalone_date }} – {{ season.end|standalone_date }}
     · generated {{ header.generated }}{% if header.commit %} from <code>{{ header.commit }}</code>{% endif %}
     · <a href="{{ header.repo_url }}">source</a>
     {% if header.json_name %}· <a href="{{ header.json_name }}" download>download JSON</a>{% endif %}
   </div>
 </header>
 
+<main id="main" tabindex="-1">
 {% for note in banner_notes %}
 <div class="notes {{ note.severity }}" role="{{ 'alert' if note.severity == 'error' else 'note' }}">{{ note.text }}</div>
 {% endfor %}
 
 {% if warnings or data_caveat %}
 <div class="warnings">
-  <div style="font-weight:700;margin-bottom:4px">Coverage notes</div>
+  <h2 class="warn-title">Coverage notes</h2>
   {% for warning in warnings %}<div>⚠ {{ warning }}</div>{% endfor %}
   {% if data_caveat %}<div>⚠ {{ data_caveat }}</div>{% endif %}
 </div>
@@ -1241,9 +1279,11 @@
 </section>
 {% endif %}
 
-<div class="tabs" role="tablist">
+<div class="tabs" role="tablist" aria-label="Schedule options">
   {% for option in options %}
-  <button class="tab" role="tab" data-panel="panel-{{ loop.index }}"
+  <button class="tab" role="tab" id="tab-{{ loop.index }}" data-panel="panel-{{ loop.index }}"
+          aria-controls="panel-{{ loop.index }}" tabindex="{{ 0 if loop.first else -1 }}"
+          aria-label="{{ option.label }}{% if option.seed %}, seed {{ option.seed }}{% endif %}{% if option.tag %}, {{ option.tag }}{% endif %}, score {{ option.points_text }}"
           aria-selected="{{ 'true' if loop.first else 'false' }}">
     {{ option.label }}{% if option.seed %}<span class="tab-seed">seed {{ option.seed }}</span>{% endif %}{% if option.tag %}<span class="tab-tag">{{ option.tag }}</span>{% endif %}<span class="score">{{ option.points_text }}</span>
   </button>
@@ -1251,10 +1291,11 @@
 </div>
 
 {% for option in options %}
-<section class="panel" id="panel-{{ loop.index }}" role="tabpanel" {% if not loop.first %}hidden{% endif %}>
+<section class="panel" id="panel-{{ loop.index }}" role="tabpanel" aria-labelledby="tab-{{ loop.index }}" {% if not loop.first %}hidden{% endif %}>
 {# Panels other than the first stay inert in a <template> until their tab is opened (#42). #}
 {% if not loop.first %}<template>{% endif %}
 
+  <h2 class="sr-only">{{ option.label }}: score and rules</h2>
   <div class="scoreline">
     <div class="total">{{ option.points_text }}<small>/ 100</small></div>
     <span class="gauge gauge-{{ option.band }}" title="The 0–100 score; the marks are {{ band_fair }} and {{ band_strong }}, where weak, fair and strong meet">
@@ -1481,6 +1522,10 @@
             </div>
           </div>
           {% endif %}
+          <div class="legend-keys">
+            <h4>Keyboard</h4>
+            <p class="desc">Tab moves between sections. Inside the calendar, a round or a day list, the arrow keys move between fixtures and badges, and Home and End jump to the first and last. Enter opens a fixture’s details.</p>
+          </div>
           <details class="abbr-key">
             <summary>Club abbreviations</summary>
             <ul class="abbr-list">
@@ -1505,12 +1550,12 @@
       </div>
       <button type="button" class="bar-btn filters-toggle" aria-expanded="false" aria-controls="filters-{{ loop.index }}">Filters</button>
     </div>
-    <div class="view-toggle">
-      <button type="button" class="view-btn" data-view="by-competition" aria-label="By competition"><span class="view-full">By competition</span><span class="view-short" aria-hidden="true">Rounds</span></button>
-      <button type="button" class="view-btn" data-view="month-calendar" aria-label="Month calendar"><span class="view-full">Month calendar</span><span class="view-short" aria-hidden="true">Month</span></button>
-      <button type="button" class="view-btn" data-view="combined-calendar" aria-label="Combined calendar"><span class="view-full">Combined · calendar</span><span class="view-short" aria-hidden="true">Calendar</span></button>
-      <button type="button" class="view-btn" data-view="combined-list" aria-label="Combined list"><span class="view-full">Combined · list</span><span class="view-short" aria-hidden="true">List</span></button>
-      <button type="button" class="view-btn" data-view="club-timeline" aria-label="Club timeline"><span class="view-full">Club timeline</span><span class="view-short" aria-hidden="true">Timeline</span></button>
+    <div class="view-toggle" role="radiogroup" aria-label="View">
+      <button type="button" class="view-btn" role="radio" aria-checked="false" tabindex="-1" data-view="by-competition" aria-label="By competition"><span class="view-full">By competition</span><span class="view-short" aria-hidden="true">Rounds</span></button>
+      <button type="button" class="view-btn" role="radio" aria-checked="false" tabindex="-1" data-view="month-calendar" aria-label="Month calendar"><span class="view-full">Month calendar</span><span class="view-short" aria-hidden="true">Month</span></button>
+      <button type="button" class="view-btn" role="radio" aria-checked="false" tabindex="-1" data-view="combined-calendar" aria-label="Combined calendar"><span class="view-full">Combined · calendar</span><span class="view-short" aria-hidden="true">Calendar</span></button>
+      <button type="button" class="view-btn" role="radio" aria-checked="false" tabindex="-1" data-view="combined-list" aria-label="Combined list"><span class="view-full">Combined · list</span><span class="view-short" aria-hidden="true">List</span></button>
+      <button type="button" class="view-btn" role="radio" aria-checked="false" tabindex="-1" data-view="club-timeline" aria-label="Club timeline"><span class="view-full">Club timeline</span><span class="view-short" aria-hidden="true">Timeline</span></button>
     </div>
     <div class="bar-filters">
       <div class="bar-fields" id="filters-{{ loop.index }}">
@@ -1550,6 +1595,8 @@
       </div>
     </div>
   </div>
+
+  <h2 class="sr-only">{{ option.label }}: fixtures</h2>
 
   <div class="lens-caption" hidden>
     <span class="lens-text" role="status"></span>
@@ -1632,7 +1679,7 @@
       <div class="item-body">
         {% for entry in season_exclusions %}
         <div class="desc">
-          {{ entry.start.strftime('%d %b %Y') }}{% if entry.end != entry.start %} – {{ entry.end.strftime('%d %b %Y') }}{% endif %}
+          {{ entry.start|standalone_date }}{% if entry.end != entry.start %} – {{ entry.end|standalone_date }}{% endif %}
           {%- if entry.venue_label %} ({{ entry.venue_label }}){% endif %}
           {%- if entry.reason %} — {{ entry.reason }}{% endif %}
         </div>
@@ -1653,7 +1700,7 @@
         <div class="desc">
           <strong>{{ view.competition }}</strong> · {{ view.label }}
           {%- if not view.reserves_league %} (other division's teams){% endif %}
-          · {% for d in view.dates %}{{ d.date.strftime('%a %d %b %Y') }} (week {{ d.iso_week }}){{ ', ' if not loop.last }}{% endfor %}
+          · {% for d in view.dates %}{{ d.date|standalone_date }} (week {{ d.iso_week }}){{ ', ' if not loop.last }}{% endfor %}
         </div>
         {% endfor %}
       </div>
@@ -1677,8 +1724,8 @@
         {% for row in view.rows %}
         <div class="desc">
           R{{ row.round }} · {{ row.kind }} ·
-          {{ row.start.strftime('%d %b') }}{% if row.end != row.start %} – {{ row.end.strftime('%d %b') }}{% endif %}
-          · default {{ row.default_day.strftime('%a %d %b') }}
+          {{ row.start|short_date }}{% if row.end != row.start %} – {{ row.end|short_date }}{% endif %}
+          · default {{ row.default_day|short_date }}
           {%- if row.clashes %} · ⚠ clashes: {{ row.clashes|join(', ') }}{% endif %}
         </div>
         {% endfor %}
@@ -1720,6 +1767,8 @@
     {% endif %}
   </div>
 </details>
+
+</main>
 
 <footer>
   Generated by <a href="{{ header.repo_url }}">terminliste</a>.

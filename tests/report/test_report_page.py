@@ -219,7 +219,17 @@ def _view(page, name):
 
 
 def _texts(locator):
-    return [" ".join(t.split()) for t in locator.all_inner_texts()]
+    """What a sighted reader sees: the visually hidden sentences (#41) are left out."""
+    texts = locator.evaluate_all(
+        """els => els.map(e => {
+          const hidden = Array.from(e.querySelectorAll('.sr-only'));
+          hidden.forEach(n => { n.style.display = 'none'; });
+          const text = e.innerText;
+          hidden.forEach(n => { n.style.display = ''; });
+          return text;
+        })"""
+    )
+    return [" ".join(t.split()) for t in texts]
 
 
 def _show_cups_and_europe(page, panel="#panel-1"):
@@ -436,7 +446,8 @@ def test_hovering_a_badge_shows_the_events_detail_and_points(page):
     text_off = " ".join(tooltip.inner_text().split())
     assert "Saturday; elite prefers Sunday (misses +1)" in text_off
     assert "reward forgone" in text_off
-    assert off_day.get_attribute("aria-label") == "off-day"
+    # Starts with the visible label, then says what the colour only shows.
+    assert off_day.get_attribute("aria-label") == "off-day, Preferred weekday, reward forgone"
 
 
 def test_tapping_a_badge_toggles_its_tooltip_on_touch_screens(touch_page):
@@ -624,8 +635,8 @@ def test_opening_a_scorecard_entry_lists_its_fixtures_grouped_by_team(page, worl
     assert groups == ["Club A ×2"]
     rows = _texts(item.locator(".occ-row"))
     assert len(rows) == 2
-    assert rows[0].startswith("Sat 06/06") and "+12.5" in rows[0] and "1 of 2 fixtures" in rows[0]
-    assert rows[1].startswith("Sun 07/06")
+    assert rows[0].startswith("Sat 6 Jun") and "+12.5" in rows[0] and "1 of 2 fixtures" in rows[0]
+    assert rows[1].startswith("Sun 7 Jun")
 
     off_day = page.locator(f'#panel-1 details.item[data-rule="{OFF_DAY}"]')
     off_day.locator("summary").click()
@@ -914,7 +925,7 @@ def test_all_five_phone_view_buttons_fit_the_bar_without_scrolling(browser, repo
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
         strip = page.locator("#panel-1 .view-toggle")
         assert strip.evaluate("e => e.scrollWidth <= e.clientWidth")
-        assert page.get_by_role("button", name="Combined calendar").count() >= 1
+        assert page.get_by_role("radio", name="Combined calendar").count() >= 1
         context.close()
 
 
@@ -1342,7 +1353,10 @@ def test_a_dual_club_opens_on_a_timeline_of_both_teams_in_date_order(page):
     assert page.locator("#panel-1 .tl-lane").all_text_contents() == [data["teams"][tid]["label"] for tid in teams]
 
     rows = page.locator("#panel-1 .tl-row")
-    assert _texts(rows.locator(".tl-date b")) == [date.fromisoformat(d).strftime("%a %d/%m") for d in dates]
+    assert _texts(rows.locator(".tl-date b")) == [
+        f"{date.fromisoformat(d):%a} {date.fromisoformat(d).day} {date.fromisoformat(d):%b}"
+        for d in dates
+    ]
     for i, d in enumerate(dates):
         for j, tid in enumerate(teams):
             lane = rows.nth(i).locator(".tl-cell").nth(j)
@@ -1418,7 +1432,8 @@ def test_a_tie_with_no_venue_decided_is_marked_and_never_paired(tbd_url, browser
     assert _texts(rows.nth(1).locator(".tl-tag")) == []  # 6 June: the tie is not an away venue
     cup = rows.nth(1).locator(".tl-cell").nth(0).locator(".tl-fx").filter(has_text="TBD")
     assert cup.locator(".tl-ha").inner_text() == "?"
-    assert cup.locator(".tl-ha").get_attribute("aria-label") == "Venue not decided"
+    assert cup.locator(".tl-ha").get_attribute("title") == "Venue not decided"
+    assert "venue not decided" in cup.locator(".tl-main .sr-only").text_content()
     context.close()
 
 
@@ -1756,7 +1771,7 @@ def test_months_without_a_league_fixture_are_listed_under_other_dates_and_open_i
     body = _view(other_page, "month-calendar")
     assert body.locator('.month[data-month-key="2026-06"]').count() == 1
     assert body.locator('.month[data-month-key="2026-07"]').count() == 0
-    assert body.locator(".other-dates h4").inner_text().strip() == "Other dates"
+    assert body.locator(".other-dates h3").inner_text().strip() == "Other dates"
     assert _texts(body.locator('.other-row[data-month-key="2026-07"] .other-day')) == ["Wed 8"]
     assert _texts(body.locator('.other-row[data-month-key="2026-09"] .other-day')) == ["Thu 17"]
 
@@ -2159,7 +2174,10 @@ def test_a_mouse_click_on_a_rules_info_icon_does_not_pin_its_tooltip_open(page):
 
 
 def test_keyboard_focus_still_shows_a_rules_tooltip(page):
-    page.keyboard.press("Tab")
+    # The icons in the scorecard rows are pictures (a button inside a <summary> is not allowed);
+    # the table's and the hard-rule box's are buttons.
+    page.evaluate("document.querySelectorAll('#panel-1 .section-list > details').forEach(d => d.open = true)")
+    page.locator("#panel-1 table.breakdown summary, #panel-1 .section-list > details > summary").last.focus()
     for _ in range(40):
         if page.evaluate("document.activeElement.classList.contains('info-icon')"):
             break
@@ -2281,7 +2299,7 @@ def test_a_weekday_off_the_leagues_preferred_day_is_boxed_in_the_day_heading(pag
 def test_the_list_boxes_an_off_day_weekday_in_its_date_row(page):
     rows = _view(page, "combined-list").locator(".date-row")
     classes = {_texts(r)[0].lower(): r.locator(".wd").get_attribute("class") for r in rows.all()}
-    assert "off" in classes["sat 06 jun 2026"].split()
+    assert "off" in classes["sat 6 jun"].split()
 
 
 def test_club_swatches_carry_a_thin_outline(page):
@@ -2370,7 +2388,7 @@ def _box(locator):
 def test_a_phone_opens_on_the_month_calendar_and_a_desktop_on_the_rounds(phone, page):
     assert phone.locator("#panel-1 .view-pane[data-view='month-calendar']").is_visible()
     assert phone.locator("#panel-1 .view-btn[data-view='month-calendar']").get_attribute(
-        "aria-pressed"
+        "aria-checked"
     ) == "true"
     assert page.locator("#panel-1 .view-pane[data-view='by-competition']").is_visible()
 
@@ -2544,7 +2562,8 @@ def test_a_desktop_keeps_the_breakdown_table_without_inline_descriptions(page):
     page.evaluate("document.querySelectorAll('#panel-1 .section-list > details').forEach(d => d.open = true)")
     table = page.locator("#panel-1 table.breakdown").first
     assert table.locator("thead").is_visible()
-    assert table.locator("tbody .phone-desc").first.is_hidden()
+    # Not drawn (a 1px clipped box), but still in the page for assistive technology (#41).
+    assert _box(table.locator("tbody .phone-desc").first)["w"] <= 1
 
 
 def test_season_strip_figures_stay_inside_their_cells(page, phone):

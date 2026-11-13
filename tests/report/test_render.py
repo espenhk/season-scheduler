@@ -15,6 +15,7 @@ from pathlib import Path
 import factories as f
 import pytest
 
+from terminliste.display import short_date
 from terminliste.report import payload
 from terminliste.report.payload import json_for_script
 from terminliste.report.render import (
@@ -1298,7 +1299,7 @@ def test_render_report_shows_season_exclusions_with_their_reasons():
     assert "Season exclusions" in rendered
     assert "national day" in rendered
     assert "international break" in rendered
-    assert "01 Jun 2026" in rendered and "14 Jun 2026" in rendered
+    assert "Mon 1 Jun 2026" in rendered and "Sun 14 Jun 2026" in rendered
 
 
 def test_render_report_omits_season_exclusions_section_when_none_configured():
@@ -1401,7 +1402,7 @@ def test_render_report_lists_the_round_slots_and_search_space():
     assert f"{comp_m.rounds} rounds in {len(plans['elite'].candidates)} candidate slots" in rendered
     assert "ways to pick compatible slots" in rendered
     first = plans["elite"].chosen[0]
-    assert f"default {first.default_day.strftime('%a %d %b')}" in rendered
+    assert f"default {short_date(first.default_day)}" in rendered
 
 
 # -- top of page (#38) -------------------------------------------------------
@@ -1448,7 +1449,7 @@ def test_header_intro_stamp_commit_and_links(monkeypatch):
     )
     header = rendered.split("<header>")[1].split("</header>")[0]
     assert "back-to-back home weekends" in header
-    assert "generated 13 Nov 2026 09:05 UTC" in header
+    assert "generated Fri 13 Nov 2026 09:05 UTC" in header
     assert "<code>abc1234</code>" in header
     assert 'href="https://github.com/espenhk/season-scheduler"' in header
     assert 'href="2026.json"' in header
@@ -2253,3 +2254,134 @@ def test_the_legend_button_has_a_short_phone_label_and_the_month_dots_sit_in_the
     assert 'class="legend-dots"' in panel and "cal-dot" in panel
     assert 'class="legend month-legend"' in rendered  # the desktop keeps the list beside the calendar
 
+
+
+# -- accessibility (#41) -------------------------------------------------------
+
+
+def _top_render() -> str:
+    world, season, candidate = _top_world()
+    second = _candidate(world, season, candidate.matches, [], label="Option 2")
+    return _render(world, season, [candidate, second])
+
+
+def test_the_page_opens_with_a_skip_link_and_wraps_its_content_in_main():
+    rendered = _top_render()
+    body = _body(rendered)
+    assert body.index('<a class="skip-link" href="#main">') < body.index("<header>")
+    assert body.index("<header>") < body.index('<main id="main" tabindex="-1">')
+    assert body.index("</main>") < body.index("<footer>")
+    assert body.index('role="tabpanel"') > body.index("<main")
+    assert body.index("</header>") < body.index("<main")  # the banner stays outside main
+
+
+def test_option_tabs_are_wired_to_their_panels_for_the_aria_tabs_pattern():
+    body = _body(_top_render())
+    assert '<div class="tabs" role="tablist" aria-label="Schedule options">' in body
+    for number, tabindex in ((1, 0), (2, -1)):
+        tab = re.search(rf'<button class="tab" role="tab" id="tab-{number}"[^>]*>', body).group(0)
+        assert f'aria-controls="panel-{number}"' in tab and f'tabindex="{tabindex}"' in tab
+        panel = re.search(rf'<section class="panel" id="panel-{number}"[^>]*>', body).group(0)
+        assert f'aria-labelledby="tab-{number}"' in panel and 'role="tabpanel"' in panel
+
+
+def test_the_view_switcher_is_a_labelled_radio_group():
+    body = _body(_top_render())
+    assert body.count('role="radiogroup" aria-label="View"') == 2  # one per option
+    buttons = re.findall(r'<button[^>]*class="view-btn"[^>]*>', body)
+    assert len(buttons) == 10
+    assert all('role="radio"' in b and "aria-pressed" not in b and 'aria-checked="false"' in b for b in buttons)
+
+
+def test_every_option_panel_has_headings_for_its_score_and_its_fixtures():
+    body = _body(_top_render())
+    for label in ("Option 1", "Option 2"):
+        assert f'<h2 class="sr-only">{label}: score and rules</h2>' in body
+        assert f'<h2 class="sr-only">{label}: fixtures</h2>' in body
+
+
+def test_a_rule_row_never_nests_a_button_inside_its_summary():
+    body = _body(_top_render())
+    for summary in re.findall(r"<summary class=\"top\">.*?</summary>", body, re.S):
+        assert "<button" not in summary
+        assert 'class="info-icon" aria-hidden="true"' in summary
+
+
+def test_dates_share_one_format_with_the_year_only_where_a_date_stands_alone():
+    rendered = _top_render()
+    body = _body(rendered)
+    season_line = re.search(r'<div class="sub">(.*?)</div>', body, re.S).group(1)
+    assert re.search(r"[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d{4} – [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d{4}", season_line)
+    assert not re.search(r"\b0\d [A-Z][a-z]{2}\b", body)  # no zero before the day
+
+
+def _tokens(css: str) -> tuple[dict[str, str], dict[str, str]]:
+    light = dict(re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-f]{6})", re.search(r":root \{(.*?)\n  \}", css, re.S).group(1)))
+    dark_block = re.search(r"prefers-color-scheme: dark\) \{\s*:root \{(.*?)\n    \}", css, re.S).group(1)
+    return light, {**light, **dict(re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-f]{6})", dark_block))}
+
+
+def _luminance(colour: str) -> float:
+    def channel(value: int) -> float:
+        c = value / 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (channel(int(colour[i : i + 2], 16)) for i in (1, 3, 5))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _ratio(a: str, b: str) -> float:
+    high, low = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+SURFACES = ("bg", "panel", "surface", "surface-2", "tint-neutral", "tint-accent", "tint-good", "tint-warn", "tint-bad")
+# Each text colour with the fills it is set on and the ratio it must reach: 4.5 is AA, and the small
+# muted text is held to 5.5.
+TEXT_ON = [
+    ("ink", SURFACES, 7.0),
+    ("ink-2", SURFACES, 7.0),
+    ("muted", SURFACES, 5.5),
+    ("muted", ("line",), 4.5),  # the "i" glyph on its grey disc
+    ("accent", ("bg", "panel", "surface", "tint-accent", "tint-neutral"), 4.5),
+    ("good-ink", ("bg", "panel", "surface", "tint-good", "tint-good-strong"), 4.5),
+    ("bad-ink", ("bg", "panel", "surface", "tint-bad", "tint-bad-strong", "tint-neutral"), 4.5),
+    ("warn-ink", ("bg", "panel", "surface", "tint-warn", "tint-warn-strong"), 4.5),
+    ("on-ink", ("ink",), 7.0),
+    ("on-ink-muted", ("ink",), 4.5),
+    ("on-bad", ("bad",), 4.5),
+    ("on-accent", ("accent",), 4.5),
+    ("tip-fg", ("tip-bg",), 7.0),
+    ("tip-muted", ("tip-bg",), 4.5),
+]
+
+
+@pytest.mark.parametrize("scheme", [0, 1], ids=["light", "dark"])
+def test_every_text_colour_clears_its_contrast_target_on_the_fills_it_sits_on(scheme):
+    tokens = _tokens(_stylesheet(_top_render()))[scheme]
+    failures = [
+        f"{fg} on {bg}: {_ratio(tokens[fg], tokens[bg]):.2f} < {need}"
+        for fg, fills, need in TEXT_ON
+        for bg in fills
+        if _ratio(tokens[fg], tokens[bg]) < need
+    ]
+    assert not failures, failures
+
+
+@pytest.mark.parametrize("scheme", [0, 1], ids=["light", "dark"])
+def test_edges_form_controls_and_swatch_outlines_reach_three_to_one(scheme):
+    css = _stylesheet(_top_render())
+    tokens = _tokens(css)[scheme]
+    for edge in ("good", "bad", "warn", "control-line"):
+        for fill in ("bg", "panel", "surface"):
+            assert _ratio(tokens[edge], tokens[fill]) >= 3, (edge, fill)
+    # The swatch ring is translucent: blend it over the fill before measuring.
+    rings = re.findall(r"--swatch-ring: rgba\((\d+), (\d+), (\d+), ([\d.]+)\)", css)
+    red, green, blue, alpha = (float(v) for v in rings[scheme])
+    for fill in ("panel", "surface"):
+        base = tokens[fill]
+        mixed = "#" + "".join(
+            f"{round(c * alpha + int(base[i : i + 2], 16) * (1 - alpha)):02x}"
+            for c, i in zip((red, green, blue), (1, 3, 5), strict=True)
+        )
+        assert _ratio(mixed, base) >= 3, fill
