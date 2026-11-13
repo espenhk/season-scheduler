@@ -2216,7 +2216,7 @@ def test_nothing_in_the_stylesheet_masks_horizontal_overflow():
 
 def test_no_text_is_set_below_twelve_pixels_outside_the_phone_rules():
     css = _stylesheet(_lens_page()[0])
-    desktop = css[: css.rindex("@media (max-width: 480px) {")]
+    desktop = css[: css.rindex("@media (max-width: 600px) {")]
     sizes = []
     for line in desktop.splitlines():
         if "content: '▸'" in line or "700 10px/1" in line or "transition: transform" in line:
@@ -2228,6 +2228,28 @@ def test_no_text_is_set_below_twelve_pixels_outside_the_phone_rules():
 def test_the_print_rules_drop_the_controls_and_keep_rounds_whole():
     css = _stylesheet(_lens_page()[0])
     printed = css[css.index("@media print") :]
-    printed = printed[: printed.index("@media (max-width: 480px)")]
+    printed = printed[: printed.index("@media (max-width: 600px)")]
     for hook in (".view-toggle", ".bar-filters", ".tabs", "break-inside: avoid", ".round"):
         assert hook in printed
+
+
+# -- phone layout (#40) -------------------------------------------------------
+
+
+def test_the_breakdown_table_carries_its_column_names_and_an_inline_description_for_a_phone():
+    rendered, _ = _lens_page()
+    table = rendered[rendered.index('<table class="breakdown">') :]
+    table = table[: table.index("</table>")]
+    assert 'data-label="Contribution"' in table and 'data-label="Events"' in table
+    assert 'data-label="Type"' in table and 'data-label="Examples"' in table
+    assert table.count('class="rule-desc phone-desc"') == table.count('class="info-icon"')
+
+
+def test_the_legend_button_has_a_short_phone_label_and_the_month_dots_sit_in_the_key():
+    rendered, _ = _lens_page()
+    assert '<span class="key-long">Legend</span><span class="key-short">Key</span>' in rendered
+    panel = rendered[rendered.index('class="legend-panel"') :]
+    panel = panel[: panel.index("</section>")]
+    assert 'class="legend-dots"' in panel and "cal-dot" in panel
+    assert 'class="legend month-legend"' in rendered  # the desktop keeps the list beside the calendar
+

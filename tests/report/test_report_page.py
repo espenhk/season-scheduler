@@ -677,6 +677,7 @@ def test_clicking_a_badge_selects_its_rule_while_hover_still_shows_its_tooltip(p
 def test_the_second_tap_on_a_badge_selects_its_rule_on_touch_screens(touch_page):
     page = touch_page
     body = _view(page, "combined-calendar")
+    body.locator(".expand-all").tap()  # a phone folds the weeks
     badge = _club_a_men(body, ".fx").locator(f'.flag[data-rule="{PAIR}"]')
 
     badge.tap()
@@ -1044,7 +1045,7 @@ def test_the_season_strip_has_a_button_per_round_in_both_league_rows(page):
     assert strip.locator(".strip-cells").evaluate_all("els => els.every(e => e.scrollWidth <= e.clientWidth)")
     assert len(_texts(strip.locator(".strip-name"))) == 2
     cells = strip.locator(".strip-cell")
-    assert _texts(cells) == ["1 +12.5", "2 0", "1 +12.5"]
+    assert _texts(cells) == ["1 +13", "2 0", "1 +13"]  # whole points fit the cell; the label keeps the decimal
     assert cells.first.get_attribute("aria-label") == "Round 1: +12.5 pts · 1 game"
 
     _view(page, "combined-calendar")
@@ -1572,19 +1573,23 @@ def test_all_rules_list_groups_every_soft_rule_and_states_the_net(page):
     assert re.match(r"^Helped by [+−]\d+\.\d, hurt by [+−]\d+\.\d, net [+−]\d+\.\d\.$", net), net
 
 
-def test_the_club_breakdown_hides_rank_and_fixtures_on_a_phone(browser, report_url):
+def test_the_club_breakdown_is_a_card_per_rule_on_a_phone(browser, report_url):
     context = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
     page = context.new_page()
     page.goto(report_url)
     _open_filters(page)
     page.select_option("#panel-1 .club-select", "club_a")
     page.locator("#panel-1 .scope-breakdown > summary").click()
-    assert page.locator("#panel-1 .scope-breakdown .col-extra").first.is_hidden()
-    assert page.locator("#panel-1 .scope-breakdown .col-type").first.is_hidden()
-    assert page.locator("#panel-1 .scope-breakdown th", has_text="Events").is_visible()
+    table = "#panel-1 .scope-breakdown table.breakdown"
+    assert page.locator(f"{table} thead").is_hidden()
+    row = page.locator(f"{table} tbody tr").first
+    assert row.evaluate("r => getComputedStyle(r).display") == "block"
+    assert row.locator(".phone-desc").first.is_visible()
+    labels = row.evaluate("r => [...r.querySelectorAll('td[data-label]')].map(td => td.dataset.label)")
+    assert labels == ["Type", "Contribution", "Events", "Rank", "Fixtures"]
+    assert row.locator("td.col-extra").first.is_visible()  # nothing is scrolled out of sight
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     context.close()
-
 
 
 # -- comparing the options (#35) ----------------------------------------------
@@ -2334,3 +2339,219 @@ def test_the_printed_page_drops_the_controls_and_opens_the_views_collapsed_secti
     page.evaluate("window.dispatchEvent(new Event('afterprint'))")
     assert chip.evaluate("d => d.open") is False
     page.close()
+
+
+# -- phone layout (#40) --------------------------------------------------------
+
+PHONE_VIEWS = ("by-competition", "month-calendar", "combined-calendar", "combined-list", "club-timeline")
+
+
+@pytest.fixture
+def phone(browser, report_url):
+    context = browser.new_context(
+        viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True
+    )
+    page = context.new_page()
+    page.problems = []
+    page.on("console", lambda m: page.problems.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: page.problems.append(str(e)))
+    page.goto(report_url)
+    yield page
+    assert page.problems == []
+    context.close()
+
+
+def _box(locator):
+    return locator.evaluate(
+        "n => { const r = n.getBoundingClientRect(); return {x: r.x, y: r.y, w: r.width, h: r.height}; }"
+    )
+
+
+def test_a_phone_opens_on_the_month_calendar_and_a_desktop_on_the_rounds(phone, page):
+    assert phone.locator("#panel-1 .view-pane[data-view='month-calendar']").is_visible()
+    assert phone.locator("#panel-1 .view-btn[data-view='month-calendar']").get_attribute(
+        "aria-pressed"
+    ) == "true"
+    assert page.locator("#panel-1 .view-pane[data-view='by-competition']").is_visible()
+
+
+def test_no_view_scrolls_sideways_on_a_phone_with_everything_open(phone):
+    _open_filters(phone)
+    _show_cups_and_europe(phone)
+    for view in PHONE_VIEWS:
+        body = _view(phone, view)
+        for button in body.locator(".expand-all").all():
+            button.tap()
+        assert _scroll_overflow(phone) <= 0, view
+    _open_filters(phone)
+    phone.select_option("#panel-1 .club-select", "club_a")
+    for view in PHONE_VIEWS:
+        _view(phone, view)
+        assert _scroll_overflow(phone) <= 0, f"club_a {view}"
+
+
+def test_info_icons_and_day_cells_are_at_least_44_px_on_a_phone(phone, other_months_url):
+    icons = phone.locator("#panel-1 .info-icon:visible")
+    assert icons.count() > 0
+    for box in [_box(icon) for icon in icons.all()]:
+        assert box["w"] >= 44 and box["h"] >= 44
+    _view(phone, "month-calendar")
+    cells = phone.locator("#panel-1 .cal-day:not(.cal-pad)")
+    assert cells.count() > 0
+    for box in [_box(cell) for cell in cells.all()]:
+        assert box["w"] >= 44 and box["h"] >= 44
+    phone.goto(other_months_url)
+    chips = phone.locator("#panel-1 .cal-day.other-date")
+    assert chips.count() > 0
+    assert all(_box(chip)["h"] >= 44 for chip in chips.all())
+
+
+def test_a_desktop_keeps_its_small_info_icons_and_day_cells(page):
+    assert _box(page.locator("#panel-1 .info-icon").first)["w"] == 15
+    _view(page, "month-calendar")
+    cell = page.locator("#panel-1 .cal-day:not(.cal-pad)").first
+    assert cell.evaluate("n => getComputedStyle(n).minHeight") == "52px"
+
+
+def test_the_key_button_holds_the_legend_and_the_month_dots_on_a_phone(phone):
+    toggle = phone.locator("#panel-1 .legend-toggle")
+    panel = phone.locator("#panel-1 .legend-panel")
+    assert toggle.inner_text().split()[0] == "Key"
+    assert not panel.is_visible()
+    assert phone.locator("#panel-1 .month-legend").is_hidden()  # no dot list inline
+    toggle.tap()
+    assert panel.is_visible()
+    assert panel.locator(".legend-dots").is_visible()
+    assert panel.locator(".legend-dots .cal-dot").count() > 0
+    assert _box(panel)["x"] >= 0 and _box(panel)["x"] + _box(panel)["w"] <= 390
+    toggle.tap()
+    assert not panel.is_visible()
+    _view(phone, "combined-list")
+    toggle.tap()
+    assert panel.locator(".legend-dots").is_hidden()
+
+
+def test_a_desktop_keeps_its_legend_label_and_inline_month_dots(page):
+    assert page.locator("#panel-1 .legend-toggle").inner_text().startswith("Legend")
+    _view(page, "month-calendar")
+    assert page.locator("#panel-1 .month-legend").is_visible()
+    page.locator("#panel-1 .legend-toggle").click()
+    assert page.locator("#panel-1 .legend-dots").is_hidden()
+
+
+def test_the_option_tabs_fit_one_row_on_a_phone(phone):
+    tabs = [_box(tab) for tab in phone.locator(".tab").all()]
+    assert len({round(t["y"]) for t in tabs}) == 1
+    assert max(t["x"] + t["w"] for t in tabs) <= 390
+    assert phone.locator(".tab .tab-seed").first.is_hidden()
+
+
+def test_a_phone_folds_each_round_under_its_summary_and_expand_all_opens_them(phone):
+    body = _view(phone, "by-competition")
+    rounds = body.locator(".round.collapsible")
+    assert rounds.count() == 3
+    first = rounds.first
+    assert first.locator(".fixtures").is_hidden()
+    assert first.locator(".rlabel .rsum").is_visible()  # the summary stays in view
+    toggle = first.locator(".round-toggle")
+    assert toggle.get_attribute("aria-expanded") == "false"
+    toggle.tap()
+    assert toggle.get_attribute("aria-expanded") == "true" and first.locator(".fixtures").is_visible()
+    toggle.tap()
+    assert first.locator(".fixtures").is_hidden()
+
+    body.locator(".expand-all").tap()
+    assert body.locator(".round .fixtures:visible").count() == 3
+    assert body.locator(".expand-all").inner_text() == "Collapse all rounds"
+    _view(phone, "combined-calendar")  # one choice for every round-like view
+    assert phone.locator("#panel-1 .round .fixtures:visible").count() > 0
+    _view(phone, "by-competition").locator(".expand-all").tap()
+    assert body.locator(".round .fixtures:visible").count() == 0
+
+
+def test_a_fold_the_reader_opened_survives_a_redraw_and_a_strip_jump_opens_its_round(phone):
+    body = _view(phone, "by-competition")
+    body.locator(".round.collapsible").nth(1).locator(".round-toggle").tap()
+    _open_filters(phone)
+    phone.locator("#panel-1 .kind-btn[data-kind='cup']").tap()  # redraws the view
+    assert phone.locator("#panel-1 .round.collapsible .round-toggle[aria-expanded='true']").count() == 1
+    last = phone.locator("#panel-1 .strip-cell").last
+    last.tap()
+    assert phone.locator("#panel-1 .round.collapsible.is-open").count() >= 2
+    assert phone.locator("#panel-1 .round.is-open .fixtures").last.is_visible()
+
+
+def test_a_club_filter_opens_the_rounds_on_a_phone(phone):
+    _open_filters(phone)
+    phone.select_option("#panel-1 .club-select", "club_b")
+    body = _view(phone, "by-competition")
+    assert body.locator(".round.collapsible.is-open").count() == body.locator(".round").count()
+
+
+def test_a_desktop_shows_every_round_open_with_no_expand_all(page):
+    body = _view(page, "by-competition")
+    assert body.locator(".round.collapsible").count() == 0
+    assert body.locator(".expand-all").count() == 0
+    assert body.locator(".round .fixtures").first.is_visible()
+
+
+def test_fixtures_are_one_compact_row_each_under_a_day_heading_on_a_phone(phone):
+    body = _view(phone, "by-competition")
+    body.locator(".expand-all").tap()
+    card = body.locator(".fx").first
+    box = _box(card)
+    assert box["h"] < 48
+    assert box["w"] > 390 * 0.8  # a full-width row, not a bordered chip
+    assert card.evaluate("n => getComputedStyle(n).borderTopLeftRadius") == "0px"
+    day = _box(body.locator(".day-head").first)
+    assert day["y"] < box["y"]
+    card.tap(position={"x": 20, "y": 8})  # the detail line opens inside the row
+    assert card.locator(".fx-detail").is_visible() and _box(card)["w"] == box["w"]
+
+
+def test_a_desktop_keeps_bordered_fixture_cards(page):
+    body = _view(page, "by-competition")
+    card = body.locator(".fx").first
+    assert _box(card)["w"] < 400  # a chip that wraps with its neighbours, not a full row
+    assert card.evaluate("n => getComputedStyle(n).borderTopLeftRadius") == "7px"
+
+
+def test_the_combined_list_is_stacked_rows_with_the_venue_on_a_muted_second_line(phone):
+    body = _view(phone, "combined-list")
+    row = body.locator("tr.fx-row").first
+    assert row.evaluate("r => getComputedStyle(r).display") == "grid"
+    tag, team = _box(row.locator(".comp-tag")), _box(row.locator(".fx-team"))
+    venue = _box(row.locator(".fx-venue"))
+    assert abs(tag["y"] - team["y"]) < 12  # competition tag and teams share the first line
+    assert venue["y"] > team["y"] + team["h"] - 2
+    assert body.locator("thead").is_hidden()
+    assert _scroll_overflow(phone) <= 0
+
+
+def test_the_breakdown_is_a_card_per_rule_with_inline_descriptions_on_a_phone(phone):
+    for details in phone.locator("#panel-1 .section-list > details").all():
+        details.evaluate("d => { d.open = true; }")
+    table = phone.locator("#panel-1 table.breakdown").first
+    assert table.locator("thead").is_hidden()
+    row = table.locator("tbody tr").first
+    assert row.evaluate("r => getComputedStyle(r).display") == "block"
+    assert row.locator(".phone-desc").is_visible()
+    assert row.locator("td.col-extra").is_visible()  # Examples no longer needs a sideways scroll
+    assert _box(table)["w"] <= 390
+
+
+def test_a_desktop_keeps_the_breakdown_table_without_inline_descriptions(page):
+    page.evaluate("document.querySelectorAll('#panel-1 .section-list > details').forEach(d => d.open = true)")
+    table = page.locator("#panel-1 table.breakdown").first
+    assert table.locator("thead").is_visible()
+    assert table.locator("tbody .phone-desc").first.is_hidden()
+
+
+def test_season_strip_figures_stay_inside_their_cells(page, phone):
+    for target in (page, phone):
+        _view(target, "by-competition")
+        for cell in target.locator("#panel-1 .strip-cell:not(:disabled)").all():
+            inner = _box(cell.locator(".strip-net"))
+            outer = _box(cell)
+            assert inner["x"] >= outer["x"] + 3 and inner["x"] + inner["w"] <= outer["x"] + outer["w"] - 1
+            assert "." not in cell.locator(".strip-net").inner_text()

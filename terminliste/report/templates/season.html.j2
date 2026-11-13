@@ -185,7 +185,7 @@
   .cmp td.is-best .cmp-val { font-weight: 800; }
   .cmp-tag-short { display: none; }
   /* Phones: the summaries move out of the narrow header cells into a list under the table. */
-  @media (max-width: 480px) {
+  @media (max-width: 600px) {
     .cmp th, .cmp td { padding: 8px 6px; }
     .cmp-measure { width: 34%; }
     .cmp .cmp-what { display: none; }
@@ -196,7 +196,7 @@
     .cmp-phone-summary li { margin: 4px 0; }
   }
   .cmp-quiet { margin: 10px 0 0; }
-  @media (min-width: 481px) { .cmp-phone-summary { display: none; } }
+  @media (min-width: 601px) { .cmp-phone-summary { display: none; } }
   .cmp-diffs { margin-top: 12px; }
   .cmp-diff { margin-top: 6px; }
   .cmp-diff summary { font-size: 14px; }
@@ -255,7 +255,7 @@
   .coverage { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; margin-top: 1px; }
   .gain-text { color: var(--good); }
   .cost-text { color: var(--bad); }
-  .split-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--tint-neutral); margin: 10px 0 6px; max-width: 480px; }
+  .split-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--tint-neutral); margin: 10px 0 6px; max-width: 600px; }
   .split-gain { display: block; height: 100%; background: var(--good); }
   .split-cost { display: block; height: 100%; background: var(--bad); }
   .all-soft { margin-top: 22px; }
@@ -266,7 +266,8 @@
   .all-soft .neutral-list { font-size: 13px; color: var(--muted); margin: 0; }
   .hard-ok { margin: 8px 0 10px; font-size: 13px; }
   .hard-ok > summary { cursor: pointer; color: var(--good); font-weight: 600; }
-  @media (max-width: 480px) { .col-extra, .col-type { display: none; } }
+  .phone-desc, .legend-dots, .key-short, .round-tools { display: none; }
+  .round-toggle { all: unset; }
   .item-body { padding: 0 8px 10px 16px; }
   .item .name { font-weight: 600; font-size: 14px; }
   .item .delta { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; white-space: nowrap; }
@@ -343,7 +344,7 @@
   .contrib.cost .share-fill { background: var(--bad); }
   .contrib.cost .share-text { color: var(--bad); }
   .raw { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-  @media (max-width: 480px) {
+  @media (max-width: 600px) {
     .contrib { gap: 6px; }
     .contrib .share-track { width: 36px; }
     .contrib .share-text { min-width: 0; font-size: 13px; }
@@ -409,7 +410,7 @@
   }
   /* The clear chip is for a phone with Filters closed; there the Show buttons are out of sight. */
   .kind-clear { display: none; }
-  @media (max-width: 480px) { .controls:not(.filters-open) .kind-clear:not([hidden]) { display: inline-block; } }
+  @media (max-width: 600px) { .controls:not(.filters-open) .kind-clear:not([hidden]) { display: inline-block; } }
   /* The line above a view that names what is hidden, and its button. */
   .kind-hint { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
   .kind-hint-btn {
@@ -899,7 +900,7 @@
     .day-head, .comp > summary, .date-row { break-after: avoid; }
   }
 
-  @media (max-width: 480px) {
+  @media (max-width: 600px) {
     .round { grid-template-columns: 1fr; gap: 4px; }
     .fx { white-space: normal; max-width: 100%; }
     .fx-main { flex-wrap: wrap; }
@@ -976,6 +977,89 @@
     .tl-fx { padding: 4px 5px; font-size: 12px; }
     .tl-date { font-size: 12px; }
     .tl-tag { font-size: 10px; }
+
+    /* -- phones (#40): the page opens on the month calendar; the rest is made compact -- */
+    .wrap { padding: 20px 12px 60px; }
+    .tabs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; margin-top: 20px; }
+    .tab { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 4px; font-size: 13px; line-height: 1.3; text-align: center; }
+    .tab .score, .tab .tab-tag { margin-left: 0; }
+    .tab .tab-seed { display: none; }
+    .tab .tab-tag { font-size: 11px; padding: 0 6px; }
+    .headlines { flex-direction: column; gap: 6px; margin-top: 14px; }
+    .headline { display: flex; align-items: baseline; gap: 10px; }
+    .headline .v { font-size: 20px; min-width: 3.2em; }
+    .scoreline { gap: 6px 14px; }
+    .total { font-size: 30px; }
+
+    /* Key button and what sits behind it */
+    .key-long { display: none; }
+    .key-short { display: inline; }
+    .month-legend { display: none; }
+    .panel[data-current-view="month-calendar"] .legend-dots { display: block; }
+    .legend-panel { left: 8px; width: calc(100% - 16px); max-height: min(70vh, 520px); }
+    .legend-panel .legend { gap: 6px 14px; }
+
+    /* Tap targets: info icons and day cells reach 44 x 44 px; the glyph stays small. */
+    .info-icon {
+      width: 44px; height: 44px; margin: -14px -12px -14px -8px; background: none; border-radius: 0; font-size: 0;
+    }
+    .info-icon::before {
+      content: "i"; display: inline-flex; align-items: center; justify-content: center;
+      width: 18px; height: 18px; border-radius: 50%; background: var(--line); font-size: 11px;
+    }
+    .info-icon:hover, .info-icon:focus-visible { background: none; }
+    .info-icon:hover::before, .info-icon:focus-visible::before { background: var(--accent); color: var(--on-accent); }
+    .cal-day { min-height: 44px; }
+    .cal-day.other-date { min-height: 44px; padding: 4px 12px; }
+    .phone-desc { display: block; }
+
+    /* Compact fixture rows: the day heading carries the date; each match is one line. */
+    .fixtures { gap: 0; }
+    .fixtures > .fx {
+      display: flex; flex: 0 0 100%; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 2px 8px;
+      border-width: 0 0 1px 4px; border-radius: 0; padding: 7px 4px 7px 8px; white-space: normal;
+    }
+    .fx-main { flex: 0 1 auto; }
+    .fx .flags { flex: 0 1 auto; }
+    .fx-detail { flex: 0 0 100%; max-width: none; }
+    .fixtures > .day-head { margin-top: 10px; padding-bottom: 4px; }
+    .fixtures > .fx-group { margin-top: 6px; }
+
+    /* Rounds fold under their summary; the whole heading is the button. */
+    .round { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+    .round.collapsible > .rlabel { position: relative; padding-right: 22px; cursor: pointer; }
+    .round.collapsible > .rlabel .round-toggle { cursor: pointer; font-weight: 700; color: var(--ink); }
+    .round.collapsible > .rlabel .round-toggle::after { content: ""; position: absolute; inset: 0; }
+    .round.collapsible > .rlabel::after {
+      content: "▸"; position: absolute; right: 4px; top: 2px; color: var(--muted); font-size: 12px;
+    }
+    .round.collapsible.is-open > .rlabel::after { content: "▾"; }
+    .round.collapsible > .rlabel:has(.round-toggle:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .round.collapsible:not(.is-open) > .fixtures { display: none; }
+    .round-tools { display: block; margin: 12px 0 0; }
+
+    /* The list reads as stacked rows: time, competition tag, teams and score; venue below. */
+    .fx-row {
+      grid-template-columns: auto auto minmax(0, 1fr) auto;
+      grid-template-areas: "time comp team score" "round venue venue venue" "rules rules rules rules";
+    }
+    .fx-row td:nth-child(3) { justify-self: start; }
+    .fx-row td:nth-child(5), .fx-row td:nth-child(2) { color: var(--muted); font-size: 12px; }
+    .fx-row td:nth-child(5):empty { display: none; }
+
+    /* The breakdown tables become one card per rule. */
+    table.breakdown, .breakdown tbody { display: block; }
+    .breakdown thead { display: none; }
+    .breakdown tr { display: block; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .breakdown td { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 3px 0; border: 0; text-align: right; }
+    .breakdown td:first-child { display: block; text-align: left; }
+    .breakdown td[data-label]::before {
+      content: attr(data-label); color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; flex: none;
+    }
+    .breakdown td.col-extra { display: block; text-align: left; }
+    .breakdown td.col-extra::before { display: block; margin-bottom: 2px; }
+    .breakdown tr.violated { background: var(--tint-bad); }
+    .breakdown tr.violated td { background: none; }
   }
 </style>
 <style id="palette">
@@ -1223,6 +1307,7 @@
         </span>
         <span class="delta">{{ row.count }} violation{{ '' if row.count == 1 else 's' }}</span>
       </div>
+      <div class="rule-desc phone-desc">{{ row.description }}</div>
       <div class="rule-actions">{{ lens_link(row) }}</div>
       {{ fixture_list(row) }}
       {% if row.examples %}
@@ -1286,7 +1371,7 @@
       <p class="desc">{{ satisfied|map(attribute='name')|join(', ') }}</p>
     </details>
     {% endif %}
-    <table>
+    <table class="breakdown">
       <thead>
         <tr><th>Rule</th><th>Type</th><th class="num">Contribution</th><th class="num">Events</th><th class="col-extra">Examples</th></tr>
       </thead>
@@ -1302,12 +1387,13 @@
                 <span class="tooltip" id="tt-{{ ns.tooltip_id }}" role="tooltip">{{ row.description }}</span>
               </span>
             </span>
+            <div class="rule-desc phone-desc">{{ row.description }}</div>
             {% if row.coverage %}<div class="coverage">{{ row.coverage.achieved }} of {{ row.coverage.opportunities }} {{ row.coverage.unit }} ({{ '%.0f'|format(row.coverage.pct) }}%)</div>{% endif %}
           </td>
-          <td><span class="kind {{ row.kind }}">{{ row.kind }}</span></td>
-          <td class="num">{% if row.share is not none %}{{ contribution(row) }}<div class="raw">{{ '%+.1f'|format(row.total) }}</div>{% else %}{{ '%+.1f'|format(row.total) if row.total else '—' }}{% endif %}</td>
-          <td class="num">{{ row.count }}</td>
-          <td class="col-extra">
+          <td data-label="Type"><span class="kind {{ row.kind }}">{{ row.kind }}</span></td>
+          <td class="num" data-label="Contribution">{% if row.share is not none %}{{ contribution(row) }}<div class="raw">{{ '%+.1f'|format(row.total) }}</div>{% else %}{{ '%+.1f'|format(row.total) if row.total else '—' }}{% endif %}</td>
+          <td class="num" data-label="Events">{{ row.count }}</td>
+          <td class="col-extra" data-label="Examples">
             {% if row.pinned %}<div class="rule-actions">{{ lens_link(row) }}</div>{{ fixture_list(row) }}{% endif %}
             {% if row.examples %}
             <ul class="examples" style="margin:0;padding-left:16px">
@@ -1369,7 +1455,7 @@
     <div class="bar-actions">
       <button type="button" class="bar-btn back-to-score" aria-label="Back to score"><span aria-hidden="true">↑</span><span class="bar-btn-text"> Score</span></button>
       <div class="legend-wrap">
-        <button type="button" class="bar-btn legend-toggle" aria-expanded="false" aria-controls="legend-{{ loop.index }}">Legend<span class="caret"> ▾</span></button>
+        <button type="button" class="bar-btn legend-toggle" aria-expanded="false" aria-controls="legend-{{ loop.index }}"><span class="key-long">Legend</span><span class="key-short">Key</span><span class="caret"> ▾</span></button>
         <div class="legend-panel" id="legend-{{ loop.index }}" hidden>
           <div class="legend-cards">
             <h4>Fixture cards</h4>
@@ -1384,6 +1470,16 @@
               <span>round, week and day totals: net points of the badges on the games shown; midweek means all games Mon–Thu</span>
             </div>
           </div>
+          {% if option.calendar_legend %}
+          <div class="legend-dots">
+            <h4>Month calendar dots</h4>
+            <div class="legend">
+              {% for comp in option.calendar_legend %}
+              <span><span class="cal-dot {{ comp.cls }}" aria-hidden="true"></span><b>{{ comp.short }}</b> {{ comp.name }}</span>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
           <details class="abbr-key">
             <summary>Club abbreviations</summary>
             <ul class="abbr-list">
@@ -1475,7 +1571,7 @@
       tap a day to list its games under that week. A figure under a day is the net rule points of its games shown.
     </div>
     {% if option.calendar_legend %}
-    <div class="legend">
+    <div class="legend month-legend">
       {% for comp in option.calendar_legend %}
       <span><span class="cal-dot {{ comp.cls }}" aria-hidden="true"></span><b>{{ comp.short }}</b> {{ comp.name }}</span>
       {% endfor %}

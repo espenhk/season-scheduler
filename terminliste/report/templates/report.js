@@ -236,6 +236,8 @@
 
   var flagOf = new WeakMap();
   var HOVER_NONE = window.matchMedia('(hover: none)').matches;
+  // The width below which the page is laid out for a phone (matches the stylesheet's phone rules).
+  var PHONE = window.matchMedia('(max-width: 600px)');
   var flagTip = null;
   var flagTipOwner = null;
 
@@ -649,6 +651,8 @@
 
   // Opens the collapsed sections a drawn node sits in, so it can be seen and scrolled to.
   function openAround(node) {
+    var round = node.closest('.round.collapsible');
+    if (round && !round.classList.contains('is-open')) round.setOpen(true);
     var section = node.closest('details');
     while (section && section.closest('.pane-body')) {
       section.open = true;
@@ -668,6 +672,44 @@
     return label;
   }
 
+  // A round (or week) block. On a phone it folds under its heading, which keeps the
+  // round summary in view; a club's own rounds start open since each holds one game.
+  function roundBlock(ctx, key, label, fixtures) {
+    var block = append(el('div', 'round'), label, fixtures);
+    if (!PHONE.matches) return block;
+    var state = ctx.opt.state;
+    var open = state.rounds[key] !== undefined ? state.rounds[key] : state.allRounds !== null ? state.allRounds : !!ctx.club;
+    var title = label.querySelector('b');
+    var toggle = el('button', 'round-toggle', title.textContent);
+    toggle.type = 'button';
+    title.textContent = '';
+    title.appendChild(toggle);
+    block.classList.add('collapsible');
+    block.setOpen = function (value) {
+      state.rounds[key] = value;
+      block.classList.toggle('is-open', value);
+      toggle.setAttribute('aria-expanded', String(value));
+    };
+    block.setOpen(open);
+    toggle.addEventListener('click', function () { block.setOpen(!block.classList.contains('is-open')); });
+    return block;
+  }
+
+  // "Expand all rounds" / "Collapse all rounds", on phones only.
+  function roundTools(ctx, root) {
+    if (!PHONE.matches) return;
+    var state = ctx.opt.state;
+    var expanded = state.allRounds === true;
+    var button = el('button', 'bar-btn expand-all', expanded ? 'Collapse all rounds' : 'Expand all rounds');
+    button.type = 'button';
+    button.addEventListener('click', function () {
+      state.allRounds = !expanded;
+      state.rounds = {};
+      ctx.opt.render();
+    });
+    root.appendChild(append(el('div', 'round-tools'), button));
+  }
+
   var KIND_GROUPS = [['league', 'Leagues'], ['cup', 'Cups'], ['european', 'Europe']];
 
   function competitionSection(ctx, view, rounds) {
@@ -681,8 +723,9 @@
     append(head, el('h3', 'comp-name', view.name), el('span', 'meta', view.meta));
     section.appendChild(head);
     rounds.forEach(function (round) {
-      section.appendChild(append(
-        el('div', 'round'),
+      section.appendChild(roundBlock(
+        ctx,
+        view.id + '|' + round.title,
         roundLabel(round.title, round.text, round.note, totals(ctx.fx, ctx.visible(round.ids))),
         fixturesOf(ctx, round.ids, false)
       ));
@@ -718,6 +761,7 @@
       jump.appendChild(button);
     });
     root.appendChild(jump);
+    roundTools(ctx, root);
     KIND_GROUPS.forEach(function (group) {
       var sections = shown.filter(function (entry) { return entry.view.kind === group[0]; });
       if (!sections.length) return;
@@ -729,13 +773,15 @@
 
   function combinedCalendarView(ctx) {
     var root = document.createDocumentFragment();
+    var any = false;
     ctx.opt.data.weeks.forEach(function (week) {
       var shown = ctx.visible(week.ids);
       if (!shown.length) return;
-      append(
-        root,
-        append(el('div', 'round'), roundLabel(week.label, week.dates, null, totals(ctx.fx, shown)), fixturesOf(ctx, week.ids, true))
-      );
+      if (!any) roundTools(ctx, root);
+      any = true;
+      root.appendChild(roundBlock(
+        ctx, 'week|' + week.label, roundLabel(week.label, week.dates, null, totals(ctx.fx, shown)), fixturesOf(ctx, week.ids, true)
+      ));
     });
     return root;
   }
@@ -1304,8 +1350,9 @@
     this.anchor = '';
     this.state = {
       view: panel.querySelector('.view-btn').dataset.view, club: '', team: '', date: '', rule: '', only: false,
-      kinds: DEFAULT_KINDS.slice(), query: '', open: {}, closed: {}
+      kinds: DEFAULT_KINDS.slice(), query: '', open: {}, closed: {}, rounds: {}, allRounds: null
     };
+    if (PHONE.matches) this.state.view = 'month-calendar';
     this.clubSelect = panel.querySelector('.club-select');
     this.lensSelect = panel.querySelector('.lens-select');
     this.lensOnly = panel.querySelector('.lens-only-box');
@@ -1423,6 +1470,8 @@
     this.state.query = shared.query;
     this.state.open = Object.assign({}, shared.open);
     this.state.closed = Object.assign({}, shared.closed);
+    this.state.rounds = Object.assign({}, shared.rounds);
+    this.state.allRounds = shared.allRounds;
     this.clubSelect.value = shared.club;
   };
 
@@ -1650,7 +1699,8 @@
     var item = el('details', 'item ' + kind);
     if (score.fixtures) item.setAttribute('data-rule', score.rule.id);
     var summary = el('summary', 'top');
-    append(summary, ruleNameRow(score.rule), contributionNode(score.total, score.share, score.count));
+    var names = append(el('span', 'name-block'), ruleNameRow(score.rule), el('span', 'rule-desc phone-desc', score.rule.desc));
+    append(summary, names, contributionNode(score.total, score.share, score.count));
     var body = append(el('div', 'item-body'));
     if (score.share !== null) body.appendChild(el('div', 'desc', 'Raw score change ' + signed(score.total) + '.'));
     body.appendChild(ruleActions(score));
@@ -1669,11 +1719,18 @@
 
   function contributionCell(score) {
     var cell = el('td', 'num');
+    cell.setAttribute('data-label', 'Contribution');
     if (score.share === null) {
       cell.textContent = score.total ? signed(score.total) : '—';
       return cell;
     }
     append(cell, contributionNode(score.total, score.share, score.count), el('div', 'raw', signed(score.total)));
+    return cell;
+  }
+
+  // The cell's column name, which a phone shows beside its value.
+  function labelled(cell, name) {
+    cell.setAttribute('data-label', name);
     return cell;
   }
 
@@ -1699,21 +1756,22 @@
       var row = el('tr');
       if (rule.hard && score.count) row.className = 'violated';
       var last = el('td', 'col-extra');
+      last.setAttribute('data-label', 'Fixtures');
       if (rule.inv) last.appendChild(el('span', 'desc', 'Scored per competition, not per team.'));
       else if (score.fixtures) append(last, ruleActions(score), ruleFixturesList(score));
       else last.appendChild(document.createTextNode('—'));
       append(
         row,
-        append(el('td'), ruleNameRow(rule)),
-        append(el('td', 'col-type'), el('span', 'kind ' + (rule.hard ? 'hard' : 'soft'), rule.hard ? 'hard' : 'soft')),
+        append(el('td'), ruleNameRow(rule), el('div', 'rule-desc phone-desc', rule.desc)),
+        labelled(append(el('td', 'col-type'), el('span', 'kind ' + (rule.hard ? 'hard' : 'soft'), rule.hard ? 'hard' : 'soft')), 'Type'),
         contributionCell(score),
-        el('td', 'num', String(score.count)),
-        el('td', 'col-extra', score.ranks.length ? rankText(score.ranks) : '—'),
+        labelled(el('td', 'num', String(score.count)), 'Events'),
+        labelled(el('td', 'col-extra', score.ranks.length ? rankText(score.ranks) : '—'), 'Rank'),
         last
       );
       body.appendChild(row);
     });
-    var table = append(el('table'), append(el('thead'), head), body);
+    var table = append(el('table', 'breakdown'), append(el('thead'), head), body);
     details.appendChild(append(el('div', 'cal-wrap'), table));
     return details;
   };
@@ -2023,6 +2081,12 @@
     });
   };
 
+  // Whole points keep a cell's figure inside its border; the full figure is in its label.
+  function stripNet(net) {
+    var whole = Math.round(net);
+    return whole > 0 ? '+' + whole : whole < 0 ? '\u2212' + Math.abs(whole) : '0';
+  }
+
   function stripCell(opt, ctx, round) {
     var button = el('button', 'strip-cell');
     button.type = 'button';
@@ -2037,7 +2101,7 @@
     if (sum.badged) {
       var edge = netClass(sum.net);
       if (edge) button.classList.add('sc-' + edge);
-      button.appendChild(el('span', 'strip-net', netText(sum.net)));
+      button.appendChild(el('span', 'strip-net', stripNet(sum.net)));
     }
     if (sum.broken) {
       var hard = el('span', 'strip-hard', String(sum.broken));
@@ -2190,6 +2254,10 @@
   if (panels.length) {
     option(0).render();
     watchBar(panels[0]);
+    // Rounds fold only on a phone, so crossing the breakpoint redraws the open view.
+    var redrawOnResize = function () { if (options[current]) options[current].render(); };
+    if (PHONE.addEventListener) PHONE.addEventListener('change', redrawOnResize);
+    else PHONE.addListener(redrawOnResize);
   }
 
   // ---------------------------------------------------------- rule tooltips
