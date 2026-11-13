@@ -188,6 +188,34 @@
     return 'v ' + fx.versus;
   }
 
+  // With a club chosen a fixture is read from that club's side: "H vs KFU", "A at RBK" (#39).
+  // `opp` is the opposing side (null for a cup or European entry, whose opponent is text),
+  // `where` is H / A / N, or '' while a tie's venue is undecided.
+  var WHERE_BY_SHAPE = { square: 'H', diamond: 'A', circle: 'N' };
+  var WHERE_NAME = { H: 'Home', A: 'Away', N: 'Neutral ground' };
+
+  function perspective(fx, club) {
+    if (!club) return null;
+    var own = fx.home.club === club ? fx.home : fx.away && fx.away.club === club ? fx.away : null;
+    if (!own) return null;
+    var opp = own === fx.home ? fx.away : fx.home;
+    var where = fx.away ? (own === fx.home ? 'H' : 'A') : WHERE_BY_SHAPE[own.shape] || '';
+    return { where: where, word: where === 'A' ? 'at' : 'vs', opp: fx.away ? opp : null, oppText: fx.versus };
+  }
+
+  function wherePill(where) {
+    var pill = el('abbr', 'ha-pill' + (where === 'H' ? ' home' : ''), where);
+    pill.title = WHERE_NAME[where];
+    return pill;
+  }
+
+  // The opponent in full: a chosen club leaves room for names rather than abbreviations.
+  function opponentNodes(view) {
+    return view.opp
+      ? [marker(view.opp), named({ name: view.opp.full, full: view.opp.full }, '')]
+      : [el('span', '', view.oppText)];
+  }
+
   function tag(node, fx) {
     node.setAttribute('data-uid', fx.uid);
     node.setAttribute('data-clubs', fx.clubs.join(' '));
@@ -275,23 +303,42 @@
   }
 
   // The pill used in "By competition" and "Combined · calendar"; the day heading above it gives the date.
-  function fixtureCard(fx, showCompetition) {
-    var card = tag(el('span', 'fx' + edgeClass(fx)), fx);
-    card.title = fx.venue;
+  // A click opens its detail line (full names and venue), see toggleDetail.
+  function fixtureCard(fx, showCompetition, club) {
+    var card = tag(el('span', 'fx has-detail' + edgeClass(fx)), fx);
     card.setAttribute('data-competition', fx.comp);
-    var main = append(
-      el('span', 'fx-main'),
-      fx.time ? el('span', 'd', fx.time) : null,
-      showCompetition ? competitionTag(fx) : null,
-      marker(fx.home),
-      named(fx.home, 'h')
-    );
-    if (fx.away) {
-      append(main, el('span', 'vs', 'v'), marker(fx.away), named(fx.away, ''));
+    var view = perspective(fx, club);
+    var main = append(el('span', 'fx-main'), fx.time ? el('span', 'd', fx.time) : null, showCompetition ? competitionTag(fx) : null);
+    if (view) {
+      if (view.where) main.appendChild(wherePill(view.where));
+      append(main, el('span', 'vs', view.word));
+      opponentNodes(view).forEach(function (node) { main.appendChild(node); });
     } else {
-      append(main, el('span', 'vs', versusText(fx)));
+      append(main, marker(fx.home), named(fx.home, 'h'));
+      if (fx.away) {
+        append(main, el('span', 'vs', 'v'), marker(fx.away), named(fx.away, ''));
+      } else {
+        append(main, el('span', 'vs', versusText(fx)));
+      }
     }
     return append(card, main, flagBox(fx));
+  }
+
+  // The detail line a card opens: both teams in full, and where they play.
+  function detailLine(fx) {
+    var teams = fx.away ? fx.home.full + ' v ' + fx.away.full : fx.home.full + ' ' + versusText(fx);
+    return append(el('span', 'fx-detail'), el('b', '', teams), document.createTextNode(fx.venue ? ' · ' + fx.venue : ''));
+  }
+
+  function toggleDetail(card) {
+    var open = card.querySelector('.fx-detail');
+    if (open) {
+      open.remove();
+      return;
+    }
+    var fx = optionOf(card).fx[+card.getAttribute('data-uid')];
+    var line = detailLine(fx);
+    card.insertBefore(line, card.querySelector(':scope > .flags'));
   }
 
   // Round text: a league's round number, or a cup or European round's name.
@@ -310,17 +357,25 @@
   // A row of "Combined · list": time, round, competition, team / opponent, venue,
   // rules, score. Every row has this shape, so a single-team cup row reads like a
   // league row with its opponent still to be drawn.
-  function fixtureRow(fx) {
+  function fixtureRow(fx, club) {
     var row = tag(el('tr', 'fx-row' + edgeClass(fx)), fx);
     row.setAttribute('data-competition', fx.comp);
     row.setAttribute('data-search', searchText(fx));
     // The text-node space after a marker is part of the cell's inline layout.
     var space = function () { return document.createTextNode(' '); };
-    var team = append(el('td', 'fx-team'), marker(fx.home), space(), named(fx.home, ''), space());
-    if (fx.away) {
-      append(team, el('span', 'vs', 'v'), space(), marker(fx.away), space(), named(fx.away, ''));
+    var team = el('td', 'fx-team');
+    var view = perspective(fx, club);
+    if (view) {
+      if (view.where) append(team, wherePill(view.where), space());
+      append(team, el('span', 'vs', view.word), space());
+      opponentNodes(view).forEach(function (node) { team.appendChild(node); });
     } else {
-      append(team, el('span', 'vs', versusText(fx)));
+      append(team, marker(fx.home), space(), named(fx.home, ''), space());
+      if (fx.away) {
+        append(team, el('span', 'vs', 'v'), space(), marker(fx.away), space(), named(fx.away, ''));
+      } else {
+        append(team, el('span', 'vs', versusText(fx)));
+      }
     }
     return append(
       row,
@@ -335,13 +390,21 @@
   }
 
   // A line of the month calendar's day detail.
-  function dayRow(fx, inGroup) {
+  function dayRow(fx, inGroup, club) {
     var row = tag(el('div', 'day-row' + edgeClass(fx)), fx);
-    append(row, inGroup ? null : competitionTag(fx), marker(fx.home), el('span', '', fx.home.name));
-    if (fx.away) {
-      append(row, el('span', 'vs', 'v'), marker(fx.away), el('span', '', fx.away.name));
+    var view = perspective(fx, club);
+    append(row, inGroup ? null : competitionTag(fx));
+    if (view) {
+      if (view.where) row.appendChild(wherePill(view.where));
+      append(row, el('span', 'vs', view.word));
+      opponentNodes(view).forEach(function (node) { row.appendChild(node); });
     } else {
-      append(row, el('span', 'vs', versusText(fx)));
+      append(row, marker(fx.home), el('span', '', fx.home.name));
+      if (fx.away) {
+        append(row, el('span', 'vs', 'v'), marker(fx.away), el('span', '', fx.away.name));
+      } else {
+        append(row, el('span', 'vs', versusText(fx)));
+      }
     }
     if (fx.time) row.appendChild(el('span', 'd', fx.time));
     return append(row, flagBox(fx));
@@ -508,8 +571,23 @@
     return items;
   }
 
-  function dayName(iso) {
-    return weekday(iso) + ' ' + (+iso.slice(8, 10)) + ' ' + MONTHS[+iso.slice(5, 7) - 1];
+  // The weekday, boxed when a league playing that day prefers another (#39).
+  function weekdayNode(iso, items) {
+    var index = dayIndex(iso);
+    var off = [];
+    items.forEach(function (item) {
+      item.fxs.forEach(function (fx) {
+        var preferred = DATA.preferred[fx.comp];
+        if (fx.kind === 'league' && preferred !== undefined && preferred !== index && off.indexOf(fx.comp) === -1) off.push(fx.comp);
+      });
+    });
+    var node = el('span', off.length ? 'wd off' : 'wd', weekday(iso));
+    if (off.length) {
+      node.title = 'Not the preferred weekday of ' + off.map(function (id) {
+        return DATA.competitions[id].name + ' (' + WEEKDAY_NAMES[DATA.preferred[id]] + ')';
+      }).join(' and ');
+    }
+    return node;
   }
 
   // "Sun 15 Mar — 14:00 ×4 · 18:00 ×1 · cup/UEFA ×2" (lone teams; chips are not counted)
@@ -528,7 +606,8 @@
     });
     var parts = Object.keys(timed).sort().map(function (time) { return time + ' ×' + timed[time]; });
     Object.keys(untimed).forEach(function (label) { parts.push(label + ' ×' + untimed[label]); });
-    return dayName(date) + (parts.length ? ' — ' + parts.join(' · ') : '');
+    var rest = ' ' + (+date.slice(8, 10)) + ' ' + MONTHS[+date.slice(5, 7) - 1] + (parts.length ? ' — ' + parts.join(' · ') : '');
+    return append(el('h4', 'day-head'), weekdayNode(date, items), document.createTextNode(rest));
   }
 
   function itemsByDay(items) {
@@ -562,8 +641,8 @@
   function fixturesOf(ctx, ids, showCompetition) {
     var box = el('div', 'fixtures');
     itemsByDay(drawItems(ctx, ids)).forEach(function (day) {
-      box.appendChild(el('h4', 'day-head', dayHeading(day.date, day.items)));
-      appendItems(box, day.items, function (fx, inGroup) { return fixtureCard(fx, showCompetition && !inGroup); });
+      box.appendChild(dayHeading(day.date, day.items));
+      appendItems(box, day.items, function (fx, inGroup) { return fixtureCard(fx, showCompetition && !inGroup, ctx.club); });
     });
     return box;
   }
@@ -663,8 +742,8 @@
 
   var LIST_COLUMNS = ['Time', 'Round', 'Competition', 'Team / Opponent', 'Venue', 'Rules', 'Score'];
 
-  function dateRow(date) {
-    var th = el('th', '', longDate(date));
+  function dateRow(date, items) {
+    var th = append(el('th'), weekdayNode(date, items), document.createTextNode(longDate(date).slice(weekday(date).length)));
     th.colSpan = LIST_COLUMNS.length;
     return append(el('tr', 'date-row'), th);
   }
@@ -675,7 +754,7 @@
   }
 
   // A cup or European round date in the list: a chip row that opens to its team rows.
-  function groupRows(body, item, state, refresh) {
+  function groupRows(body, item, state, refresh, club) {
     var first = item.fxs[0];
     var key = groupKey(first);
     var toggle = el('button', 'fx-group-toggle', DATA.competitions[first.comp].name + ' · ' + first.round + ' · ' + plural(item.fxs.length, 'team', 'teams'));
@@ -691,7 +770,7 @@
     row.setAttribute('data-search', item.fxs.map(searchText).join(' '));
     body.appendChild(append(row, cell));
     item.fxs.forEach(function (fx) {
-      var member = fixtureRow(fx);
+      var member = fixtureRow(fx, club);
       member.classList.add('fx-member');
       member.setAttribute('data-group', key);
       body.appendChild(member);
@@ -752,10 +831,10 @@
       refresh();
     });
     itemsByDay(items).forEach(function (day) {
-      body.appendChild(dateRow(day.date));
+      body.appendChild(dateRow(day.date, day.items));
       day.items.forEach(function (item) {
-        if (item.group) groupRows(body, item, state, refresh);
-        else body.appendChild(fixtureRow(item.fxs[0]));
+        if (item.group) groupRows(body, item, state, refresh, ctx.club);
+        else body.appendChild(fixtureRow(item.fxs[0], ctx.club));
       });
     });
     refresh();
@@ -946,7 +1025,7 @@
       var head = append(el('div', 'rlabel'), el('b', '', day ? day.label : longDateUnpadded(iso)));
       var body = append(el('div', 'day-detail'), head);
       if (ids.length) {
-        var box = appendItems(el('div', 'fixtures'), drawItems(ctx, day.ids), dayRow);
+        var box = appendItems(el('div', 'fixtures'), drawItems(ctx, day.ids), function (fx, inGroup) { return dayRow(fx, inGroup, ctx.club); });
         append(body, summaryNode(totals(ctx.fx, ids), false), box);
       } else {
         append(body, el('div', 'day-detail-empty', 'No games on this day.'));
@@ -1057,8 +1136,7 @@
 
   function timelineCard(fx, teamId, gap) {
     var mark = VENUE_MARK[venueFor(fx, teamId)];
-    var card = tag(el('div', 'tl-fx' + edgeClass(fx)), fx);
-    card.title = fx.venue;
+    var card = tag(el('div', 'tl-fx has-detail' + edgeClass(fx)), fx);
     var venue = el('span', 'tl-ha', mark[0]);
     venue.title = mark[1];
     venue.setAttribute('aria-label', mark[1]);
@@ -2190,6 +2268,12 @@
       if (!touch && wrap.isConnected) showFlagTip(wrap);
       return;
     }
+    // A mouse has hover and the keyboard has :focus-visible; only a touch needs the toggle. Opening
+    // it on a mouse click would leave it stuck once the pointer moved away (#39).
+    if (!touch) {
+      closeTooltips();
+      return;
+    }
     var wasOpen = wrap.classList.contains('open');
     closeTooltips();
     if (!wasOpen) {
@@ -2200,6 +2284,23 @@
   });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') closeTooltips();
+  });
+  // Delegated: a click on a card opens or closes its detail line. A badge keeps its own click.
+  document.addEventListener('click', function (e) {
+    var card = e.target.closest ? e.target.closest('.fx, .tl-fx') : null;
+    if (card && !e.target.closest('.flag, .fx-detail')) toggleDetail(card);
+  });
+  // The page prints what is on screen: the drawn view's collapsed sections are opened for the print and shut again after (#39).
+  var openedForPrint = [];
+  window.addEventListener('beforeprint', function () {
+    document.querySelectorAll('.panel:not([hidden]) .pane-body details:not([open])').forEach(function (node) {
+      node.open = true;
+      openedForPrint.push(node);
+    });
+  });
+  window.addEventListener('afterprint', function () {
+    openedForPrint.forEach(function (node) { node.open = false; });
+    openedForPrint = [];
   });
   // Capture phase so this also fires for scrolling inside .cal-wrap, whose
   // 'scroll' event doesn't bubble.

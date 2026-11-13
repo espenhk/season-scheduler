@@ -161,6 +161,7 @@ def render_report(
             dual_club_ids,
         ),
         "tint": {"good": TINT_GOOD, "cost": TINT_COST},
+        "preferred": _preferred_days(world, competitions),
         "shared": [payload.shared_entry_wire(entry) for entry in shared_entries],
         "sharedByCompetition": payload.by_competition_wire(shared_views),
         "options": [option["client"] for option in options],
@@ -189,6 +190,10 @@ def render_report(
         season_exclusions=_season_exclusions(world, season),
         slot_views=_slot_views(world, season, result),
         flag_legend=_flag_legend(options, hard_ids),
+        description=_description(world, season, result),
+        club_key=_club_key(world),
+        band_strong=SCORE_STRONG,
+        band_fair=SCORE_FAIR,
         tint_good=TINT_GOOD,
         tint_cost=-TINT_COST,
         palette_css=payload.palette_css(club_colors, competitions),
@@ -208,6 +213,16 @@ def _league_names(world: World, season: Season) -> str:
 
 def _default_title(world: World, season: Season) -> str:
     return f"{_league_names(world, season)} {season.year} — proposed fixture list"
+
+
+def _description(world: World, season: Season, result: SolverResult) -> str:
+    """The page's meta description (#39)."""
+    options = len(result.candidates)
+    return (
+        f"{_league_names(world, season)} {season.year}: "
+        f"{options} scored fixture list{'' if options == 1 else 's'}, "
+        "with the rules each one satisfies or bends, and calendar and per-club views."
+    )
 
 
 def _git_short_commit() -> str | None:
@@ -297,6 +312,7 @@ def _build_option(
         "hard_violations": score.hard_violations,
         "soft_total": score.soft_total,
         "points": score.points,
+        "band": _score_band(score.points),
         "scoring": _scoring_view(score, gross),
         "headlines": headlines,
         "hard_violation_detail": (
@@ -1120,6 +1136,33 @@ def _match_entries(
 # Net points a fixture needs for its card edge to turn green / amber.
 TINT_GOOD = 5.0
 TINT_COST = -3.0
+
+# Score bands for the gauge beside the total (#39): at or above STRONG is strong,
+# at or above FAIR is fair, below is weak.
+SCORE_STRONG = 80
+SCORE_FAIR = 60
+
+
+def _score_band(points: float) -> str:
+    return "strong" if points >= SCORE_STRONG else "fair" if points >= SCORE_FAIR else "weak"
+
+
+def _club_key(world: World) -> list[dict]:
+    """Every club's short name beside its full name, for the legend's abbreviation key (#39)."""
+    return [
+        {"short": club.short_name, "name": club.name, "cls": payload.club_class(club.id)}
+        for club in sorted(world.clubs.values(), key=lambda c: c.name)
+    ]
+
+
+def _preferred_days(world: World, competition_ids) -> dict[str, int]:
+    """Each league's preferred weekday as the browser numbers days (0 = Sunday)."""
+    return {
+        competition.id: (WEEKDAYS.index(competition.preferred_weekday) + 1) % 7
+        for competition in world.competitions.values()
+        if competition.id in competition_ids
+    }
+
 
 # Rules whose reward is the common case: their fixtures stay quiet and the
 # report badges the exceptions instead (#29).

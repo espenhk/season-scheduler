@@ -1973,7 +1973,7 @@ def test_a_cup_round_date_is_one_chip_that_opens_to_its_teams_and_a_club_filter_
     pane = _visible_pane(page)
     assert pane.locator("details.fx-group").count() == 0
     cards = _texts(pane.locator(".fx"))
-    assert len(cards) == 2 and sum("v TBD" in card for card in cards) == 1
+    assert len(cards) == 2 and sum("TBD" in card for card in cards) == 1
 
 
 def test_fixtures_in_a_day_read_in_kickoff_order_under_one_day_heading(kickoff_page):
@@ -2130,3 +2130,207 @@ def test_generation_details_sit_below_the_options_and_start_collapsed(page):
     section.locator("summary").click()
     assert section.get_attribute("open") is not None
     assert "Solver" in section.inner_text()
+
+
+# -- polish (#39) ----------------------------------------------------------------
+
+
+def _visibility(page, selector):
+    return page.eval_on_selector(selector, "n => getComputedStyle(n).visibility")
+
+
+def test_a_mouse_click_on_a_rules_info_icon_does_not_pin_its_tooltip_open(page):
+    icon = page.locator("#panel-1 summary.top .info-icon").first
+    tooltip = page.locator("#panel-1 summary.top .tooltip").first
+    icon.hover()
+    assert _visibility(page, "#panel-1 summary.top .tooltip") == "visible"
+    icon.click()
+    # The click is on the icon inside a <summary>: it must not toggle the rule open either.
+    assert page.locator("#panel-1 details.item").first.evaluate("d => d.open") is False
+    assert _visibility(page, "#panel-1 summary.top .tooltip") == "visible"
+    page.mouse.move(5, 5)
+    assert not tooltip.evaluate("n => n.parentElement.classList.contains('open')")
+    assert _visibility(page, "#panel-1 summary.top .tooltip") == "hidden"
+
+
+def test_keyboard_focus_still_shows_a_rules_tooltip(page):
+    page.keyboard.press("Tab")
+    for _ in range(40):
+        if page.evaluate("document.activeElement.classList.contains('info-icon')"):
+            break
+        page.keyboard.press("Tab")
+    assert page.evaluate("document.activeElement.classList.contains('info-icon')")
+    assert (
+        page.evaluate(
+            "getComputedStyle(document.activeElement.parentElement.querySelector('.tooltip')).visibility"
+        )
+        == "visible"
+    )
+
+
+def test_rule_names_sit_next_to_their_arrow_with_the_score_at_the_far_edge(page):
+    row = page.locator("#panel-1 details.item > summary.top").first
+    box = row.bounding_box()
+    name = page.locator("#panel-1 details.item > summary.top .name").first.bounding_box()
+    score = page.locator("#panel-1 details.item > summary.top .contrib").first.bounding_box()
+    assert name["x"] - box["x"] < 40
+    assert box["x"] + box["width"] - (score["x"] + score["width"]) < 20
+
+
+def _scroll_overflow(page):
+    return page.evaluate(
+        "document.documentElement.scrollWidth - document.documentElement.clientWidth"
+    )
+
+
+def test_the_page_never_scrolls_sideways_and_nothing_masks_it(page):
+    assert page.eval_on_selector("html", "n => getComputedStyle(n).overflowX") == "visible"
+    assert page.eval_on_selector("body", "n => getComputedStyle(n).overflowX") == "visible"
+    _show_cups_and_europe(page)
+    for view in (
+        "by-competition",
+        "month-calendar",
+        "combined-calendar",
+        "combined-list",
+        "club-timeline",
+    ):
+        _view(page, view)
+        assert _scroll_overflow(page) <= 0, view
+
+
+def test_the_page_never_scrolls_sideways_on_a_phone_either(touch_page):
+    page = touch_page
+    for view in (
+        "by-competition",
+        "month-calendar",
+        "combined-calendar",
+        "combined-list",
+        "club-timeline",
+    ):
+        _view(page, view)
+        assert _scroll_overflow(page) <= 0, view
+
+
+def test_a_click_on_a_card_opens_its_full_names_and_venue_and_a_second_closes_it(page):
+    body = _view(page, "by-competition")
+    card = body.locator(".fx").first
+    assert card.locator(".fx-detail").count() == 0
+    card.click(position={"x": 4, "y": 4})
+    detail = " ".join(card.locator(".fx-detail").inner_text().split())
+    assert detail == "Club A v Opp1 · Va"  # both teams in full, then the home ground
+    card.click(position={"x": 4, "y": 4})
+    assert card.locator(".fx-detail").count() == 0
+
+
+def test_a_click_on_a_badge_picks_the_rule_and_leaves_the_card_closed(page):
+    body = _view(page, "by-competition")
+    card = body.locator(".fx", has=page.locator(".flag")).first
+    card.locator(".flag").first.click()
+    assert card.locator(".fx-detail").count() == 0
+
+
+def test_with_a_club_chosen_each_card_says_home_or_away_and_names_the_opponent_in_full(page):
+    _view(page, "by-competition")
+    page.select_option(
+        "#panel-1 .club-select", "opp1"
+    )  # a single-team club stays in the round view
+    cards = _texts(_visible_pane(page).locator(".fx"))
+    assert cards and all(re.search(r"\bA at Club [AB]\b", card) for card in cards)
+    page.select_option("#panel-1 .club-select", "")
+    assert not _texts(_visible_pane(page).locator(".ha-pill"))
+
+
+def test_the_home_away_label_reaches_the_list_and_the_month_detail(page):
+    page.select_option("#panel-1 .club-select", "opp1")
+    rows = _texts(_view(page, "combined-list").locator(".fx-row .fx-team"))
+    assert rows and all(re.fullmatch(r"A at Club [AB]", row) for row in rows)
+    _view(page, "month-calendar").locator('button[data-date="2026-06-13"]').click()
+    day = _texts(page.locator("#panel-1 .day-row"))
+    assert day and all(re.search(r"A at Club B\b", row) for row in day)
+
+
+def test_a_home_fixture_reads_h_and_vs(browser, rules_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(rules_url)
+    _view(page, "by-competition")
+    page.select_option("#panel-1 .club-select", "opp1")
+    cards = _texts(_visible_pane(page).locator(".fx"))
+    assert any("H vs Club A" in card for card in cards) and any(
+        "A at Club" in card for card in cards
+    )
+    page.close()
+
+
+def test_a_weekday_off_the_leagues_preferred_day_is_boxed_in_the_day_heading(page):
+    body = _view(page, "by-competition")
+    heads = {_texts(h)[0].split(" —")[0]: h for h in body.locator(".day-head").all()}
+    assert (
+        "off" in heads["Sat 6 Jun"].locator(".wd").get_attribute("class").split()
+    )  # elite prefers Sunday
+    assert "off" not in heads["Sun 7 Jun"].locator(".wd").get_attribute("class").split()
+    assert "Sunday" in heads["Sat 6 Jun"].locator(".wd").get_attribute("title")
+    weight = heads["Sun 7 Jun"].locator(".wd").evaluate("n => getComputedStyle(n).fontWeight")
+    assert int(weight) >= 700
+
+
+def test_the_list_boxes_an_off_day_weekday_in_its_date_row(page):
+    rows = _view(page, "combined-list").locator(".date-row")
+    classes = {_texts(r)[0].lower(): r.locator(".wd").get_attribute("class") for r in rows.all()}
+    assert "off" in classes["sat 06 jun 2026"].split()
+
+
+def test_club_swatches_carry_a_thin_outline(page):
+    body = _view(page, "by-competition")
+    for shape in (".swatch", ".swatch-diamond"):
+        ring = body.locator(shape).first.evaluate("n => getComputedStyle(n).boxShadow")
+        assert ring != "none" and "1px" in ring
+
+
+def test_the_dark_theme_turns_the_page_and_its_tints_dark(browser, report_url):
+    colours = {}
+    for scheme in ("light", "dark"):
+        page = browser.new_page(viewport={"width": 1280, "height": 900}, color_scheme=scheme)
+        page.goto(report_url)
+        _view(page, "by-competition")
+        colours[scheme] = page.evaluate(
+            """() => [document.body, document.querySelector('.panel'), document.querySelector('.fx')]
+                 .map(n => getComputedStyle(n).backgroundColor)"""
+        )
+        page.close()
+
+    def luminance(css):
+        r, g, b = (int(v) for v in re.findall(r"\d+", css)[:3])
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    assert all(luminance(c) > 200 for c in colours["light"])
+    assert all(luminance(c) < 60 for c in colours["dark"])
+
+
+def test_the_printed_page_drops_the_controls_and_opens_the_views_collapsed_sections(
+    browser, chip_url
+):
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(chip_url)
+    _show_cups_and_europe(page)
+    body = _view(page, "combined-calendar")
+    chip = body.locator("details.fx-group").first
+    assert chip.evaluate("d => d.open") is False
+    page.emulate_media(media="print")
+    for selector in (
+        "#panel-1 .view-toggle",
+        "#panel-1 .bar-filters",
+        ".tabs",
+        "#panel-1 .season-strip",
+    ):
+        assert page.eval_on_selector(selector, "n => getComputedStyle(n).display") == "none", (
+            selector
+        )
+    assert (
+        page.eval_on_selector("#panel-1 .controls", "n => getComputedStyle(n).position") == "static"
+    )
+    assert page.eval_on_selector("#panel-1 .fx", "n => getComputedStyle(n).breakInside") == "avoid"
+    page.evaluate("window.dispatchEvent(new Event('beforeprint'))")
+    assert chip.evaluate("d => d.open") is True
+    page.evaluate("window.dispatchEvent(new Event('afterprint'))")
+    assert chip.evaluate("d => d.open") is False
+    page.close()
