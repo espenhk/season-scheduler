@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      time_budget_minutes:
+        description: "Minutes the solver may spend generating the schedule before the page is published"
+        type: number
+        default: 1
 
 permissions:
   contents: read
@@ -33,7 +38,13 @@ jobs:
         run: poetry install --only football-scheduler
 
       - name: Build season schedule report
-        run: poetry run python scripts/publish_web.py
+        env:
+          # Pushes have no inputs, so they fall back to the 60 s default.
+          TIME_BUDGET_MINUTES: ${{ inputs.time_budget_minutes || 1 }}
+        run: |
+          budget_s=$(python -c "import os, sys; m = float(os.environ['TIME_BUDGET_MINUTES']); sys.exit('time_budget_minutes must be > 0') if m <= 0 else print(m * 60)")
+          echo "Generating with a ${budget_s}s time budget"
+          poetry run python scripts/publish_web.py --time-budget "$budget_s"
 
       - uses: actions/upload-pages-artifact@v3
         with:
