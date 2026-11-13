@@ -2385,3 +2385,71 @@ def test_edges_form_controls_and_swatch_outlines_reach_three_to_one(scheme):
             for c, i in zip((red, green, blue), (1, 3, 5), strict=True)
         )
         assert _ratio(mixed, base) >= 3, fill
+
+
+# -- weight, links and export (#42) ----------------------------------------------
+
+
+def _dual_club_candidates():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [
+        f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va"),
+        f.match("topp", "a_w", "opp_w", date(2026, 6, 7), "va"),
+        f.match("elite", "b_m", "opp_m", date(2026, 6, 13), "vb", round_index=1),
+    ]
+    constraints = [ConsecutiveHomeDays(competitions=[comp_m, comp_w])]
+    return world, season, [
+        _candidate(world, season, matches, constraints),
+        _candidate(world, season, matches, constraints, label="Option 2"),
+    ]
+
+
+def test_the_fairness_rows_are_data_the_page_draws_when_the_section_opens():
+    world, season, candidates = _dual_club_candidates()
+    rendered = _render(world, season, candidates)
+    body = _body(rendered)
+    assert body.count('<details class="fairness">') == 2
+    assert 'class="fairness-row' not in body.replace('class="fairness-rows"', "") and 'class="fairness-bar"' not in body
+    data = _report_data(rendered)
+    rule_ids = [rule["id"] for rule in data["rules"]]
+    for option in data["options"]:
+        assert option["fairness"], "the option carries its fairness rows"
+        for rule, flagged, entries in option["fairness"]:
+            assert rule_ids[rule] and flagged in (0, 1)
+            counts = [count for _, count in entries]
+            assert counts == sorted(counts, reverse=True)
+
+
+def test_each_option_has_an_export_panel_that_the_bar_button_controls():
+    world, season, candidates = _dual_club_candidates()
+    body = _body(_render(world, season, candidates, json_name="2026.json"))
+    for number in (1, 2):
+        button = re.search(rf'<button[^>]*class="bar-btn export-toggle"[^>]*aria-controls="export-{number}"[^>]*>', body)
+        assert button and 'aria-expanded="false"' in button.group(0)
+        panel = re.search(rf'<div class="export-panel" id="export-{number}" hidden>.*?</div>\s*</div>', body, re.S).group(0)
+        assert 'class="bar-btn export-csv"' in panel and 'class="bar-btn export-ics"' in panel
+        assert '<a class="bar-btn" href="2026.json" download>' in panel
+        assert 'role="status"' in panel
+
+
+def test_the_export_panel_links_no_json_when_the_report_has_none():
+    world, season, candidates = _dual_club_candidates()
+    assert 'download>JSON' not in _body(_render(world, season, candidates))
+
+
+def test_the_page_names_the_season_for_the_files_it_builds():
+    world, season, candidates = _dual_club_candidates()
+    assert _report_data(_render(world, season, candidates))["export"] == {"season": season.id}
+
+
+def test_the_markup_carries_no_template_indentation_but_the_script_is_left_as_written():
+    world, season, candidates = _dual_club_candidates()
+    rendered = _render(world, season, candidates)
+    assert not re.search(r"\n[ \t]+<(div|span|details|section)", _body(rendered).split("</style>")[1])
+    assert "\n  // ------" in rendered.split("<script>")[1], "script bodies keep their own indentation"
+
+
+def test_a_rule_row_takes_no_namespace_argument():
+    template = (Path(__file__).parents[2] / "terminliste/report/templates/season.html.j2").read_text(encoding="utf-8")
+    assert "{% macro rule_row(row, kind, compact=false) %}" in template
+    assert not re.search(r"rule_row\([^)]*\bns\b", template)

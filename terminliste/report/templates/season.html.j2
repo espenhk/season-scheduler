@@ -442,15 +442,21 @@
   .chip[hidden] { display: none; }
   .jump-cal { margin-left: auto; align-self: center; }
   .legend-wrap { display: contents; }
-  .legend-panel {
+  .legend-panel, .export-panel {
     position: absolute; left: var(--panel-pad); top: calc(100% + 6px); width: min(720px, calc(100% - 2 * var(--panel-pad)));
     max-height: min(70vh, 520px); overflow-y: auto; padding: 4px 14px 14px;
     background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
   }
-  .legend-panel[hidden] { display: none; }
+  .legend-panel[hidden], .export-panel[hidden] { display: none; }
+  .export-panel h4 { margin: 12px 0 0; font-size: 13px; }
   .legend-panel h4 { margin: 12px 0 0; font-size: 13px; }
   .legend-panel .legend { margin-top: 8px; }
   .legend-panel .flag-legend { margin-top: 0; }
+  .export-panel { width: min(440px, calc(100% - 2 * var(--panel-pad))); }
+  .export-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+  .export-actions a.bar-btn { text-decoration: none; display: inline-block; }
+  .export-actions .bar-btn:disabled { opacity: 0.5; cursor: default; }
+  .export-note:empty { display: none; }
   .panel[data-current-view="month-calendar"] .legend-cards { display: none; }
   .view-toggle { grid-area: views; display: flex; gap: 6px; flex-wrap: wrap; justify-self: start; min-width: 0; max-width: 100%; }
   .view-btn {
@@ -985,7 +991,7 @@
     .bar-summary .badge { text-transform: none; letter-spacing: 0; font-size: 11px; padding: 1px 6px; }
     .bar-actions { gap: 2px; }
     .bar-btn { padding: 3px 6px; font-size: 11.5px; }
-    .bar-btn-text, .legend-toggle .caret { display: none; }
+    .bar-btn-text, .legend-toggle .caret, .export-toggle .caret { display: none; }
     .controls.filters-open .bar-chips { display: none; }
     .filters-toggle { display: inline-block; }
     /* Short labels so all four views fit one row. */
@@ -1025,7 +1031,7 @@
     .key-short { display: inline; }
     .month-legend { display: none; }
     .panel[data-current-view="month-calendar"] .legend-dots { display: block; }
-    .legend-panel { left: 8px; width: calc(100% - 16px); max-height: min(70vh, 520px); }
+    .legend-panel, .export-panel { left: 8px; width: calc(100% - 16px); max-height: min(70vh, 520px); }
     .legend-panel .legend { gap: 6px 14px; }
 
     /* Tap targets: info icons and day cells reach 44 x 44 px; the glyph stays small. */
@@ -1124,7 +1130,7 @@
 {# One scorecard row: name with its one-line description and coverage, and the share (#34).
    Full rows open onto the detail; compact rows (the all-rules list) only repeat the summary,
    so each rule keeps one set of fixture hooks. #}
-{% macro rule_row(row, kind, ns, compact=false) %}
+{% macro rule_row(row, kind, compact=false) %}
 {% if compact %}
 <div class="item {{ kind }} compact">
   <div class="top">
@@ -1368,7 +1374,7 @@
   <div class="cols season-part">
     <div class="col">
       <h3>{{ 'Every upside' if option.full else 'Biggest upsides' }}</h3>
-      {% for row in option.upsides %}{{ rule_row(row, 'up', ns) }}
+      {% for row in option.upsides %}{{ rule_row(row, 'up') }}
       {% else %}
       <div class="desc">Nothing scored positively.</div>
       {% endfor %}
@@ -1376,7 +1382,7 @@
 
     <div class="col">
       <h3>{{ 'Every problem (including the hard rules above)' if option.full else 'Biggest problems' }}</h3>
-      {% for row in option.problems %}{{ rule_row(row, 'down', ns) }}
+      {% for row in option.problems %}{{ rule_row(row, 'down') }}
       {% else %}
       <div class="desc">Nothing scored negatively.</div>
       {% endfor %}
@@ -1394,9 +1400,9 @@
     <div class="split-bar" aria-hidden="true"><span class="split-gain" style="width:{{ '%.1f'|format(soft.gain_pct) }}%"></span><span class="split-cost" style="width:{{ '%.1f'|format(100 - soft.gain_pct) }}%"></span></div>
     <p class="desc">The gains and costs together are the rules’ gross movement of {{ '%.1f'|format(soft.helped - soft.hurt) }} points; the net is the raw soft score in the explanation above.</p>
     <h4 class="group-head">Helping ({{ soft.helping|length }})</h4>
-    {% for row in soft.helping %}{{ rule_row(row, 'up', ns, true) }}{% else %}<div class="desc">None.</div>{% endfor %}
+    {% for row in soft.helping %}{{ rule_row(row, 'up', true) }}{% else %}<div class="desc">None.</div>{% endfor %}
     <h4 class="group-head">Hurting ({{ soft.hurting|length }})</h4>
-    {% for row in soft.hurting %}{{ rule_row(row, 'down', ns, true) }}{% else %}<div class="desc">None.</div>{% endfor %}
+    {% for row in soft.hurting %}{{ rule_row(row, 'down', true) }}{% else %}<div class="desc">None.</div>{% endfor %}
     <h4 class="group-head">Neutral, zero or did not apply ({{ soft.neutral|length }})</h4>
     {% if soft.neutral %}<p class="neutral-list">{{ soft.neutral|join(', ') }}</p>{% else %}<div class="desc">None.</div>{% endif %}
   </details>
@@ -1449,7 +1455,7 @@
   </details>
 
   {% if option.fairness %}
-  <details>
+  <details class="fairness">
     <summary>Fairness across teams — is any one team favoured or penalised?</summary>
     <div class="desc" style="margin-top:8px">
       Per-rule counts for every team (or, for the two club-coupling rules,
@@ -1457,24 +1463,7 @@
       best- and worst-treated team than the rule's own average — worth a
       look before this schedule is accepted.
     </div>
-    {% for row in option.fairness %}
-    <div class="fairness-row {{ 'flagged' if row.flagged }}">
-      <div class="head">
-        <span class="fname">{{ row.name }}</span>
-        {% if row.flagged %}<span class="flag">⚠ uneven — {{ row.min }}–{{ row.max }} across entries</span>{% endif %}
-      </div>
-      <div class="desc">{{ row.description }}</div>
-      <div class="fairness-bars">
-        {% for entry in row.entries %}
-        <div class="fairness-bar">
-          <span class="flabel" title="{{ entry.label }}">{{ entry.label }}</span>
-          <span class="ftrack"><span class="ffill" style="width:{{ (100 * entry.count / row.max) if row.max else 0 }}%"></span></span>
-          <span class="fcount">{{ entry.count }}</span>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-    {% endfor %}
+    <div class="fairness-rows"></div>
   </details>
   {% endif %}
   </div>
@@ -1543,6 +1532,20 @@
             </ul>
           </div>
           {% endif %}
+        </div>
+      </div>
+      <div class="legend-wrap">
+        <button type="button" class="bar-btn export-toggle" aria-expanded="false" aria-controls="export-{{ loop.index }}">Export<span class="caret"> ▾</span></button>
+        <div class="export-panel" id="export-{{ loop.index }}" hidden>
+          <h4>Export this schedule</h4>
+          <p class="desc export-scope"></p>
+          <div class="export-actions">
+            <button type="button" class="bar-btn export-csv">CSV</button>
+            <button type="button" class="bar-btn export-ics">Calendar (.ics)</button>
+            {% if header.json_name %}<a class="bar-btn" href="{{ header.json_name }}" download>JSON, whole run</a>{% endif %}
+          </div>
+          <p class="desc">The CSV can be scored again with <code>cli.py score</code>. Choose a club or team first for just its games.</p>
+          <p class="desc export-note" role="status"></p>
         </div>
       </div>
       <button type="button" class="bar-btn filters-toggle" aria-expanded="false" aria-controls="filters-{{ loop.index }}">Filters</button>
@@ -1753,7 +1756,7 @@
           {% for row in search_stats.breakdown %}
           <div class="fairness-bar" title="{{ row.description }}">
             <span class="flabel">{{ row.name }}</span>
-            <span class="ftrack"><span class="ffill" style="width:{{ row.pct }}%"></span></span>
+            <span class="ftrack"><span class="ffill" style="width:{{ '%.1f'|format(row.pct) }}%"></span></span>
             <span class="fcount">{{ '{:,}'.format(row.count) }}</span>
           </div>
           {% endfor %}
