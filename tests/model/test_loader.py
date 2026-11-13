@@ -1012,9 +1012,9 @@ def test_files_marked_unverified_are_recorded_on_the_world(world):
 
 def test_a_data_root_without_travel_overrides_still_loads(tmp_path):
     import shutil
+    from pathlib import Path
 
-    from conftest import DATA_ROOT
-
+    DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
     root = tmp_path / "data"
     shutil.copytree(DATA_ROOT, root)
     (root / "travel_overrides.yml").unlink()

@@ -50,8 +50,8 @@ jobs:
           GROUPS_TO_INSTALL: football-scheduler,football-scheduler-test${{ inputs.with-cpsat && ',football-scheduler-cpsat' || '' }}
         run: poetry install --only "$GROUPS_TO_INSTALL"
 
-      # Only the report suite drives a browser (tests/report/test_report_page.py),
-      # which skips itself when none is installed.
+      # Only the report suite drives a browser (tests/report/test_report_page.py and
+      # test_report_a11y.py), which skip themselves when none is installed.
       - name: Install Chromium for the report browser test
         if: inputs.suites == '.' || contains(format(' {0} ', inputs.suites), ' report ')
         run: poetry run playwright install --with-deps chromium

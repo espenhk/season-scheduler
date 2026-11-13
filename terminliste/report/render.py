@@ -22,6 +22,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from ..display import short_date
 from ..frame import build_playoff_weeks
 from ..model.calendar import build_calendar, calendars_by_competition
 from ..model.loader import World
@@ -101,6 +102,8 @@ def render_report(
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    env.filters["short_date"] = short_date
+    env.filters["standalone_date"] = _standalone_date
     template = env.get_template("season.html.j2")
 
     # Every team's marker is filled from its club's colour, dual club or not;
@@ -243,7 +246,7 @@ def _git_short_commit() -> str | None:
 
 
 def _header_view(full_diagnostics: bool, generated_at: datetime, json_name: str | None) -> dict:
-    stamp = generated_at.strftime("%d %b %Y %H:%M")
+    stamp = f"{_standalone_date(generated_at.date())} {generated_at:%H:%M}"
     if generated_at.tzinfo is not None:
         stamp += f" {generated_at.tzname()}"
     return {
@@ -400,7 +403,12 @@ def _fixture_identity(match: Match) -> tuple:
 
 
 def _day_label(day: date) -> str:
-    return f"{day:%a} {day.day} {day:%b}"
+    return short_date(day)
+
+
+def _standalone_date(day: date) -> str:
+    """A date away from the fixture views, where nothing implies the year: "Sat 22 Aug 2026"."""
+    return f"{short_date(day)} {day.year}"
 
 
 def _fixture_diff(world: World, baseline: list[Match], other: list[Match]) -> dict:
@@ -1474,11 +1482,9 @@ def _cup_views(cup_schedules: list[CupSchedule], cup_entries: list[dict]) -> lis
 
 def _cup_round(placement: CupRoundPlacement, fixtures: list[dict]) -> dict:
     if placement.spread_days == 0:
-        dates = placement.earliest_date.strftime("%d %b %Y")
+        dates = _standalone_date(placement.earliest_date)
     else:
-        dates = (
-            f"{placement.earliest_date.strftime('%d %b')} – {placement.latest_date.strftime('%d %b %Y')}"
-        )
+        dates = f"{short_date(placement.earliest_date)} – {_standalone_date(placement.latest_date)}"
     venue_summary = _cup_venue_summary(placement.venue_type)
     return {
         "note": placement.note,
@@ -1658,8 +1664,8 @@ def _european_venue_label(world: World, team_id: str, venue_type: str) -> str:
 def _european_round_date_label(leg_dates: tuple[date, date]) -> str:
     first_date, second_date = leg_dates
     if first_date == second_date:
-        return first_date.strftime("%d %b %Y")
-    return f"{first_date.strftime('%d %b')} – {second_date.strftime('%d %b %Y')}"
+        return _standalone_date(first_date)
+    return f"{short_date(first_date)} – {_standalone_date(second_date)}"
 
 
 def _fairness_rows(world: World, candidate: Candidate) -> list[dict]:
@@ -1769,8 +1775,8 @@ def _round_date_label(entries: list[dict]) -> str:
     if not days:
         return ""
     if len(days) == 1:
-        return days[0].strftime("%d %b")
-    return f"{days[0].strftime('%d %b')} – {days[-1].strftime('%d %b')}"
+        return short_date(days[0])
+    return f"{short_date(days[0])} – {short_date(days[-1])}"
 
 
 def write_json(result: SolverResult, output_path: Path) -> Path:
