@@ -2598,6 +2598,8 @@
     var link = el('a');
     link.href = url;
     link.download = name;
+    // Kept from the outside-click handler, which would close the export panel and drop focus.
+    link.addEventListener('click', function (e) { e.stopPropagation(); });
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -2728,7 +2730,13 @@
   // Starts again from the page's defaults and applies whatever `found` holds that is valid here.
   Option.prototype.restore = function (found) {
     var panel = this.panel;
+    var previous = this.state;
     var state = this.state = initialState(panel);
+    // Folds and open sections are the reader's, not the link's, so Back and Forward keep them.
+    state.rounds = previous.rounds;
+    state.allRounds = previous.allRounds;
+    state.open = previous.open;
+    state.closed = previous.closed;
     this.target = null;
     if (found.club && DATA.clubs[found.club] !== undefined) state.club = found.club;
     if (state.club && found.team && DATA.teams[found.team] && DATA.teams[found.team].club === state.club) state.team = found.team;
@@ -2777,9 +2785,10 @@
     block.scrollIntoView({ block: 'start', behavior: 'auto' });
   };
 
-  function applyHash() {
+  function applyHash(e) {
     var found = parseHash(location.hash);
     if (!found) return;
+    var inPage = document.activeElement && document.activeElement !== document.body;
     restoring = true;
     var opt;
     try {
@@ -2792,6 +2801,11 @@
       opt.applyTarget(found.target);
     } finally {
       restoring = false;
+    }
+    // The redraw can remove the focused control; the view radio is the nearest place to carry on from (#41).
+    if (e && e.type === 'hashchange' && (!inPage || !document.body.contains(document.activeElement) || document.activeElement === document.body)) {
+      var radio = panels[current].querySelector('.view-btn[aria-checked="true"]');
+      if (radio) radio.focus({ preventScroll: true });
     }
     // An empty hash is the page as it opens; leave it be rather than write the defaults in.
     if (location.hash) syncHash();

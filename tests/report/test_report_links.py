@@ -416,7 +416,7 @@ def test_the_calendar_is_a_well_formed_icalendar_with_crlf_lines(open_page, repo
 def test_kickoffs_are_oslo_times_written_in_utc_and_a_game_without_one_is_a_whole_day(open_page, report_url, tmp_path):
     page = open_page(report_url)
     _, text = _calendar(page, tmp_path)
-    by_summary = {next(l for l in e if l.startswith("SUMMARY:")): e for e in _events(text)}
+    by_summary = {next(ln for ln in e if ln.startswith("SUMMARY:")): e for e in _events(text)}
     timed = by_summary["SUMMARY:Club A v Opp1"]
     # 18:00 on 6 June is CEST (UTC+2); two hours long.
     assert "DTSTART:20260606T160000Z" in timed and "DTEND:20260606T180000Z" in timed
@@ -530,3 +530,32 @@ def test_the_fairness_rows_are_built_on_first_opening_and_only_once(open_page, r
     section.locator("summary").click()
     section.locator("summary").click()
     assert section.locator(".fairness-row").count() == rows.count()
+
+
+@pytest.mark.parametrize("button", [".export-csv", ".export-ics"])
+def test_a_download_leaves_the_panel_open_the_focus_on_the_button_and_the_note_visible(
+    open_page, report_url, tmp_path, button
+):
+    page = open_page(report_url)
+    name, _ = _download(page, button, tmp_path)
+    assert page.locator("#panel-1 .export-toggle").get_attribute("aria-expanded") == "true"
+    assert page.locator("#panel-1 .export-panel").is_visible()
+    assert page.evaluate(f"document.activeElement.matches('{button}')")
+    note = page.locator("#panel-1 .export-note")
+    assert note.is_visible() and note.inner_text() == f"Downloaded {name}."
+
+
+def test_back_keeps_the_folded_rounds_and_puts_focus_on_the_view_radio(open_page, report_url):
+    page = open_page(report_url + "#view=by-competition", PHONE)
+    page.click("#rd-elite-round-1 .round-head, #rd-elite-round-1 > :first-child")
+    assert "is-open" in page.locator("#rd-elite-round-1").get_attribute("class")
+    _view(page, "combined-list")
+    _view(page, "by-competition")
+    page.go_back()
+    page.wait_for_timeout(150)
+    page.go_back()
+    page.wait_for_timeout(150)
+    assert _active_view(page) == "by-competition"
+    assert "is-open" in page.locator("#rd-elite-round-1").get_attribute("class")
+    assert page.evaluate("document.activeElement.classList.contains('view-btn')")
+    assert page.evaluate("document.activeElement.getAttribute('aria-checked')") == "true"

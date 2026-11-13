@@ -216,7 +216,7 @@ _INDENT = re.compile(r"\n[ \t]+")
 
 
 def _drop_indentation(html: str) -> str:
-    """The page without its template indentation, which is ~15% of the markup (#42).
+    """The page without its template indentation, about 3% of the page (#42).
 
     Each newline stays, so rendered whitespace is unchanged; script and style bodies are left as written.
     """
