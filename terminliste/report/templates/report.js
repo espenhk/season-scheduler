@@ -176,7 +176,8 @@
     var home = side(m.h, 'square');
     var away = side(m.a, 'diamond');
     return withFlags({
-      uid: uid, kind: 'league', date: m.d, time: m.t || '', comp: m.c, roundNo: m.r,
+      uid: uid, key: m.c + '-' + m.d + '-' + m.h + '-' + m.a, venueId: m.v || '',
+      kind: 'league', date: m.d, time: m.t || '', comp: m.c, roundNo: m.r,
       clubs: [home.club, away.club], teams: [m.h, m.a], home: home, away: away, versus: '', round: '',
       venue: DATA.venues[m.v || DATA.teams[m.h].venue]
     }, m.f, notes, groups);
@@ -188,7 +189,8 @@
     var shape = SHAPE_BY_VENUE_TYPE[e.vt] || 'square-dim';
     var home = side(e.t, shape);
     return withFlags({
-      uid: uid, kind: european ? 'european' : 'cup', date: e.d, time: '', comp: e.c,
+      uid: uid, key: e.c + '-' + e.d + '-' + e.t, venueId: '',
+      kind: european ? 'european' : 'cup', date: e.d, time: '', comp: e.c,
       clubs: [home.club], teams: [e.t], home: home, away: null, versus: european ? e.o : 'TBD', round: e.n,
       venue: e.vl
     }, null, null, null);
@@ -203,9 +205,16 @@
       sharedFixtures = DATA.shared.map(function (e, uid) { return sharedFixture(uid, e); });
     }
     var offset = sharedFixtures.length;
-    return sharedFixtures.concat(optionData.matches.map(function (m, i) {
+    var all = sharedFixtures.concat(optionData.matches.map(function (m, i) {
       return leagueFixture(offset + i, m, optionData.notes, optionData.groups);
     }));
+    // A key doubles as the fixture's DOM id, so a repeat (a team twice on a date in a competition) is numbered.
+    var seen = {};
+    all.forEach(function (fx) {
+      var n = seen[fx.key] = (seen[fx.key] || 0) + 1;
+      if (n > 1) fx.key += '-' + n;
+    });
+    return all;
   }
 
   // ------------------------------------------------- fixture representations
@@ -312,6 +321,7 @@
   }
 
   function tag(node, fx) {
+    node.id = 'fx-' + fx.key;
     node.setAttribute('data-uid', fx.uid);
     node.setAttribute('data-clubs', fx.clubs.join(' '));
     node.setAttribute('data-rules', fx.rules.join(' '));
@@ -440,11 +450,14 @@
     var open = card.querySelector('.fx-detail');
     var control = card.querySelector('[aria-expanded]');
     if (control) control.setAttribute('aria-expanded', String(!open));
+    var opt = optionOf(card);
+    // The card whose detail is open is what a copied link points at.
+    opt.setTarget(open ? '' : card.id);
     if (open) {
       open.remove();
       return;
     }
-    var fx = optionOf(card).fx[+card.getAttribute('data-uid')];
+    var fx = opt.fx[+card.getAttribute('data-uid')];
     var line = detailLine(fx);
     card.insertBefore(line, card.querySelector(':scope > .flags'));
   }
@@ -802,6 +815,7 @@
   // round summary in view; a club's own rounds start open since each holds one game.
   function roundBlock(ctx, key, label, fixtures) {
     var block = append(el('div', 'round'), label, fixtures);
+    block.id = 'rd-' + key.toLowerCase().replace(/[^a-z0-9_]+/g, '-');
     if (!PHONE.matches) return block;
     var state = ctx.opt.state;
     var open = state.rounds[key] !== undefined ? state.rounds[key] : state.allRounds !== null ? state.allRounds : !!ctx.club;
@@ -1003,6 +1017,7 @@
     filter.addEventListener('input', function () {
       state.query = filter.value;
       refresh();
+      syncHash();
     });
     itemsByDay(items).forEach(function (day) {
       body.appendChild(dateRow(day.date, day.items));
@@ -1245,6 +1260,7 @@
 
     function openDay(iso, moveFocus) {
       state.date = iso;
+      syncHash();
       var shown = placeDetails(iso);
       if (!shown) return;
       announce(iso);
@@ -1265,6 +1281,7 @@
       var iso = button.dataset.date;
       if (state.date === iso) {
         state.date = '';
+        syncHash();
         placeDetails('');
         announce('');
         return;
@@ -1504,6 +1521,14 @@
     return total > 0 ? '+' + text : text.replace('-', '−');
   }
 
+  function initialState(panel) {
+    return {
+      view: PHONE.matches ? 'month-calendar' : panel.querySelector('.view-btn').dataset.view,
+      club: '', team: '', date: '', rule: '', only: false,
+      kinds: DEFAULT_KINDS.slice(), query: '', open: {}, closed: {}, rounds: {}, allRounds: null
+    };
+  }
+
   function Option(index, panel) {
     this.data = DATA.options[index];
     this.panel = panel;
@@ -1512,11 +1537,8 @@
     // The date last read off the calendar, kept as the reader scrolls: switching
     // tabs means scrolling up to them, when no fixture is on screen any more.
     this.anchor = '';
-    this.state = {
-      view: panel.querySelector('.view-btn').dataset.view, club: '', team: '', date: '', rule: '', only: false,
-      kinds: DEFAULT_KINDS.slice(), query: '', open: {}, closed: {}, rounds: {}, allRounds: null
-    };
-    if (PHONE.matches) this.state.view = 'month-calendar';
+    this.state = initialState(panel);
+    this.target = null;
     this.clubSelect = panel.querySelector('.club-select');
     this.lensSelect = panel.querySelector('.lens-select');
     this.lensOnly = panel.querySelector('.lens-only-box');
@@ -1552,6 +1574,7 @@
     panel.querySelectorAll('.view-btn').forEach(function (button) {
       button.addEventListener('click', function () {
         self.state.view = button.dataset.view;
+        pushNext = true;
         self.render();
       });
     });
@@ -2215,9 +2238,11 @@
     node.classList.remove('flash');
     void node.offsetWidth;
     node.classList.add('flash');
-    node.tabIndex = -1;
-    node.focus({ preventScroll: true });
-    node.scrollIntoView({ block: 'center', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
+    // Focus lands on the card's own control, so its group's tab stop moves with it (#41).
+    var control = node.querySelector('[data-rove]');
+    if (!control) node.tabIndex = -1;
+    (control || node).focus({ preventScroll: true });
+    node.scrollIntoView({ block: 'center', behavior: REDUCED_MOTION || restoring ? 'auto' : 'smooth' });
     setTimeout(function () { node.classList.remove('flash'); }, 2400);
   };
 
@@ -2294,7 +2319,9 @@
     for (var i = 0; i < nodes.length; i++) {
       if (wanted[nodes[i].getAttribute('data-uid')]) {
         openAround(nodes[i]);
-        nodes[i].closest('.round').scrollIntoView({ block: 'start', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
+        var round = nodes[i].closest('.round');
+        this.setTarget(round.id);
+        round.scrollIntoView({ block: 'start', behavior: REDUCED_MOTION ? 'auto' : 'smooth' });
         return;
       }
     }
@@ -2338,7 +2365,9 @@
     this.renderLensUi();
     this.markLens(this.activeBody());
     this.renderStrip(ctx);
+    this.renderExport();
     refreshRove(this.panel);
+    syncHash();
   };
 
   // Frees the panel's view while another option is shown.
@@ -2378,26 +2407,33 @@
   }
   window.addEventListener('resize', syncBar);
 
-  document.querySelectorAll('.tab').forEach(function (tab, index) {
+  var tabs = document.querySelectorAll('.tab');
+
+  function showOption(index) {
+    tabs.forEach(function (other, i) {
+      other.setAttribute('aria-selected', String(i === index));
+      other.tabIndex = i === index ? 0 : -1;
+    });
+    var previous = option(current);
+    var anchor = jumping ? '' : previous.anchor;
+    previous.release();
+    panels[current].hidden = true;
+    current = index;
+    panels[current].hidden = false;
+    var next = option(current);
+    next.adopt(previous.state);
+    next.render();
+    if (anchor) {
+      next.scrollToDate(anchor);
+      next.anchor = anchor;
+    }
+    watchBar(panels[current]);
+  }
+
+  tabs.forEach(function (tab, index) {
     tab.addEventListener('click', function () {
-      document.querySelectorAll('.tab').forEach(function (other) {
-        other.setAttribute('aria-selected', String(other === tab));
-        other.tabIndex = other === tab ? 0 : -1;
-      });
-      var previous = option(current);
-      var anchor = jumping ? '' : previous.anchor;
-      previous.release();
-      panels[current].hidden = true;
-      current = index;
-      panels[current].hidden = false;
-      var next = option(current);
-      next.adopt(previous.state);
-      next.render();
-      if (anchor) {
-        next.scrollToDate(anchor);
-        next.anchor = anchor;
-      }
-      watchBar(panels[current]);
+      pushNext = true;
+      showOption(index);
     });
   });
 
@@ -2456,9 +2492,318 @@
     jumping = false;
     option(index).showScore();
   });
+  // ------------------------------------------------------------ export (#42)
+  //
+  // The selected option as a file, built here so the page stays self-contained. A club or team
+  // filter narrows both files. The CSV is the shape `external_schedule.py` reads back (league
+  // fixtures only: it has no cup or European rounds); the calendar holds whatever competitions
+  // are shown, with a kickoff time where the league has one and the whole day where it does not.
+
+  var CSV_HEADER = ['competition', 'date', 'home_team', 'away_team', 'venue'];
+  var MATCH_MINUTES = 120;
+
+  function exportFixtures(opt, kinds) {
+    var state = opt.state;
+    return opt.fx.filter(function (fx) {
+      return kinds.indexOf(fx.kind) !== -1 && (!state.club || fx.clubs.indexOf(state.club) !== -1) &&
+        (!state.team || fx.teams.indexOf(state.team) !== -1);
+    }).sort(function (a, b) {
+      return a.date < b.date ? -1 : a.date > b.date ? 1 : (a.time < b.time ? -1 : a.time > b.time ? 1 : a.uid - b.uid);
+    });
+  }
+
+  function csvField(value) {
+    return /[",\r\n]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
+  }
+
+  // A venue is written only where it differs from the home team's own ground, as the loader defaults it.
+  function csvText(fixtures) {
+    var rows = [CSV_HEADER].concat(fixtures.map(function (fx) {
+      return [fx.comp, fx.date, fx.teams[0], fx.teams[1], fx.venueId];
+    }));
+    return rows.map(function (row) { return row.map(csvField).join(','); }).join('\r\n') + '\r\n';
+  }
+
+  // Kickoffs are Oslo wall-clock times; the calendar carries them in UTC so no zone definition is needed.
+  function lastSundayUtc(year, month) {
+    var last = new Date(Date.UTC(year, month + 1, 0));
+    return Date.UTC(year, month, last.getUTCDate() - last.getUTCDay(), 1);
+  }
+
+  function osloToUtc(iso, time) {
+    var wall = Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10), +time.slice(0, 2), +time.slice(3, 5));
+    var summer = wall - 2 * 3600000;
+    var year = +iso.slice(0, 4);
+    return summer >= lastSundayUtc(year, 2) && summer < lastSundayUtc(year, 9) ? summer : wall - 3600000;
+  }
+
+  function icsStamp(ms) {
+    return new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  }
+
+  function icsDate(ms) { return icsStamp(ms).slice(0, 8); }
+
+  function icsText(value) {
+    return value.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+  }
+
+  // Content lines are cut at 75 octets, never inside a character; the next line starts with a space.
+  function foldLine(line) {
+    var encoder = new TextEncoder();
+    var lines = [];
+    var current = '';
+    var octets = 0;
+    Array.from(line).forEach(function (char) {
+      var size = encoder.encode(char).length;
+      if (octets + size > 75) {
+        lines.push(current);
+        current = ' ';
+        octets = 1;
+      }
+      current += char;
+      octets += size;
+    });
+    lines.push(current);
+    return lines.join('\r\n');
+  }
+
+  function icsEvent(fx, uidPrefix, stamp) {
+    var comp = DATA.competitions[fx.comp].name;
+    var summary = fx.away ? fx.home.full + ' v ' + fx.away.full : fx.home.full + ' ' + versusText(fx);
+    var lines = ['BEGIN:VEVENT', 'UID:' + uidPrefix + fx.key + '@terminliste', 'DTSTAMP:' + stamp];
+    if (fx.time) {
+      var start = osloToUtc(fx.date, fx.time);
+      lines.push('DTSTART:' + icsStamp(start), 'DTEND:' + icsStamp(start + MATCH_MINUTES * 60000));
+    } else {
+      var day = Date.UTC(+fx.date.slice(0, 4), +fx.date.slice(5, 7) - 1, +fx.date.slice(8, 10));
+      lines.push('DTSTART;VALUE=DATE:' + icsDate(day), 'DTEND;VALUE=DATE:' + icsDate(day + 86400000));
+    }
+    lines.push('SUMMARY:' + icsText(summary));
+    lines.push('DESCRIPTION:' + icsText(comp + ', ' + (fx.kind === 'league' ? 'round ' + fx.roundNo : fx.round)));
+    if (fx.venue) lines.push('LOCATION:' + icsText(fx.venue));
+    lines.push('END:VEVENT');
+    return lines;
+  }
+
+  function icsCalendar(fixtures, name, uidPrefix) {
+    var stamp = icsStamp(Date.now());
+    var lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//terminliste//season report//EN', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:' + icsText(name)];
+    fixtures.forEach(function (fx) { lines = lines.concat(icsEvent(fx, uidPrefix, stamp)); });
+    lines.push('END:VCALENDAR');
+    return lines.map(foldLine).join('\r\n') + '\r\n';
+  }
+
+  function download(name, type, text) {
+    var url = URL.createObjectURL(new Blob([text], { type: type + ';charset=utf-8' }));
+    var link = el('a');
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  // What the export is of, for the file names and the panel: "Option 2, SK Brann".
+  Option.prototype.exportScope = function () {
+    var state = this.state;
+    var label = this.panel.querySelector('.bar-opt').textContent;
+    var club = state.club ? DATA.clubNames[state.club] : '';
+    var team = state.team ? DATA.teams[state.team].label : '';
+    return { label: label, club: club, team: team, text: [label, team || club].filter(Boolean).join(', ') };
+  };
+
+  Option.prototype.exportFileName = function (extension) {
+    var state = this.state;
+    var slug = [DATA.export.season, 'option-' + (DATA.options.indexOf(this.data) + 1), state.club, state.team]
+      .filter(Boolean).join('-');
+    return slug + '.' + extension;
+  };
+
+  Option.prototype.renderExport = function () {
+    var csv = exportFixtures(this, ['league']).length;
+    var calendar = exportFixtures(this, this.state.kinds).length;
+    var panel = this.panel;
+    panel.querySelector('.export-scope').textContent =
+      this.exportScope().text + ': ' + plural(csv, 'league fixture', 'league fixtures') + ' in the CSV, ' +
+      plural(calendar, 'fixture', 'fixtures') + ' in the calendar.';
+    panel.querySelector('.export-csv').disabled = !csv;
+    panel.querySelector('.export-ics').disabled = !calendar;
+    panel.querySelector('.export-note').textContent = '';
+  };
+
+  Option.prototype.exportFile = function (kind) {
+    var scope = this.exportScope();
+    var name;
+    if (kind === 'csv') {
+      name = this.exportFileName('csv');
+      download(name, 'text/csv', csvText(exportFixtures(this, ['league'])));
+    } else {
+      name = this.exportFileName('ics');
+      var title = DATA.export.season + ' ' + scope.text;
+      var uidPrefix = 'option' + (DATA.options.indexOf(this.data) + 1) + '-';
+      download(name, 'text/calendar', icsCalendar(exportFixtures(this, this.state.kinds), title, uidPrefix));
+    }
+    this.panel.querySelector('.export-note').textContent = 'Downloaded ' + name + '.';
+  };
+
+  document.addEventListener('click', function (e) {
+    var button = e.target.closest ? e.target.closest('.export-csv, .export-ics') : null;
+    if (button) optionOf(button).exportFile(button.classList.contains('export-csv') ? 'csv' : 'ics');
+  });
+
+  // ------------------------------------------------------- link state (#42)
+  //
+  // The URL hash holds what a reader would otherwise have to describe: the option, view, club,
+  // team, rule lens, competitions shown, list filter, picked day, and the round or fixture last
+  // opened, e.g. #option=2&view=combined-list&club=brann&rule=rest_comfort. It is written as the
+  // page changes and read on load and on hashchange. Changing the option or the view adds a
+  // history entry, so Back steps through those; every other change rewrites the current one.
+  // A value that names nothing in this report is dropped and the hash rewritten without it.
+
+  var booted = false;
+  var restoring = false;
+  var pushNext = false;
+  var HASH_TEXT_MAX = 80;
+
+  function unescapeHash(text) {
+    try { return decodeURIComponent(text); } catch (e) { return ''; }
+  }
+
+  // The hash as {key: value}; null for one that is not ours (#main, an author's own anchor).
+  function parseHash(hash) {
+    var text = hash.replace(/^#/, '');
+    var found = {};
+    if (!text) return found;
+    if (text.indexOf('=') === -1) {
+      if (!/^(fx|rd)-/.test(text)) return null;
+      found.target = unescapeHash(text);
+      return found;
+    }
+    text.split('&').forEach(function (pair) {
+      var at = pair.indexOf('=');
+      if (at > 0) found[unescapeHash(pair.slice(0, at))] = unescapeHash(pair.slice(at + 1));
+    });
+    return found;
+  }
+
+  function sameKinds(a, b) { return a.join() === b.join(); }
+
+  // What a state changes in a link; the target is dropped once anything else moves.
+  function stateSignature(state) {
+    return [state.view, state.club, state.team, state.rule, state.only, state.kinds.join(), state.query].join('|');
+  }
+
+  function hashOf(opt) {
+    var state = opt.state;
+    var pairs = [['option', current + 1], ['view', state.view]];
+    if (state.club) pairs.push(['club', state.club]);
+    if (state.team) pairs.push(['team', state.team]);
+    if (state.rule) pairs.push(['rule', state.rule]);
+    if (state.rule && state.only) pairs.push(['only', '1']);
+    if (!sameKinds(state.kinds, DEFAULT_KINDS)) pairs.push(['show', state.kinds.join(',')]);
+    if (state.query.trim()) pairs.push(['q', state.query.trim().slice(0, HASH_TEXT_MAX)]);
+    if (state.date && state.view === 'month-calendar') pairs.push(['date', state.date]);
+    if (opt.target && opt.target.sig === stateSignature(state)) pairs.push(['target', opt.target.id]);
+    return '#' + pairs.map(function (pair) {
+      return pair[0] + '=' + encodeURIComponent(pair[1]).replace(/%2C/g, ',');
+    }).join('&');
+  }
+
+  function syncHash() {
+    if (!booted || restoring) return;
+    var hash = hashOf(option(current));
+    var push = pushNext;
+    pushNext = false;
+    if (hash === location.hash) return;
+    // A page opened from a file or a sandbox may refuse to touch its history; the links are then just not kept.
+    try { history[push ? 'pushState' : 'replaceState'](null, '', hash); } catch (e) { /* no link state */ }
+  }
+
+  Option.prototype.setTarget = function (id) {
+    this.target = id ? { id: id, sig: stateSignature(this.state) } : null;
+    syncHash();
+  };
+
+  // Starts again from the page's defaults and applies whatever `found` holds that is valid here.
+  Option.prototype.restore = function (found) {
+    var panel = this.panel;
+    var state = this.state = initialState(panel);
+    this.target = null;
+    if (found.club && DATA.clubs[found.club] !== undefined) state.club = found.club;
+    if (state.club && found.team && DATA.teams[found.team] && DATA.teams[found.team].club === state.club) state.team = found.team;
+    if (found.rule && DATA.rules.some(function (rule) { return rule.id === found.rule; })) {
+      state.rule = found.rule;
+      state.only = found.only === '1';
+    }
+    var kinds = (found.show || '').split(',').filter(function (kind) { return ALL_KINDS.indexOf(kind) !== -1; });
+    if (kinds.length) state.kinds = ALL_KINDS.filter(function (kind) { return kinds.indexOf(kind) !== -1; });
+    var views = Array.prototype.map.call(panel.querySelectorAll('.view-btn'), function (button) { return button.dataset.view; });
+    // The timeline draws one club, so without one it is not a view to land on.
+    if (views.indexOf(found.view) !== -1 && (found.view !== 'club-timeline' || state.club)) state.view = found.view;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(found.date || '') && this.data.days.some(function (day) { return day.date === found.date; })) {
+      state.date = found.date;
+    }
+    state.query = (found.q || '').slice(0, HASH_TEXT_MAX);
+    this.clubSelect.value = state.club;
+  };
+
+  // Brings the linked fixture or round into view: a fixture by `reveal`, a round by opening it
+  // (a phone folds them) and scrolling to it. A round of the other round view switches to it.
+  Option.prototype.applyTarget = function (id) {
+    if (!id) return;
+    var state = this.state;
+    var fx = this.fx.filter(function (f) { return 'fx-' + f.key === id; })[0];
+    if (fx) {
+      // A club filter written into the link that hides its own target gives way, as the other filters do.
+      if (state.club && fx.clubs.indexOf(state.club) === -1) this.setClub('');
+      this.reveal(fx.uid);
+      this.setTarget(id);
+      return;
+    }
+    if (id.indexOf('rd-') !== 0) return;
+    var wantsWeeks = id.indexOf('rd-week-') === 0;
+    var roundView = wantsWeeks ? 'combined-calendar' : 'by-competition';
+    if (state.view !== roundView && (state.view === 'by-competition' || state.view === 'combined-calendar')) {
+      state.view = roundView;
+      this.render();
+    }
+    var block = this.activeBody().querySelector('[id="' + id + '"]');
+    if (!block) return;
+    openAround(block);
+    this.setTarget(id);
+    block.tabIndex = -1;
+    block.focus({ preventScroll: true });
+    block.scrollIntoView({ block: 'start', behavior: 'auto' });
+  };
+
+  function applyHash() {
+    var found = parseHash(location.hash);
+    if (!found) return;
+    restoring = true;
+    var opt;
+    try {
+      var wanted = parseInt(found.option, 10);
+      var index = wanted >= 1 && wanted <= panels.length ? wanted - 1 : 0;
+      if (index !== current) showOption(index);
+      opt = option(current);
+      opt.restore(found);
+      opt.render();
+      opt.applyTarget(found.target);
+    } finally {
+      restoring = false;
+    }
+    // An empty hash is the page as it opens; leave it be rather than write the defaults in.
+    if (location.hash) syncHash();
+  }
+
+  window.addEventListener('hashchange', applyHash);
+
   if (panels.length) {
     option(0).render();
     watchBar(panels[0]);
+    booted = true;
+    if (location.hash) applyHash();
     // Rounds fold only on a phone, so crossing the breakpoint redraws the open view.
     var redrawOnResize = function () { if (options[current]) options[current].render(); };
     if (PHONE.addEventListener) PHONE.addEventListener('change', redrawOnResize);
@@ -2661,9 +3006,36 @@
     refreshRove(mount);
   };
 
+  // One rule's per-team counts as bars, scaled to the largest count.
+  function fairnessRow(row) {
+    var rule = DATA.rules[row[0]];
+    var entries = row[2];
+    var max = entries.length ? entries[0][1] : 0;
+    var min = entries.length ? entries[entries.length - 1][1] : 0;
+    var head = append(el('div', 'head'), el('span', 'fname', rule.name));
+    if (row[1]) head.appendChild(el('span', 'flag', '\u26a0 uneven \u2014 ' + min + '\u2013' + max + ' across entries'));
+    var bars = el('div', 'fairness-bars');
+    entries.forEach(function (entry) {
+      var label = el('span', 'flabel', entry[0]);
+      label.title = entry[0];
+      var fill = el('span', 'ffill');
+      fill.style.width = (max ? Math.round(1000 * entry[1] / max) / 10 : 0) + '%';
+      append(bars, append(el('div', 'fairness-bar'), label, append(el('span', 'ftrack'), fill), el('span', 'fcount', String(entry[1]))));
+    });
+    return append(el('div', 'fairness-row' + (row[1] ? ' flagged' : '')), head, el('div', 'desc', rule.desc), bars);
+  }
+
+  // The fairness section is drawn the first time it is opened (#42).
+  function fillFairness(details) {
+    var mount = details.querySelector('.fairness-rows');
+    if (!mount || mount.firstChild) return;
+    optionOf(details).data.fairness.forEach(function (row) { mount.appendChild(fairnessRow(row)); });
+  }
+
   // `toggle` does not bubble, hence the capture phase.
   document.addEventListener('toggle', function (e) {
     var details = e.target;
+    if (details.open && details.classList && details.classList.contains('fairness')) fillFairness(details);
     if (!details.open || !details.dataset || !details.dataset.rule) return;
     var mount = details.querySelector('.rule-fixtures');
     if (mount && !mount.firstChild) optionOf(details).fillRuleList(mount, details.dataset.rule);
@@ -2692,20 +3064,20 @@
   // The legend popover and, on a phone, the collapsed filter fields. Each
   // button owns one region through aria-expanded/aria-controls.
   function setLegend(wrap, open) {
-    var button = wrap.querySelector('.legend-toggle');
-    wrap.querySelector('.legend-panel').hidden = !open;
+    var button = wrap.querySelector('.legend-toggle, .export-toggle');
+    wrap.querySelector('.legend-panel, .export-panel').hidden = !open;
     button.setAttribute('aria-expanded', String(open));
   }
   document.addEventListener('click', function (e) {
     var target = e.target;
-    var toggle = target.closest ? target.closest('.legend-toggle, .filters-toggle') : null;
+    var toggle = target.closest ? target.closest('.legend-toggle, .export-toggle, .filters-toggle') : null;
     document.querySelectorAll('.legend-wrap').forEach(function (wrap) {
       if (!toggle || !wrap.contains(toggle)) {
         if (!wrap.contains(target)) setLegend(wrap, false);
       }
     });
     if (!toggle) return;
-    if (toggle.classList.contains('legend-toggle')) {
+    if (!toggle.classList.contains('filters-toggle')) {
       setLegend(toggle.parentNode, toggle.getAttribute('aria-expanded') !== 'true');
     } else {
       setFilters(toggle.closest('.controls'), toggle.getAttribute('aria-expanded') !== 'true');
@@ -2739,7 +3111,7 @@
     var bar = document.querySelector('.controls.filters-open');
     if (bar) setFilters(bar, false, true);
     document.querySelectorAll('.legend-wrap').forEach(function (wrap) {
-      var button = wrap.querySelector('.legend-toggle');
+      var button = wrap.querySelector('.legend-toggle, .export-toggle');
       if (button.getAttribute('aria-expanded') !== 'true') return;
       setLegend(wrap, false);
       button.focus();

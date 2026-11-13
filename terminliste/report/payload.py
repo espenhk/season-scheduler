@@ -45,6 +45,10 @@ carries cannot be derived that way, so `clubUnpinned` gives them per club as
 rows (`{id, by, of, found: [[label, count, rank]]}`). `order` is the rules in breakdown order, `limit` how
 many upsides or problems the scorecard lists, and `full` whether it is the
 every-rule diagnostic.
+
+Fairness (#23, #42). `fairness` is one `[rule, flagged, [[label, count], ...]]` per rule that
+compares teams or dual clubs, entries most events first; the page draws the rows when the section
+is opened.
 """
 
 from __future__ import annotations
@@ -334,6 +338,7 @@ def option_wire(
     score_order: list[int],
     club_unpinned: dict[str, list[list]],
     club_ranks: dict[str, list[dict]],
+    fairness: list[dict],
     limit: int,
     full: bool,
 ) -> dict:
@@ -360,6 +365,14 @@ def option_wire(
         "order": score_order,
         "clubUnpinned": club_unpinned,
         "clubRanks": club_ranks,
+        "fairness": [
+            [
+                rule_index[row["id"]],
+                int(row["flagged"]),
+                [[entry["label"], entry["count"]] for entry in row["entries"]],
+            ]
+            for row in fairness
+        ],
         "limit": limit,
         "full": full,
         "byCompetition": by_competition_wire(league_views),

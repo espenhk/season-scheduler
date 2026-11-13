@@ -138,6 +138,36 @@ def test_axe_finds_no_violations_in_the_months_listed_apart(browser, other_month
     assert not found, "\n".join(found)
 
 
+@pytest.mark.parametrize("viewport", ["desktop", "phone"])
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_axe_finds_no_violations_with_the_export_panel_open_and_a_link_applied(browser, rules_url, scheme, viewport):
+    page = _open(browser, rules_url, scheme, viewport)
+    page.goto(rules_url + "#option=2&view=combined-list&club=club_a")
+    page.click("#panel-2 .export-toggle")
+    found = _violations(page, "export open")
+    page.press("body", "Escape")
+    page.locator("#panel-2 details.fairness > summary").click()
+    found += _violations(page, "fairness open")
+    assert page.problems == []
+    page.context_ref.close()
+    assert not found, "\n".join(found)
+
+
+def test_the_export_button_and_panel_are_a_labelled_disclosure_reachable_by_keyboard(kb):
+    toggle = kb.locator("#panel-1 .export-toggle")
+    assert toggle.get_attribute("aria-controls") == "export-1"
+    toggle.focus()
+    kb.keyboard.press("Enter")
+    assert toggle.get_attribute("aria-expanded") == "true"
+    kb.keyboard.press("Tab")
+    assert kb.evaluate("document.activeElement.classList.contains('export-csv')")
+    kb.keyboard.press("Tab")
+    assert kb.evaluate("document.activeElement.classList.contains('export-ics')")
+    kb.keyboard.press("Escape")
+    assert toggle.get_attribute("aria-expanded") == "false"
+    assert kb.evaluate("document.activeElement.classList.contains('export-toggle')")
+
+
 # -- landmarks, headings, names ---------------------------------------------
 
 

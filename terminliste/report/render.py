@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import calendar
 import json
+import re
 import subprocess
 from collections import defaultdict
 from dataclasses import replace
@@ -163,6 +164,7 @@ def render_report(
             payload.rule_table(rule_ids, hard_ids, frozenset(_INVERSE_RULES)),
             dual_club_ids,
         ),
+        "export": {"season": season.id},
         "tint": {"good": TINT_GOOD, "cost": TINT_COST},
         "preferred": _preferred_days(world, competitions),
         "shared": [payload.shared_entry_wire(entry) for entry in shared_entries],
@@ -205,8 +207,23 @@ def render_report(
         playoff_views=_playoff_views(world, season),
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(html, encoding="utf-8")
+    output_path.write_text(_drop_indentation(html), encoding="utf-8")
     return output_path
+
+
+_VERBATIM_BLOCK = re.compile(r"(<script.*?</script>|<style.*?</style>)", re.DOTALL)
+_INDENT = re.compile(r"\n[ \t]+")
+
+
+def _drop_indentation(html: str) -> str:
+    """The page without its template indentation, which is ~15% of the markup (#42).
+
+    Each newline stays, so rendered whitespace is unchanged; script and style bodies are left as written.
+    """
+    return "".join(
+        part if part.startswith(("<script", "<style")) else _INDENT.sub("\n", part)
+        for part in _VERBATIM_BLOCK.split(html)
+    )
 
 
 def _league_names(world: World, season: Season) -> str:
@@ -351,6 +368,7 @@ def _build_option(
             score_order=[rule_index[r.constraint_id] for r in _ordered_results(score)],
             club_unpinned=_club_unpinned(world, candidate, rule_index),
             club_ranks=_club_ranks(fairness),
+            fairness=fairness,
             limit=limit,
             full=full_diagnostics,
         ),
