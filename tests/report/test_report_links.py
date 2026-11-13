@@ -551,6 +551,9 @@ def test_back_keeps_the_folded_rounds_and_puts_focus_on_the_view_radio(open_page
     assert "is-open" in page.locator("#rd-elite-round-1").get_attribute("class")
     _view(page, "combined-list")
     _view(page, "by-competition")
+    # Focus on something the redraw removes, so only the restore can put it back on a radio.
+    page.locator("#rd-elite-round-1 .fx-main").first.focus()
+    assert page.evaluate("document.activeElement.classList.contains('view-btn')") is False
     page.go_back()
     page.wait_for_timeout(150)
     page.go_back()

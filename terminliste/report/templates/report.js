@@ -2788,7 +2788,6 @@
   function applyHash(e) {
     var found = parseHash(location.hash);
     if (!found) return;
-    var inPage = document.activeElement && document.activeElement !== document.body;
     restoring = true;
     var opt;
     try {
@@ -2803,7 +2802,8 @@
       restoring = false;
     }
     // The redraw can remove the focused control; the view radio is the nearest place to carry on from (#41).
-    if (e && e.type === 'hashchange' && (!inPage || !document.body.contains(document.activeElement) || document.activeElement === document.body)) {
+    if (e && e.type === 'hashchange' && (!document.body.contains(document.activeElement) || document.activeElement === document.body ||
+        document.activeElement.classList.contains('view-btn'))) {
       var radio = panels[current].querySelector('.view-btn[aria-checked="true"]');
       if (radio) radio.focus({ preventScroll: true });
     }
