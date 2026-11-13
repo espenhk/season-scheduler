@@ -211,7 +211,9 @@ def render_report(
     return output_path
 
 
-_VERBATIM_BLOCK = re.compile(r"(<script.*?</script>|<style.*?</style>)", re.DOTALL)
+_VERBATIM_BLOCK = re.compile(
+    r"(<(script|style)\b.*?</\2\b[^>]*>)", re.DOTALL | re.IGNORECASE
+)
 _INDENT = re.compile(r"\n[ \t]+")
 
 
@@ -220,9 +222,12 @@ def _drop_indentation(html: str) -> str:
 
     Each newline stays, so rendered whitespace is unchanged; script and style bodies are left as written.
     """
+    pieces = _VERBATIM_BLOCK.split(html)
+    # split() yields text, block, tag name, text, ...; keep blocks, drop the tag-name groups.
     return "".join(
-        part if part.startswith(("<script", "<style")) else _INDENT.sub("\n", part)
-        for part in _VERBATIM_BLOCK.split(html)
+        piece if i % 3 == 1 else _INDENT.sub("\n", piece)
+        for i, piece in enumerate(pieces)
+        if i % 3 != 2
     )
 
 

@@ -2453,3 +2453,18 @@ def test_a_rule_row_takes_no_namespace_argument():
     template = (Path(__file__).parents[2] / "terminliste/report/templates/season.html.j2").read_text(encoding="utf-8")
     assert "{% macro rule_row(row, kind, compact=false) %}" in template
     assert not re.search(r"rule_row\([^)]*\bns\b", template)
+
+
+def test_drop_indentation_keeps_script_and_style_bodies_whatever_their_case():
+    from terminliste.report.render import _drop_indentation
+
+    html = (
+        "<div>\n    <p>a</p>\n</div>\n"
+        "<SCRIPT>\n    var s = '  x';\n</SCRIPT >\n"
+        "<style media=print>\n  p { x: 1 }\n</Style>\n  <b>z</b>"
+    )
+    assert _drop_indentation(html) == (
+        "<div>\n<p>a</p>\n</div>\n"
+        "<SCRIPT>\n    var s = '  x';\n</SCRIPT >\n"
+        "<style media=print>\n  p { x: 1 }\n</Style>\n<b>z</b>"
+    )
