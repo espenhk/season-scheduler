@@ -2109,3 +2109,125 @@ def test_write_json_emits_notes_with_their_severity(tmp_path):
         {"text": "careful", "severity": "warning"},
         {"text": "broken", "severity": "error"},
     ]
+
+
+# -- polish (#39) ----------------------------------------------------------------
+
+
+def _stylesheet(rendered: str) -> str:
+    return re.search(r"<style>(.*?)</style>", rendered, re.S).group(1)
+
+
+class _NoTeams(_Unpinned):
+    """Like `_Unpinned`, but its event names no team either."""
+
+    def evaluate(self, index, ctx):
+        return ConstraintResult(
+            "home_away_balance",
+            "soft",
+            -6.0,
+            3,
+            [Event(delta=-2.0, detail="drifted", team_ids=()) for _ in range(3)],
+        )
+
+
+def test_a_rule_with_no_fixture_or_team_expands_to_what_it_counted_not_a_bare_count():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 6), "va")]
+    rendered = _render(world, season, [_candidate(world, season, matches, [_NoTeams()])])
+    row = next(
+        m.group(0)
+        for m in re.finditer(r'<details class="item (?:up|down)">.*?</details>', rendered, re.S)
+        if "drifted" in m.group(0)
+    )
+    assert "3 events across the season, not tied to one fixture or team" in row
+    assert row.count("<li>drifted</li>") == 3
+    assert re.search(r">×\d+<", row) is None
+
+
+def test_the_head_carries_a_description_open_graph_tags_and_a_favicon():
+    world, season, comp_m, comp_w = _two_dual_clubs_world()
+    matches = [f.match("elite", "a_m", "opp_m", date(2026, 6, 14), "va")]
+    rendered = _render(
+        world,
+        season,
+        [_candidate(world, season, matches, []), _candidate(world, season, matches, [])],
+    )
+    head = rendered[: rendered.index("</head>")]
+    description = re.search(r'<meta name="description" content="([^"]+)"', head).group(1)
+    assert "2 scored fixture lists" in description and "elite" in description
+    assert f'<meta property="og:description" content="{description}">' in head
+    assert re.search(r'<meta property="og:title" content="[^"]+">', head)
+    assert '<link rel="icon" href="data:image/svg+xml,' in head
+
+
+def test_the_collapsed_sections_sit_in_one_bordered_list_after_the_club_scorecard():
+    rendered, _ = _lens_page()
+    panel = rendered[rendered.index('role="tabpanel"') :]
+    start = panel.index('<div class="section-list">')
+    listed = panel[start : panel.index("<noscript>")]
+    assert panel.index('class="scope-card"') < start
+    for summary in ("Show all", "Full score breakdown", "Fairness across teams"):
+        assert summary in listed
+    assert listed.count("<details") >= 3
+
+
+def test_the_score_gets_a_banded_gauge():
+    from terminliste.report.render import SCORE_FAIR, SCORE_STRONG, _score_band
+
+    assert [
+        _score_band(p) for p in (SCORE_STRONG, SCORE_STRONG - 0.1, SCORE_FAIR, SCORE_FAIR - 0.1, 24)
+    ] == ["strong", "fair", "fair", "weak", "weak"]
+    rendered, _ = _lens_page()
+    gauge = re.search(
+        r'class="gauge gauge-(\w+)".*?width:([\d.]+)%.*?gauge-label">(\w+)<', rendered, re.S
+    )
+    assert gauge
+    band, width, label = gauge.groups()
+    assert band == label == _score_band(float(width))
+
+
+def test_the_payload_gives_each_leagues_preferred_weekday_as_a_browser_day_number():
+    _, data = _lens_page()
+    assert data["preferred"] == {"elite": 0, "topp": 0}  # Sunday is 0 in a browser
+
+
+def test_the_legend_keys_every_clubs_abbreviation_to_its_name():
+    rendered, _ = _lens_page()
+    key = rendered[rendered.index('class="abbr-key"') :]
+    key = key[: key.index("</details>")]
+    assert "<b>CLU</b>Club A" in key and "<b>OPP</b>Opp1" in key
+    assert "women" in key  # what a trailing K means
+
+
+def test_every_colour_the_stylesheet_uses_is_a_variable_so_the_dark_theme_can_restate_it():
+    rendered, _ = _lens_page()
+    css = _stylesheet(rendered)
+    assert "prefers-color-scheme: dark" in css and "color-scheme: light dark" in css
+    outside = re.sub(r":root \{[^}]*\}", "", css)
+    hexes = set(re.findall(r"#[0-9a-fA-F]{3,6}\b", outside.split("@media print")[0]))
+    assert hexes <= {"#d35400", "#000"}  # the jump flash's outline and a mask's opaque stop
+
+
+def test_nothing_in_the_stylesheet_masks_horizontal_overflow():
+    css = _stylesheet(_lens_page()[0])
+    assert not re.search(r"(?:^|\s)(?:html|body)\s*\{[^}]*overflow-x:\s*(?:hidden|clip)", css)
+
+
+def test_no_text_is_set_below_twelve_pixels_outside_the_phone_rules():
+    css = _stylesheet(_lens_page()[0])
+    desktop = css[: css.rindex("@media (max-width: 480px) {")]
+    sizes = []
+    for line in desktop.splitlines():
+        if "content: '▸'" in line or "700 10px/1" in line or "transition: transform" in line:
+            continue  # the disclosure arrow and the "i" glyph
+        sizes += [float(n) for n in re.findall(r"font(?:-size)?:[^;]*?(\d+(?:\.\d+)?)px", line)]
+    assert sizes and min(sizes) >= 12
+
+
+def test_the_print_rules_drop_the_controls_and_keep_rounds_whole():
+    css = _stylesheet(_lens_page()[0])
+    printed = css[css.index("@media print") :]
+    printed = printed[: printed.index("@media (max-width: 480px)")]
+    for hook in (".view-toggle", ".bar-filters", ".tabs", "break-inside: avoid", ".round"):
+        assert hook in printed
