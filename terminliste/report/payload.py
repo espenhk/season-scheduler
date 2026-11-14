@@ -48,12 +48,12 @@ rows (`{id, by, of, found: [[label, count, rank]]}`). `order` is the rules in br
 many upsides or problems the scorecard lists, and `full` whether it is the
 every-rule diagnostic.
 
-Fallback moves. `moveTriggers` is `[sentence, team, round, pct]` per cup or European round
-that can displace a match. A league match's `g` lists its destinations, each
-`{d, k, t, p, h?, v?}`: date, kind (0 same slot, 1 reserve date, 2 next free slot), the triggers
-as `[moveTriggers index, date of the commitment forcing the move]`, the chance one of them is
-reached, and the kickoff and venue when they change. `x` is `{t, p}` for an exposed match no
-fallback was found for. The page draws a ghost of the match on each destination day.
+Fallback moves. `moveTriggers` is the sentence of each cup or European round that can displace a
+match. A league match's `g` lists its destinations, each `{d, k, t, p, h?, v?}`: date, kind (an
+index into the page's `moveKinds`), the triggers as `[moveTriggers index, date of the commitment
+forcing the move]`, the whole percent chance one of them is reached, and the kickoff ("" when the
+fallback has none) and venue when they differ from the match's. `x` is `{t, p}` for an exposed
+match no fallback was found for. The page draws a ghost of the match on each destination day.
 
 Fairness (#23, #42). `fairness` is one `[rule, flagged, [[label, count], ...]]` per rule that
 compares teams or dual clubs, entries most events first; the page draws the rows when the section
@@ -352,7 +352,7 @@ def option_wire(
     fairness: list[dict],
     limit: int,
     full: bool,
-    move_triggers: list[list] | None = None,
+    move_triggers: list[str] | None = None,
 ) -> dict:
     """Everything one option's views need on top of the shared tables and
     shared entries."""
@@ -390,7 +390,12 @@ def option_wire(
         "moveTriggers": move_triggers or [],
         "byCompetition": by_competition_wire(league_views),
         "weeks": [
-            {"label": week["label"], "dates": week["dates"], "ids": _uids(week["matches"])}
+            {
+                "label": week["label"],
+                "dates": week["dates"],
+                "start": week["start"].isoformat(),
+                "ids": _uids(week["matches"]),
+            }
             for week in combined_calendar
         ],
         "list": _uids(combined_list),

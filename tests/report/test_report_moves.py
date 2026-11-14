@@ -95,11 +95,11 @@ def test_triggers_leading_to_the_same_day_combine_into_one_destination_with_the_
     triggers, wire = moves_wire(index)
 
     (dest,) = wire[match.key]["g"]
-    assert dest["p"] == pytest.approx(1 - 0.5 * 0.75)
+    assert dest["p"] == 63  # 62.5, halves up
     assert [t[0] for t in dest["t"]] == [0, 1]
     # Each trigger is dated by the commitment nearest the match, which is what forces the move.
     assert [t[1] for t in dest["t"]] == ["2026-06-04", "2026-06-08"]
-    assert [t[3] for t in triggers] == [50, 25]
+    assert [t.split(" reach ")[0] for t in triggers] == [f"If {world.team_label('a_m')}"] * 2
     assert "k" in dest and "h" not in dest and "v" not in dest
     assert len(contingency_view(world, plan, [match], commitments, index)["rows"]) == 1
 
@@ -133,7 +133,7 @@ def test_different_destinations_under_different_triggers_are_separate_rows_and_w
     ]
     assert view["moves"] == 1
     assert [(d["d"], d["k"], d["p"]) for d in wire[match.key]["g"]] == [
-        ("2026-06-05", 0, 0.5), ("2026-06-09", 2, 0.25)
+        ("2026-06-05", 0, 50), ("2026-06-09", 2, 25)
     ]
     # Kickoff and ground are sent only because they differ from the match's own.
     assert wire[match.key]["g"][0]["h"] == "20:00" and wire[match.key]["g"][0]["v"] == "vc"
@@ -150,7 +150,7 @@ def test_an_uncovered_match_keeps_its_triggers_and_is_listed_without_a_row():
     _, wire = moves_wire(MoveIndex(world, plan, matches, commitments))
 
     assert view["rows"] == [] and view["moves"] == 0 and len(view["uncovered"]) == 1
-    assert wire[key]["x"] == {"t": [[0, "2026-06-04"]], "p": 0.5}
+    assert wire[key]["x"] == {"t": [[0, "2026-06-04"]], "p": 50}
 
 
 def test_the_planner_records_what_exposes_a_match_it_finds_no_fallback_for():
@@ -311,4 +311,61 @@ def test_a_match_with_no_fallback_says_so_on_its_badge_and_in_its_tooltip(browse
     badge.hover()
     page.locator("#flag-tooltip").wait_for(state="visible")
     assert page.locator("#flag-tooltip").inner_text().startswith("No fallback")
+    page.close()
+
+
+def test_percentages_round_halves_up_in_the_table_and_the_wire_alike():
+    world, season = _world()
+    commitments = f.commitment_set(
+        f.commitment("a_m", THU, hard=False, probability=0.125, source="uefa", label="UEFA Europa League: Matchday 1", node_id=NODE),
+    )
+    match = f.match("elite", "a_m", "opp_m", SAT, "va")
+    plan = ContingencyPlan(fallbacks={match.key: Fallback(date(2026, 6, 5), "va", None, (NODE,), "same_slot")})
+    index = MoveIndex(world, plan, [match], commitments)
+
+    row = contingency_view(world, plan, [match], commitments, index)["rows"][0]
+    _, wire = moves_wire(index)
+
+    assert row["triggers"][0]["pct"] == 13 and wire[match.key]["g"][0]["p"] == 13
+
+
+def test_a_fallback_without_a_kickoff_is_told_apart_from_one_that_keeps_it():
+    world, season = _world()
+    match = f.match("elite", "a_m", "opp_m", SAT, "va", kickoff_time="18:00")
+    unset = ContingencyPlan(fallbacks={match.key: Fallback(date(2026, 6, 5), "va", None, (NODE,), "same_slot")})
+    kept = ContingencyPlan(fallbacks={match.key: Fallback(date(2026, 6, 5), "va", "18:00", (NODE,), "same_slot")})
+
+    assert moves_wire(MoveIndex(world, unset, [match], _commitments()))[1][match.key]["g"][0]["h"] == ""
+    assert "h" not in moves_wire(MoveIndex(world, kept, [match], _commitments()))[1][match.key]["g"][0]
+
+
+@pytest.fixture(scope="module")
+def next_week_url(tmp_path_factory):
+    # Saturday 6 June may move to Monday 8 June, the next ISO week; the original has a kickoff, the fallback none.
+    world, season = _world()
+    matches = _matches()
+    plan = ContingencyPlan(
+        fallbacks={matches[0].key: Fallback(date(2026, 6, 8), "va", None, (NODE,), "next_free_slot")}
+    )
+    ctx = EvalContext(world=world, season=season, travel=_FixedTravel(), detail=True)
+    candidate = Candidate(matches=matches, score=evaluate(matches, [], ctx), label="Option 1", contingency_plan=plan)
+    path = render_report(
+        world, season, SolverResult(candidates=[candidate], solver="test"),
+        tmp_path_factory.mktemp("nextweek") / "report.html", commitments=_commitments(),
+    )
+    return path.as_uri()
+
+
+def test_the_week_view_puts_a_ghost_in_the_week_of_its_destination(browser, next_week_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(next_week_url)
+    page.click('#panel-1 .view-btn[data-view="combined-calendar"]')
+    weeks = page.locator('#panel-1 .view-pane[data-view="combined-calendar"] .round')
+    assert weeks.count() == 2
+    assert weeks.nth(0).locator(".fx-ghost").count() == 0 and "Week 23" in weeks.nth(0).inner_text()
+    ghost = weeks.nth(1).locator(".fx-ghost")
+    assert "Week 24" in weeks.nth(1).inner_text() and ghost.count() == 1
+    assert "Mon 8 Jun" in weeks.nth(1).locator(".day-head").inner_text()
+    # Cards in this view carry their competition's tag, and so does the ghost; no kickoff is set to show.
+    assert ghost.locator(".comp-tag").count() == 1 and ghost.locator(".d").count() == 0
     page.close()

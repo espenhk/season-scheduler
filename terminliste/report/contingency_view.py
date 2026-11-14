@@ -4,6 +4,7 @@ section (#10)."""
 
 from __future__ import annotations
 
+import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -219,30 +220,24 @@ def contingency_view(
 
 
 def _percent(probability: float) -> int:
-    return round(100 * probability)
+    """Whole percent, halves up; the page prints this figure as sent."""
+    return math.floor(100 * probability + 0.5)
 
 
-def moves_wire(index: MoveIndex) -> tuple[list[list], dict[str, dict]]:
-    """The page's data for the move badges and ghost fixtures: the trigger table
-    `[sentence, team, round, pct]`, and per fixture key its entry for the match
-    wire. A destination is `{d, k, t, p, h?, v?}`: date, kind (an index into
-    `KIND_ORDER`), triggers as `[trigger index, forcing date]`, probability, and
-    the kickoff and venue only when they differ from the match's own. An
-    uncovered match is `{x: {t, p}}`."""
-    triggers: list[list] = []
+def moves_wire(index: MoveIndex) -> tuple[list[str], dict[str, dict]]:
+    """The page's data for the move badges and ghost fixtures: the trigger
+    sentences, and per fixture key its entry for the match wire. A destination
+    is `{d, k, t, p, h?, v?}`: date, kind (an index into `KIND_ORDER`), triggers
+    as `[trigger index, forcing date]`, whole percent chance one is reached,
+    and the kickoff (empty when none is set) and venue when they differ from
+    the match's own. An uncovered match is `{x: {t, p}}`."""
+    triggers: list[str] = []
     slot: dict[str, int] = {}
 
     def trigger_index(node: str) -> int:
         if node not in slot:
             slot[node] = len(triggers)
-            triggers.append(
-                [
-                    index.trigger_sentence(node),
-                    index.trigger_team(node),
-                    index.trigger_round(node),
-                    _percent(index.probability([node])),
-                ]
-            )
+            triggers.append(index.trigger_sentence(node))
         return slot[node]
 
     def forced_by(entry: MatchMoves, nodes) -> list[list]:
@@ -257,7 +252,7 @@ def moves_wire(index: MoveIndex) -> tuple[list[list], dict[str, dict]]:
         match = entry.match
         if entry.uncovered is not None:
             wire[match.key] = {
-                "x": {"t": forced_by(entry, entry.uncovered), "p": round(index.probability(entry.uncovered), 3)}
+                "x": {"t": forced_by(entry, entry.uncovered), "p": _percent(index.probability(entry.uncovered))}
             }
             continue
         destinations = []
@@ -266,10 +261,10 @@ def moves_wire(index: MoveIndex) -> tuple[list[list], dict[str, dict]]:
                 "d": move.to_date.isoformat(),
                 "k": KIND_ORDER.index(move.kind),
                 "t": forced_by(entry, move.triggers),
-                "p": round(move.probability, 3),
+                "p": _percent(move.probability),
             }
-            if move.kickoff_time != match.kickoff_time and move.kickoff_time:
-                item["h"] = move.kickoff_time
+            if move.kickoff_time != match.kickoff_time:
+                item["h"] = move.kickoff_time or ""
             if move.venue != match.venue:
                 item["v"] = move.venue
             destinations.append(item)

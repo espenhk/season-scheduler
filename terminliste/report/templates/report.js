@@ -197,19 +197,16 @@
   }
 
   // Where a match goes if a later round is reached (`g`, or `x` when nothing is planned), see payload.py.
-  var MOVE_KINDS = ['same round, another day', 'reserve date', 'next free slot'];
-
   function withMoves(fx, m, triggers) {
     function decode(list) {
       return list.map(function (t) {
-        var trigger = triggers[t[0]];
-        return { sentence: trigger[0], team: trigger[1], round: trigger[2], pct: trigger[3], forcing: t[1] };
+        return { sentence: triggers[t[0]], forcing: t[1] };
       });
     }
     fx.moves = (m.g || []).map(function (g) {
       return {
         fx: fx, to: g.d, kind: g.k, p: g.p, triggers: decode(g.t),
-        time: g.h || fx.time, venue: g.v ? DATA.venues[g.v] : fx.venue
+        time: g.h === undefined ? fx.time : g.h, venue: g.v ? DATA.venues[g.v] : fx.venue
       };
     });
     fx.noFallback = m.x ? { p: m.x.p, triggers: decode(m.x.t) } : null;
@@ -380,7 +377,8 @@
   // The expected-disruption rule's badge says where the match goes rather than naming the rule: the
   // fallback day and its chance, or the number of alternatives. A match with no fallback says so.
 
-  function percent(p) { return Math.round(p * 100) + '%'; }
+  // Chances arrive as whole percents, so the page and the table print the same figure.
+  function percent(p) { return p + '%'; }
 
   function isMoveFlag(flag, fx) {
     return flag.rule.id === 'expected_disruption' && (fx.moves.length > 0 || !!fx.noFallback);
@@ -473,7 +471,7 @@
   function chanceLine(p, text) {
     var bar = el('span', 'tt-bar');
     var fill = el('i');
-    fill.style.width = Math.max(2, Math.round(p * 100)) + '%';
+    fill.style.width = Math.max(2, p) + '%';
     bar.appendChild(fill);
     return append(el('span', 'tt-chance'), bar, el('span', '', text));
   }
@@ -497,7 +495,7 @@
     fx.moves.forEach(function (move) {
       var pair = append(el('span', 'tt-move-pair'), tipSide('Now', fx.date, fx.time, fx.venue), el('span', 'tt-arrow', '→'), tipSide('If moved', move.to, move.time, move.venue));
       pair.setAttribute('role', 'group');
-      var kind = MOVE_KINDS[move.kind] + ' · ' + shiftWords(fx.date, move.to);
+      var kind = DATA.moveKinds[move.kind] + ' · ' + shiftWords(fx.date, move.to);
       append(tip, pair, el('span', 'tt-kind', kind), triggerList(move.triggers, 'plays '));
       var text = percent(move.p) + ' chance';
       if (fx.moves.length === 1) text += ' · ' + flagPoints(flag) + ' expected';
@@ -655,14 +653,14 @@
       ', ' + percent(move.p) + ' chance, ' + move.triggers.map(function (t) { return lowerFirst(t.sentence); }).join(' or ') + '.';
   }
 
-  function ghostCard(move, club) {
+  function ghostCard(move, club, showCompetition) {
     var fx = move.fx;
     var card = el('span', 'fx-ghost');
     card.setAttribute('data-ghost-of', fx.uid);
     card.setAttribute('data-rules', fx.rules.join(' '));
     var visual = el('span', 'fx-visual');
     var view = perspective(fx, club);
-    append(visual, el('span', 'ghost-mark', '↷'), move.time ? el('span', 'd', move.time) : null);
+    append(visual, el('span', 'ghost-mark', '↷'), move.time ? el('span', 'd', move.time) : null, showCompetition ? competitionTag(fx) : null);
     if (view) {
       if (view.where) visual.appendChild(wherePill(view.where));
       append(visual, el('span', 'vs', view.word));
@@ -683,6 +681,13 @@
     button.setAttribute('data-rove', '');
     append(button, body, el('span', 'sr-only', ghostSentence(move)));
     return append(card, button);
+  }
+
+  // Ghosts read in kickoff order, untimed last.
+  function byKickoff(a, b) {
+    var ta = a.time || '99:99';
+    var tb = b.time || '99:99';
+    return ta < tb ? -1 : ta > tb ? 1 : a.fx.uid - b.fx.uid;
   }
 
   // The moves of the fixtures among `ids` that the filters leave showing.
@@ -934,14 +939,15 @@
     return box;
   }
 
-  // The drawn fixtures of `ids`, under a heading per date. A fixture's fallback date is drawn as a
-  // ghost in the same block as the fixture, on a day of its own when nothing else is played then, so
-  // a round or week always shows where its matches may go, even to a day outside its other dates.
-  function fixturesOf(ctx, ids, showCompetition, level) {
+  // The drawn fixtures of `ids`, under a heading per date. Fallback dates are drawn as ghosts on
+  // their day, which gets a heading of its own when nothing else is played then. A round shows the
+  // ghosts of its own fixtures (where its matches may go, even outside its other dates); a week
+  // passes `moves`, those whose date falls in it.
+  function fixturesOf(ctx, ids, showCompetition, level, moves) {
     var box = roveGroup(el('div', 'fixtures'));
     var days = itemsByDay(drawItems(ctx, ids));
     var ghosts = {};
-    movesOf(ctx, ids).forEach(function (move) { (ghosts[move.to] = ghosts[move.to] || []).push(move); });
+    (moves || movesOf(ctx, ids)).slice().sort(byKickoff).forEach(function (move) { (ghosts[move.to] = ghosts[move.to] || []).push(move); });
     Object.keys(ghosts).forEach(function (date) {
       if (!days.some(function (day) { return day.date === date; })) days.push({ date: date, items: [] });
     });
@@ -949,7 +955,7 @@
     days.forEach(function (day) {
       box.appendChild(dayHeading(day.date, day.items, level));
       appendItems(box, day.items, function (fx, inGroup) { return fixtureCard(fx, showCompetition && !inGroup, ctx.club); });
-      (ghosts[day.date] || []).forEach(function (move) { box.appendChild(ghostCard(move, ctx.club)); });
+      (ghosts[day.date] || []).forEach(function (move) { box.appendChild(ghostCard(move, ctx.club, showCompetition)); });
     });
     return box;
   }
@@ -1078,16 +1084,28 @@
     return root;
   }
 
+  // The ghosts a week shows are the moves landing on its seven days, wherever the fixture sits.
+  function weekMoves(ctx, start) {
+    var out = [];
+    for (var i = 0; i < 7; i++) out = out.concat(ctx.ghostsOn(shiftIso(start, i)));
+    return out;
+  }
+
+  function shiftIso(iso, n) {
+    return new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10) + n)).toISOString().slice(0, 10);
+  }
+
   function combinedCalendarView(ctx) {
     var root = document.createDocumentFragment();
     var any = false;
     ctx.opt.data.weeks.forEach(function (week) {
       var shown = ctx.visible(week.ids);
-      if (!shown.length) return;
+      var moves = weekMoves(ctx, week.start);
+      if (!shown.length && !moves.length) return;
       if (!any) roundTools(ctx, root);
       any = true;
       root.appendChild(roundBlock(
-        ctx, 'week|' + week.label, roundLabel(week.label, week.dates, null, totals(ctx.fx, shown)), fixturesOf(ctx, week.ids, true, 3)
+        ctx, 'week|' + week.label, roundLabel(week.label, week.dates, null, totals(ctx.fx, shown)), fixturesOf(ctx, week.ids, true, 3, moves)
       ));
     });
     return root;
@@ -1920,7 +1938,7 @@
       visible: function (ids) { return ids.filter(function (uid) { return show(fx[uid]); }); },
       // The fallback moves arriving on `iso` from fixtures the filters leave showing.
       ghostsOn: function (iso) {
-        return (opt.movesByDate()[iso] || []).filter(function (move) { return show(move.fx); });
+        return (opt.movesByDate()[iso] || []).filter(function (move) { return show(move.fx); }).sort(byKickoff);
       }
     };
   };
