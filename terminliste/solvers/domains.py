@@ -1,10 +1,11 @@
 """Which days a fixture may statically take (#11).
 
 A day passes when it clears the blackouts and both teams' hard commitments
-plus rest. None of that depends on the rest of the schedule, so it is looked
-up rather than recomputed per proposed move, and a fixture with no such day
-inside its round's slot is a data or planning problem worth reporting before
-any search runs.
+plus rest, and falls on or after `earliest` (a re-plan's freeze date, #13).
+None of that depends on the rest of the schedule, so it is looked up rather
+than recomputed per proposed move, and a fixture with no such day inside its
+round's slot is a data or planning problem worth reporting before any search
+runs.
 """
 
 from __future__ import annotations
@@ -19,10 +20,14 @@ from ..rounds.commitments import CommitmentSet
 
 class DayDomains:
     def __init__(
-        self, calendars: dict[str, SeasonCalendar], commitments: CommitmentSet
+        self,
+        calendars: dict[str, SeasonCalendar],
+        commitments: CommitmentSet,
+        earliest: date | None = None,
     ) -> None:
         self._calendars = calendars
         self._commitments = commitments
+        self._earliest = earliest
         self._allowed: dict[tuple[str, str, str, str, date], bool] = {}
         # Keyed by slot identity: slots are shared, long-lived plan objects.
         self._days: dict[tuple[int, str, str, str], tuple[date, ...]] = {}
@@ -35,7 +40,9 @@ class DayDomains:
         cached = self._allowed.get(key)
         if cached is None:
             commitments = self._commitments
-            cached = self._calendars[competition_id].is_allowed(day, venue) and not (
+            cached = (self._earliest is None or day >= self._earliest) and self._calendars[
+                competition_id
+            ].is_allowed(day, venue) and not (
                 commitments.blocked(home, day) or commitments.blocked(away, day)
             )
             self._allowed[key] = cached

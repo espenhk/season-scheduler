@@ -11,6 +11,7 @@ on:
     paths:
       - "terminliste/rounds/round_robin.py"
       - "terminliste/rounds/kickoff.py"
+      - "terminliste/rounds/known_outcomes.py"
       - "tests/rounds/**"
       - "tests/solvers/**"
       - "tests/integration/**"

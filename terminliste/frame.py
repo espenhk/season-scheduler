@@ -21,6 +21,7 @@ from .model.schema import WEEKDAYS, Competition, Gender, Season, Weekday
 from .rounds.commitments import Commitment, CommitmentSet
 from .rounds.cup_schedule import CupSchedule, build_cup_trees, schedule_cups
 from .rounds.european_schedule import commitments_from_trees, resolve_european_trees
+from .rounds.known_outcomes import KnownOutcomes, apply_known_outcomes, check_outcomes
 from .rounds.outcome_tree import OutcomeTree
 
 # Fri-Mon is the span a league round occupies, so a cup date inside it
@@ -268,22 +269,30 @@ def build_cup_days(
     return sorted(days, key=lambda d: (d.date, d.competition_id, d.round_id))
 
 
-def build_season_frame(world: World, season: Season) -> tuple[SeasonFrame, list[str]]:
+def build_season_frame(
+    world: World, season: Season, outcomes: KnownOutcomes | None = None
+) -> tuple[SeasonFrame, list[str]]:
     """Resolve the season's UEFA weeks, then its cup rounds around them.
 
     Both become outcome trees; their commitments are hard where the team
     reaches them with at least `season.contingency_policy.hard_threshold`.
+    `outcomes` are results already known: they cut the branches not taken, so
+    a round a team is certain to play turns hard and one it can no longer
+    reach stops producing commitments (#13).
 
-    Raises `EuropeanCascadeError` on a data problem in the European cascade
-    and `CupSchedulingError` on one in the cup rounds.
+    Raises `EuropeanCascadeError` on a data problem in the European cascade,
+    `CupSchedulingError` on one in the cup rounds and `KnownOutcomeError` for
+    an outcome naming a round no team has.
     """
     leagues = [world.competition(c) for c in season.competitions]
     frame = SeasonFrame(playoff_weeks=build_playoff_weeks(leagues))
     warnings: list[str] = []
     threshold = season.contingency_policy.hard_threshold
+    outcomes = outcomes or {}
     if season.european_competitions:
         competitions = [world.competition(c) for c in season.european_competitions]
         trees, warnings = resolve_european_trees(competitions, season)
+        trees = apply_known_outcomes(trees, outcomes)
         commitments = commitments_from_trees(trees.values(), threshold)
         warnings = [*warnings, *(w for tree in trees.values() for w in tree.warnings)]
         frame = SeasonFrame(
@@ -295,7 +304,7 @@ def build_season_frame(world: World, season: Season) -> tuple[SeasonFrame, list[
         frame.cup_schedules, cup_warnings = schedule_cups(
             cups, season, frame.commitments, world.team_label
         )
-        frame.cup_trees = build_cup_trees(cups, frame.cup_schedules)
+        frame.cup_trees = apply_known_outcomes(build_cup_trees(cups, frame.cup_schedules), outcomes)
         cup_set = CommitmentSet(
             c for tree in frame.cup_trees.values() for c in tree.commitments(threshold)
         )
@@ -306,6 +315,7 @@ def build_season_frame(world: World, season: Season) -> tuple[SeasonFrame, list[
         warnings = [
             *warnings, *cup_warnings, *(w for tree in frame.cup_trees.values() for w in tree.warnings)
         ]
+    check_outcomes([frame.uefa_trees, frame.cup_trees], outcomes)
     return frame, warnings
 
 

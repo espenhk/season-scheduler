@@ -10,6 +10,7 @@ from datetime import date
 from ..contingency import ContingencyPlan
 from ..model.loader import World
 from ..model.schema import FallbackKind, Match, Season
+from ..replan import ReplanDiff
 from ..rounds.commitments import Commitment, CommitmentSet
 from ..scenarios import RobustnessReport
 from ..scoring.registry import describe
@@ -117,6 +118,33 @@ def maybe_by_day(world: World, season: Season, commitments: CommitmentSet) -> di
             f"{world.team_label(c.team_id)}: {c.label}, if they advance (p={c.reached_probability:.2f})"
         )
     return {day.isoformat(): sorted(lines.values()) for day, lines in sorted(days.items())}
+
+
+def replan_view(world: World, diff: ReplanDiff | None) -> dict | None:
+    """Template data for the re-plan's "changes since the input schedule"
+    section (#13)."""
+    if diff is None:
+        return None
+    return {
+        "frozen": diff.frozen,
+        "total": diff.total,
+        "rows": [
+            {
+                "fixture": f"{world.team_label(m.home_team)} v {world.team_label(m.away_team)}",
+                "from": day_label(m.from_date),
+                "to": day_label(m.to_date),
+                "note": "home and away swapped" if m.flipped else "",
+            }
+            for m in diff.moved
+        ],
+        "triggered": diff.triggered,
+        "retired": diff.retired,
+        "fallbacks": (
+            None
+            if diff.fallbacks_before is None or diff.fallbacks_after is None
+            else (diff.fallbacks_before, diff.fallbacks_after)
+        ),
+    }
 
 
 def robustness_view(report: RobustnessReport | None) -> dict | None:

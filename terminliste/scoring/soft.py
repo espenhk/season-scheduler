@@ -905,6 +905,47 @@ class ExpectedDisruption:
         return ConstraintResult(self.id, "soft", total, count, events)
 
 
+@dataclass
+class ScheduleStability:
+    """Penalise each fixture a re-plan places differently from the schedule it
+    revises, so what the new frame does not touch stays where it was (#13).
+
+    `reference` maps a fixture key (which includes the home side, so turning a
+    fixture round counts too) to its date there.
+    """
+
+    delta_scope: ClassVar[str | None] = "match"
+    reference: dict[str, date]
+    id: str = "schedule_stability"
+    kind: str = "soft"
+    weight: float = 10.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        total = 0.0
+        count = 0
+        events: list[Event] = []
+        for match in index.matches:
+            before = self.reference.get(match.key)
+            if before == match.date:
+                continue
+            total -= self.weight
+            count += 1
+            if ctx.detail:
+                was = f"moved from {before}" if before else "home and away swapped"
+                events.append(
+                    Event(
+                        delta=-self.weight,
+                        detail=(
+                            f"{ctx.world.team_label(match.home_team)} v "
+                            f"{ctx.world.team_label(match.away_team)} on {match.date}, {was}"
+                        ),
+                        match_keys=(match.key,),
+                        team_ids=(match.home_team, match.away_team),
+                    )
+                )
+        return ConstraintResult(self.id, "soft", total, count, events)
+
+
 __all__ = [
     "ConsecutiveAwayDays",
     "ConsecutiveHomeDays",
@@ -917,6 +958,7 @@ __all__ = [
     "PreferredWeekday",
     "RestComfort",
     "RivalryFixtureOnDate",
+    "ScheduleStability",
     "SoftVenuePreference",
     "TvTimeSpread",
 ]

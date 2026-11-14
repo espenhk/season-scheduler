@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
@@ -36,6 +36,25 @@ class RawEntry:
     home_team: str
     away_team: str
     venue: str | None = None
+    # Bookkeeping a previous `generate` writes, or a hand-made file may add;
+    # inferred when absent.
+    round_number: int | None = None
+    leg: int | None = None
+    kickoff_time: str | None = None
+    locked: bool = False
+
+
+@dataclass
+class ExternalSchedule:
+    """A loaded schedule plus what a re-plan needs beyond the matches (#13)."""
+
+    matches: list[Match]
+    warnings: list[str] = field(default_factory=list)
+    # Keys of the rows marked `locked`.
+    locked: frozenset[str] = frozenset()
+    # Whether every row says which round it belongs to; the inferred rounds
+    # are date ranks, which a re-plan cannot use.
+    has_rounds: bool = False
 
 
 def load_external_schedule(path: Path, world: World) -> tuple[list[Match], list[str]]:
@@ -46,6 +65,15 @@ def load_external_schedule(path: Path, world: World) -> tuple[list[Match], list[
     problems like a pair meeting the wrong number of times come back as
     warnings so the rest of the schedule still scores.
     """
+    loaded = load_schedule(path, world)
+    return loaded.matches, loaded.warnings
+
+
+def load_schedule(path: Path, world: World, option: str | None = None) -> ExternalSchedule:
+    """`load_external_schedule` that also keeps the `locked` rows and says
+    whether rounds were given. A JSON file may be a previous `generate`'s
+    output; `option` names which of its options to read (the first by default).
+    """
     path = Path(path)
     if not path.exists():
         raise ExternalScheduleError(f"no such file: {path}")
@@ -53,7 +81,7 @@ def load_external_schedule(path: Path, world: World) -> tuple[list[Match], list[
     if path.suffix.lower() == ".csv":
         entries = _parse_csv(path)
     elif path.suffix.lower() == ".json":
-        entries = _parse_json(path)
+        entries = _parse_json(path, option)
     else:
         raise ExternalScheduleError(
             f"unrecognised schedule format {path.suffix!r} — use .csv or .json"
@@ -61,8 +89,12 @@ def load_external_schedule(path: Path, world: World) -> tuple[list[Match], list[
 
     _validate_entries(world, entries, path)
     matches = _build_matches(entries, world)
-    warnings = _coverage_warnings(world, entries)
-    return matches, warnings
+    return ExternalSchedule(
+        matches=matches,
+        warnings=_coverage_warnings(world, entries),
+        locked=frozenset(m.key for m, e in zip(matches, entries, strict=True) if e.locked),
+        has_rounds=bool(entries) and all(e.round_number is not None for e in entries),
+    )
 
 
 def _parse_csv(path: Path) -> list[RawEntry]:
@@ -84,14 +116,20 @@ def _parse_csv(path: Path) -> list[RawEntry]:
                     home_team=row["home_team"].strip(),
                     away_team=row["away_team"].strip(),
                     venue=(row.get("venue") or "").strip() or None,
+                    round_number=_optional_int(row.get("round"), path, line_number, "round"),
+                    leg=_optional_int(row.get("leg"), path, line_number, "leg"),
+                    kickoff_time=(row.get("kickoff_time") or "").strip() or None,
+                    locked=_parse_locked(row.get("locked")),
                 )
             )
     return entries
 
 
-def _parse_json(path: Path) -> list[RawEntry]:
+def _parse_json(path: Path, option: str | None = None) -> list[RawEntry]:
     with path.open(encoding="utf-8") as fh:
         raw = json.load(fh)
+    if isinstance(raw, dict) and "options" in raw:
+        raw = _pick_option(raw["options"], option, path)
     rows = raw.get("matches", raw) if isinstance(raw, dict) else raw
     if not isinstance(rows, list):
         raise ExternalScheduleError(
@@ -106,14 +144,44 @@ def _parse_json(path: Path) -> list[RawEntry]:
                 RawEntry(
                     competition_id=str(row["competition"]).strip(),
                     date=_parse_date(str(row["date"]).strip(), path, i),
-                    home_team=str(row["home_team"]).strip(),
-                    away_team=str(row["away_team"]).strip(),
+                    # `generate`'s own JSON says home/away.
+                    home_team=str(row["home_team"] if "home_team" in row else row["home"]).strip(),
+                    away_team=str(row["away_team"] if "away_team" in row else row["away"]).strip(),
                     venue=(str(row["venue"]).strip() if row.get("venue") else None),
+                    round_number=_optional_int(row.get("round"), path, i, "round"),
+                    leg=_optional_int(row.get("leg"), path, i, "leg"),
+                    kickoff_time=(str(row["kickoff_time"]).strip() if row.get("kickoff_time") else None),
+                    locked=_parse_locked(row.get("locked")),
                 )
             )
         except KeyError as exc:
             raise ExternalScheduleError(f"{path}: entry {i} is missing field {exc}") from None
     return entries
+
+
+def _pick_option(options: list, label: str | None, path: Path) -> dict:
+    if not options:
+        raise ExternalScheduleError(f"{path}: the file holds no options")
+    if label is None:
+        return options[0]
+    for option in options:
+        if option.get("label") == label:
+            return option
+    labels = ", ".join(str(o.get("label")) for o in options)
+    raise ExternalScheduleError(f"{path}: no option {label!r} (has {labels})")
+
+
+def _optional_int(raw: object, path: Path, where: object, name: str) -> int | None:
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return int(str(raw).strip())
+    except ValueError:
+        raise ExternalScheduleError(f"{path}, entry {where}: {name} {raw!r} is not a number") from None
+
+
+def _parse_locked(raw: object) -> bool:
+    return raw is True or str(raw).strip().lower() in ("1", "true", "yes", "y")
 
 
 def _parse_date(raw: str, path: Path, where: object) -> date:
@@ -145,8 +213,11 @@ def _validate_entries(world: World, entries: list[RawEntry], path: Path) -> None
 
 
 def _build_matches(entries: list[RawEntry], world: World) -> list[Match]:
-    leg_by_index = _assign_legs(entries)
-    round_by_index = _assign_rounds(entries)
+    leg_by_index = {**_assign_legs(entries), **{i: e.leg for i, e in enumerate(entries) if e.leg}}
+    round_by_index = {
+        **_assign_rounds(entries),
+        **{i: e.round_number - 1 for i, e in enumerate(entries) if e.round_number},
+    }
 
     matches: list[Match] = []
     for i, entry in enumerate(entries):
@@ -160,6 +231,7 @@ def _build_matches(entries: list[RawEntry], world: World) -> list[Match]:
                 round_index=round_by_index[i],
                 date=entry.date,
                 venue=venue,
+                kickoff_time=entry.kickoff_time,
             )
         )
     return matches
@@ -255,4 +327,4 @@ def _label(world: World, pair: tuple[str, str]) -> str:
         return f"{pair[0]} v {pair[1]}"
 
 
-__all__ = ["ExternalScheduleError", "load_external_schedule"]
+__all__ = ["ExternalSchedule", "ExternalScheduleError", "load_external_schedule", "load_schedule"]

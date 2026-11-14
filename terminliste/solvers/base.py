@@ -20,6 +20,7 @@ from ..model.calendar import SeasonCalendar
 from ..model.loader import World
 from ..model.schema import Competition, Match, Season
 from ..model.slots import RoundSlot
+from ..replan import ReplanDiff, ReplanSpec
 from ..rounds.commitments import CommitmentSet
 from ..rounds.cup_schedule import CupSchedule
 from ..scenarios import RobustnessReport
@@ -128,6 +129,8 @@ class Candidate:
     contingency_plan: ContingencyPlan | None = None
     # How the plan holds up across cup and UEFA outcomes (#10); set on request.
     robustness: RobustnessReport | None = None
+    # What a re-plan changed against the schedule it revised (#13).
+    replan: ReplanDiff | None = None
 
     def assignment(self) -> dict[str, object]:
         """Fixture key -> date, the fingerprint used for diversity checks."""
@@ -210,6 +213,9 @@ class SolveRequest:
     # Called periodically with a running `SearchStats` snapshot so the CLI can
     # print live progress. `None` means don't bother.
     progress: Callable[[ProgressUpdate], None] | None = None
+    # Set to revise an existing schedule: its fixtures are reused, the frozen
+    # matches never move, and the rest start where they were (#13).
+    replan: ReplanSpec | None = None
 
 
 def resolve_slot_plans(request: SolveRequest, calendar: SeasonCalendar) -> dict[str, SlotPlan]:
@@ -219,7 +225,10 @@ def resolve_slot_plans(request: SolveRequest, calendar: SeasonCalendar) -> dict[
     frame = request.frame or SeasonFrame.from_resolved(
         request.world, request.cup_schedules, request.commitments, request.competitions
     )
-    return plan_slots(request.world, request.season, request.competitions, calendar, frame)
+    reference = request.replan.round_dates() if request.replan else None
+    return plan_slots(
+        request.world, request.season, request.competitions, calendar, frame, reference
+    )
 
 
 class Scheduler(Protocol):

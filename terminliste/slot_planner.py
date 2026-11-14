@@ -85,14 +85,22 @@ def plan_slots(
     competitions: list[Competition],
     calendar: SeasonCalendar,
     frame: SeasonFrame | None = None,
+    reference: dict[str, dict[int, tuple[date, ...]]] | None = None,
 ) -> dict[str, SlotPlan]:
     """A `SlotPlan` per league. Raises `SlotPlanningError` for the first
-    league with too few slots."""
+    league with too few slots. With `reference` (competition -> round -> the
+    dates the round was played on), each round keeps the slot its dates sit in
+    instead of being planned afresh (#13)."""
     frame = frame or SeasonFrame()
     by_competition = calendars_by_competition(calendar, competitions)
     return {
         competition.id: plan_league_slots(
-            world, season, competition, by_competition[competition.id], frame
+            world,
+            season,
+            competition,
+            by_competition[competition.id],
+            frame,
+            (reference or {}).get(competition.id),
         )
         for competition in competitions
         if competition.format == "league"
@@ -105,6 +113,7 @@ def plan_league_slots(
     competition: Competition,
     calendar: SeasonCalendar,
     frame: SeasonFrame,
+    reference: dict[int, tuple[date, ...]] | None = None,
 ) -> SlotPlan:
     rounds = competition.rounds
     fixed_rounds = {f.round - 1: f.date for f in competition.fixed_round_dates}
@@ -160,10 +169,14 @@ def plan_league_slots(
         and r.competition == competition.id
         and window_start <= r.date <= window_end
     )
-    required_slots = _fixed_round_slots(candidates, competition, fixed_rounds)
-    chosen = _choose(
-        candidates, competition, season, calendar, pins, requirements, required_slots
-    )
+    reference_notes: list[str] = []
+    if reference is not None:
+        chosen = _slots_of_reference(candidates, competition, reference, reference_notes, season.year)
+    else:
+        required_slots = _fixed_round_slots(candidates, competition, fixed_rounds)
+        chosen = _choose(
+            candidates, competition, season, calendar, pins, requirements, required_slots
+        )
     if chosen is None:
         raise SlotPlanningError(
             f"{competition.id}: no way to place {rounds} rounds in the {len(candidates)} "
@@ -173,7 +186,12 @@ def plan_league_slots(
     protected = pins | {
         r.date for r in season.fixed_requirements if r.hard and r.competition == competition.id
     }
-    chosen = _trim_unusable_days(chosen, competition, protected)
+    if reference is not None:
+        # The dates the rounds already have stay playable.
+        protected |= {day for days in reference.values() for day in days}
+        chosen = _trim_in_date_order(chosen, competition, protected)
+    else:
+        chosen = _trim_unusable_days(chosen, competition, protected)
 
     exempt = competition.day_quota_exempt_rounds
     if not all(
@@ -185,7 +203,12 @@ def plan_league_slots(
         )
 
     plan = SlotPlan(
-        competition.id, rounds, candidates, chosen, min_gap_days=competition.min_gap_days
+        competition.id,
+        rounds,
+        candidates,
+        chosen,
+        warnings=reference_notes,
+        min_gap_days=competition.min_gap_days,
     )
     for round_index, slot in plan.clashing_rounds.items():
         teams = ", ".join(world.team_label(t) for t in slot)
@@ -195,6 +218,53 @@ def plan_league_slots(
             f"hard cup or UEFA commitment for {teams}; no clear slot was available"
         )
     return plan
+
+
+def _trim_in_date_order(
+    chosen: list[RoundSlot], competition: Competition, protected: set[date] | frozenset[date]
+) -> list[RoundSlot]:
+    """`_trim_unusable_days` for rounds that may sit in slots out of date
+    order (a searched schedule swaps rounds): neighbours are by date, not
+    round index."""
+    order = sorted(range(len(chosen)), key=lambda i: (chosen[i].start, chosen[i].end))
+    trimmed = _trim_unusable_days([chosen[i] for i in order], competition, protected)
+    result = list(chosen)
+    for position, i in enumerate(order):
+        result[i] = trimmed[position]
+    return result
+
+
+def _slots_of_reference(
+    candidates: list[RoundSlot],
+    competition: Competition,
+    reference: dict[int, tuple[date, ...]],
+    notes: list[str],
+    year: int,
+) -> list[RoundSlot] | None:
+    """Each round's slot: the candidate holding most of the round's dates
+    (the narrowest on a tie), else the one nearest. None when a round has no
+    dates."""
+    chosen: list[RoundSlot] = []
+    for round_index in range(competition.rounds):
+        dates = reference.get(round_index)
+        if not dates:
+            return None
+        slot = max(
+            candidates,
+            key=lambda s: (
+                sum(s.contains(d) for d in dates),
+                -(s.end - s.start).days,
+                -abs((s.default_day - min(dates)).days),
+            ),
+        )
+        if not any(slot.contains(d) for d in dates):
+            notes.append(
+                f"{competition.name}: round {round_index + 1} was played on "
+                f"{short_date(min(dates), year)}, in no slot the frame now allows; "
+                f"the nearest slot, {short_date(slot.default_day, year)}, stands in for it"
+            )
+        chosen.append(slot)
+    return chosen
 
 
 def _fixed_round_slots(
