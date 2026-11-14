@@ -56,13 +56,11 @@ matchday_weekdays: [tuesday, wednesday, thursday]
 european_rounds:
   - id: q1
     name: First qualifying round
-    note: "Rosenborg's entry round; first legs 26/29 August, second legs 1/2 September 2026."
+    note: "Rosenborg's entry round; first legs 26/29 August, second legs 1/2 September (Norwegian ties 2 September) 2026."
     first_leg:
       forced_date: 2026-08-26
     second_leg:
-      window_start: 2026-09-01
-      window_end: 2026-09-02
-      granularity: week
+      forced_date: 2026-09-02
     ties:
       - team: rosenborg_w
         reached: true
@@ -82,15 +80,16 @@ european_rounds:
 
   - id: r16
     name: Round of 16
-    note: "First legs 28/29 October, second legs 10/11 November 2026."
+    note: >-
+      First legs 28/29 October, second legs 10/11 November 2026. The sources put
+      Brann on 28 Oct and Rosenborg on 29 Oct; the schema has one date per round,
+      so the first leg stays on 28 Oct. The Norwegian second legs are 11 Nov.
     first_leg:
       window_start: 2026-10-28
       window_end: 2026-10-29
       granularity: week
     second_leg:
-      window_start: 2026-11-10
-      window_end: 2026-11-11
-      granularity: week
+      forced_date: 2026-11-11
     ties:
       - team: rosenborg_w
       - team: brann_w

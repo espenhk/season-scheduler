@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import yaml
 
 try:
     import ortools  # noqa: F401
@@ -112,7 +113,20 @@ def _row_texts(rows: list[dict]) -> dict:
     return {_identity(r): json.dumps(r, sort_keys=True) for r in rows}
 
 
-def _check_revision(work, victim, locked, revised: dict) -> None:
+def _settled_teams(world, season, folder: Path) -> frozenset[str]:
+    """Teams whose commitments the known results change."""
+    from terminliste.frame import build_season_frame
+    from terminliste.replan import affected_teams, settle_frame
+
+    outcomes = yaml.safe_load((folder / "results.yml").read_text())
+    freeze = date.fromisoformat(FREEZE)
+    return affected_teams(
+        settle_frame(build_season_frame(world, season)[0], freeze).commitments,
+        settle_frame(build_season_frame(world, season, outcomes)[0], freeze).commitments,
+    )
+
+
+def _check_revision(work, victim, locked, revised: dict, world, season) -> None:
     stale = _option(work / "stale.json")["matches"]
     after = _row_texts(revised["matches"])
     frozen = [m for m in stale if m["date"] < FREEZE or m.get("locked")]
@@ -129,22 +143,23 @@ def _check_revision(work, victim, locked, revised: dict) -> None:
     key = (victim["home"], victim["away"], victim["date"])
     repaired = [m for m in moved if (m["home"], m["away"], m["from"]) == key]
     assert len(repaired) == 1 and repaired[0]["to"] >= FREEZE
-    settled = {"viking_m", "tromso_m", "brann_m"}
+    settled = _settled_teams(world, season, work)
+    assert settled >= {"viking_m", "tromso_m"}
     assert all({m["home"], m["away"]} & settled for m in moved)
     assert revised["replan"]["frozen"] == len(frozen)
 
 
-def test_the_local_solver_keeps_frozen_matches_and_repairs_only_the_stale_one(work, local):
+def test_the_local_solver_keeps_frozen_matches_and_repairs_the_stale_one(work, local, world, season):
     folder, victim, locked = work
-    _check_revision(folder, victim, locked, local[1])
+    _check_revision(folder, victim, locked, local[1], world, season)
 
 
 @pytest.mark.skipif(not HAS_ORTOOLS, reason="needs OR-Tools")
-def test_cpsat_keeps_frozen_matches_and_repairs_only_the_stale_one(work):
+def test_cpsat_keeps_frozen_matches_and_repairs_the_stale_one(work, world, season):
     folder, victim, locked = work
     run = _revise(folder, "cpsat", "--solver", "cpsat", "--time-budget", "60")
     assert run.returncode == 0, run.stderr
-    _check_revision(folder, victim, locked, _option(folder / "cpsat" / "2026.json"))
+    _check_revision(folder, victim, locked, _option(folder / "cpsat" / "2026.json"), world, season)
 
 
 def test_known_results_retire_and_trigger_contingencies(local):
