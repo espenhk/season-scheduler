@@ -186,12 +186,14 @@ def plan_league_slots(
     protected = pins | {
         r.date for r in season.fixed_requirements if r.hard and r.competition == competition.id
     }
+    untrimmed = chosen
     if reference is not None:
         # The dates the rounds already have stay playable.
         protected |= {day for days in reference.values() for day in days}
         chosen = _trim_in_date_order(chosen, competition, protected)
     else:
         chosen = _trim_unusable_days(chosen, competition, protected)
+    chosen = _refresh_clashes(chosen, untrimmed, competition, frame)
 
     exempt = competition.day_quota_exempt_rounds
     if not all(
@@ -299,11 +301,8 @@ def _fits_quota(competition: Competition, slot: RoundSlot) -> bool:
     return None in limits or sum(limits) >= competition.team_count // 2
 
 
-def _with_clashes(
-    slot: RoundSlot, competition: Competition, frame: SeasonFrame, pins: frozenset[date]
-) -> RoundSlot:
-    """The slot with its default day moved to the day fewest teams clash on,
-    nearest the preferred weekday among equals. A pinned day stays put."""
+def _clash_counters(competition: Competition, frame: SeasonFrame):
+    """(teams clashing a hard commitment, teams sharing a contingent one) for a day."""
     dates = {team_id: _hard_dates(frame, team_id) for team_id in competition.teams}
     maybe = {
         team_id: [(c.date, c.min_rest_days) for c in frame.commitments.contingent_for(team_id)]
@@ -324,6 +323,15 @@ def _with_clashes(
             if any(abs((day - d).days) - 1 < min_rest for d, min_rest in items)
         )
 
+    return clashing, contingent_clashes
+
+
+def _with_clashes(
+    slot: RoundSlot, competition: Competition, frame: SeasonFrame, pins: frozenset[date]
+) -> RoundSlot:
+    """The slot with its default day moved to the day fewest teams clash on,
+    nearest the preferred weekday among equals. A pinned day stays put."""
+    clashing, contingent_clashes = _clash_counters(competition, frame)
     preferred = WEEKDAYS.index(competition.preferred_weekday)
     pinned = [d for d in slot.days if d in pins]
     options = pinned or list(slot.days)
@@ -337,6 +345,23 @@ def _with_clashes(
         clashing_teams=clashing(day),
         contingent_clashes=contingent_clashes(day),
     )
+
+
+def _refresh_clashes(
+    trimmed: list[RoundSlot], original: list[RoundSlot], competition: Competition, frame: SeasonFrame
+) -> list[RoundSlot]:
+    """Clash fields recomputed for slots whose default day the trim moved (#24)."""
+    clashing, contingent_clashes = _clash_counters(competition, frame)
+    return [
+        slot
+        if slot.default_day == before.default_day
+        else replace(
+            slot,
+            clashing_teams=clashing(slot.default_day),
+            contingent_clashes=contingent_clashes(slot.default_day),
+        )
+        for slot, before in zip(trimmed, original, strict=True)
+    ]
 
 
 def _trim_unusable_days(
