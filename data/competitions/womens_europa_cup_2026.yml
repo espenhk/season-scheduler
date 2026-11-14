@@ -1,0 +1,96 @@
+# 2026-27 UEFA Women's Europa Cup — second edition, Norwegian entrants (#14).
+#
+# format: european, movable: false — see womens_champions_league_2026.yml for
+# the shared shape and sourcing. All rounds are two-legged.
+#
+# Rosenborg (2025 Toppserien third place; Norway is ranked 8-13) enter the
+# first qualifying round directly, so their path is certain from there.
+# Brann and Vålerenga arrive by dropping out of Women's Champions League
+# qualifying (womens_champions_league_2026.yml): a mini-tournament loss lands
+# in q1, a third-qualifying-round loss in q2. The tie in q1 for those two is
+# therefore contingent, not an entry.
+#
+# Rosenborg's direct entry in the first qualifying round, the round structure
+# (Q1, Q2, round of 16, then quarter-finals onwards, all two-legged) and the
+# dates below were read off the UEFA.com pages under Sources during the review
+# of #14's first attempt; they were not re-checked offline here, so they stay
+# unverified. The Brann/Vålerenga drop-down routing approximates UEFA's
+# feeding rule (UWCL Q3 losers to Q2; Q2 mini-tournament runners-up to Q2 and
+# third place to Q1, which one `drop_to_*` can't split, so every Q2 loss goes
+# to Q1). Which Norwegian club actually reaches each round is not modelled
+# beyond that.
+#
+# Only rounds that touch the Toppserien season are modelled: the quarter-finals
+# onwards fall in February-May 2027.
+#
+# Sources (verified: false — assembled from these pages, not fetched in the
+# sandbox that built this file; entrants beyond Rosenborg's entry and the
+# drop-down split are not independently confirmed):
+#   https://www.uefa.com/womenseuropacup/fixtures-results/format/ (rounds, dates)
+#   https://www.uefa.com/womenseuropacup/fixtures-results/ (Rosenborg in Q1 on 26 Aug, R16 vs Brøndby)
+#   https://www.uefa.com/womenschampionsleague/news/02a6-20d6044fbbb7-39fcd8e06d8b-1000--women-s-champions-league-first-and-second-qualifying-round-/ (feeding rule)
+#   https://en.wikipedia.org/wiki/2026%E2%80%9327_UEFA_Women%27s_Europa_Cup_qualifying_rounds
+id: womens_europa_cup_2026
+name: UEFA Women's Europa Cup
+short_name: "UWEC"
+season: 2026
+gender: women
+format: european
+movable: false
+
+color: "#889868"
+
+team_count: 3
+teams:
+  - rosenborg_w
+  - brann_w
+  - valerenga_w
+
+min_rest_days: 2
+
+# UEFA dates fall on Tue-Thu (Q1 26 Aug, R16 28/29 Oct and 10/11 Nov); windows
+# below hold only days these weekdays resolve. UEFA's Saturday 29 Aug Q1 option
+# is not modelled.
+matchday_weekdays: [tuesday, wednesday, thursday]
+
+european_rounds:
+  - id: q1
+    name: First qualifying round
+    note: "Rosenborg's entry round; first legs 26/29 August, second legs 1/2 September (Norwegian ties 2 September) 2026."
+    first_leg:
+      forced_date: 2026-08-26
+    second_leg:
+      forced_date: 2026-09-02
+    ties:
+      - team: rosenborg_w
+        reached: true
+      - team: brann_w
+      - team: valerenga_w
+
+  - id: q2
+    name: Second qualifying round
+    first_leg:
+      forced_date: 2026-09-23
+    second_leg:
+      forced_date: 2026-09-30
+    ties:
+      - team: rosenborg_w
+      - team: brann_w
+      - team: valerenga_w
+
+  - id: r16
+    name: Round of 16
+    note: >-
+      First legs 28/29 October, second legs 10/11 November 2026. The sources put
+      Brann on 28 Oct and Rosenborg on 29 Oct; the schema has one date per round,
+      so the first leg stays on 28 Oct. The Norwegian second legs are 11 Nov.
+    first_leg:
+      window_start: 2026-10-28
+      window_end: 2026-10-29
+      granularity: week
+    second_leg:
+      forced_date: 2026-11-11
+    ties:
+      - team: rosenborg_w
+      - team: brann_w
+      - team: valerenga_w

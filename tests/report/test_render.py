@@ -885,7 +885,7 @@ def test_competition_colours_form_four_families_that_read_apart_in_the_real_data
     the NM cups one red family, the UEFA competitions one green-olive family.
 
     Checked on the real data: families at least 25 CIEDE2000 apart (the shipped
-    minimum is 25.6); every pair within a family at least 12 apart (shipped 16.8
+    minimum is 25.6); every pair within a family at least 12 apart (shipped 13.9
     for UEFA, 18.6 for NM); each UEFA qualifier at least 10 from its own main
     tournament and 15 L* lighter than it; family hue spans within 90 degrees;
     every colour at L* 25 or more, so none reads as near-black; no competition
@@ -913,8 +913,10 @@ def test_competition_colours_form_four_families_that_read_apart_in_the_real_data
         hues = [_hue(colours[m.id]) for m in members]
         assert max(hues) - min(hues) <= 90, [m.id for m in members]
 
-    mains = {c.name: c for c in families["uefa"] if "qualifying" not in c.name.lower()}
-    qualifiers = [c for c in families["uefa"] if "qualifying" in c.name.lower()]
+    # The women's competitions have no qualifier/main split to pair up (#14).
+    mens = [c for c in families["uefa"] if c.gender == "men"]
+    mains = {c.name: c for c in mens if "qualifying" not in c.name.lower()}
+    qualifiers = [c for c in mens if "qualifying" in c.name.lower()]
     assert len(qualifiers) == len(mains) == 3
     for qualifier in qualifiers:
         main = mains[qualifier.name.replace(" qualifying", "")]

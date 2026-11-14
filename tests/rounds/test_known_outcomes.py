@@ -102,3 +102,21 @@ def test_winning_retires_the_branch_it_rules_out(world, season):
     assert siblings and siblings <= set(retired)
     assert "bodo_glimt_m/champions_league_2026/playoff" in triggered
     assert not set(retired) & {c.node_id for c in after if c.reached_probability > 0}
+
+
+def test_a_lost_uwcl_mini_tournament_routes_brann_into_the_europa_cup(world, season):
+    uwcl = "womens_champions_league_2026"
+    before = _commitments(world, season, None, team="brann_w")
+    after = _commitments(world, season, {"brann_w": {uwcl: {"q2": "lost"}}}, team="brann_w")
+
+    assert f"brann_w/{uwcl}/q3" in before
+    assert f"brann_w/{uwcl}/q3" not in after
+    assert not before["brann_w/womens_europa_cup_2026/q1"].hard
+    assert after["brann_w/womens_europa_cup_2026/q1"].hard
+
+
+def test_a_won_uwcl_mini_tournament_makes_the_third_qualifying_round_certain(world, season):
+    uwcl = "womens_champions_league_2026"
+    after = _commitments(world, season, {"brann_w": {uwcl: {"q2": "won"}}}, team="brann_w")
+
+    assert after[f"brann_w/{uwcl}/q3"].hard

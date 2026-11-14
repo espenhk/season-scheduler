@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import yaml
 
 try:
     import ortools  # noqa: F401
@@ -67,7 +68,19 @@ def work(tmp_path_factory):
     rows = stale["options"][0]["matches"]
     victim = next(m for m in rows if (m["home"], m["away"], m["leg"]) == ("viking_m", "sarpsborg08_m", 2))
     assert victim["date"] > "2026-09-18"
-    victim["date"] = "2026-09-18"
+    # A day beside Viking's 17 Sep league-phase match that leaves both clubs'
+    # rest otherwise intact, so the commitment is the only thing it breaks.
+    teams = {victim["home"], victim["away"]}
+    played = [
+        date.fromisoformat(m["date"])
+        for m in rows
+        if m is not victim and teams & {m["home"], m["away"]}
+    ]
+    victim["date"] = next(
+        day.isoformat()
+        for day in (date(2026, 9, 18), date(2026, 9, 16), date(2026, 9, 19), date(2026, 9, 15))
+        if all(abs((day - other).days) > 2 for other in played)
+    )
     locked = next(m for m in rows if m["date"] >= LATE_LOCKED and m is not victim)
     locked["locked"] = True
     (work / "stale.json").write_text(json.dumps(stale))
@@ -100,7 +113,20 @@ def _row_texts(rows: list[dict]) -> dict:
     return {_identity(r): json.dumps(r, sort_keys=True) for r in rows}
 
 
-def _check_revision(work, victim, locked, revised: dict) -> None:
+def _settled_teams(world, season, folder: Path) -> frozenset[str]:
+    """Teams whose commitments the known results change."""
+    from terminliste.frame import build_season_frame
+    from terminliste.replan import affected_teams, settle_frame
+
+    outcomes = yaml.safe_load((folder / "results.yml").read_text())
+    freeze = date.fromisoformat(FREEZE)
+    return affected_teams(
+        settle_frame(build_season_frame(world, season)[0], freeze).commitments,
+        settle_frame(build_season_frame(world, season, outcomes)[0], freeze).commitments,
+    )
+
+
+def _check_revision(work, victim, locked, revised: dict, world, season) -> None:
     stale = _option(work / "stale.json")["matches"]
     after = _row_texts(revised["matches"])
     frozen = [m for m in stale if m["date"] < FREEZE or m.get("locked")]
@@ -112,24 +138,28 @@ def _check_revision(work, victim, locked, revised: dict) -> None:
     assert revised["hard_violations"] == 0
 
     moved = revised["replan"]["moved"]
-    assert [(m["home"], m["away"], m["from"]) for m in moved] == [
-        (victim["home"], victim["away"], victim["date"])
-    ]
-    assert moved[0]["to"] >= FREEZE
+    # The stale match is repaired; anything else that moves sits beside a round
+    # the outcomes just made certain, which depends on where the base put it.
+    key = (victim["home"], victim["away"], victim["date"])
+    repaired = [m for m in moved if (m["home"], m["away"], m["from"]) == key]
+    assert len(repaired) == 1 and repaired[0]["to"] >= FREEZE
+    settled = _settled_teams(world, season, work)
+    assert settled >= {"viking_m", "tromso_m"}
+    assert all({m["home"], m["away"]} & settled for m in moved)
     assert revised["replan"]["frozen"] == len(frozen)
 
 
-def test_the_local_solver_keeps_frozen_matches_and_repairs_only_the_stale_one(work, local):
+def test_the_local_solver_keeps_frozen_matches_and_repairs_the_stale_one(work, local, world, season):
     folder, victim, locked = work
-    _check_revision(folder, victim, locked, local[1])
+    _check_revision(folder, victim, locked, local[1], world, season)
 
 
 @pytest.mark.skipif(not HAS_ORTOOLS, reason="needs OR-Tools")
-def test_cpsat_keeps_frozen_matches_and_repairs_only_the_stale_one(work):
+def test_cpsat_keeps_frozen_matches_and_repairs_the_stale_one(work, world, season):
     folder, victim, locked = work
     run = _revise(folder, "cpsat", "--solver", "cpsat", "--time-budget", "60")
     assert run.returncode == 0, run.stderr
-    _check_revision(folder, victim, locked, _option(folder / "cpsat" / "2026.json"))
+    _check_revision(folder, victim, locked, _option(folder / "cpsat" / "2026.json"), world, season)
 
 
 def test_known_results_retire_and_trigger_contingencies(local):
@@ -147,9 +177,13 @@ def test_known_results_retire_and_trigger_contingencies(local):
 
 
 def test_the_diff_is_printed_and_reported(work, local):
-    run, _ = local
+    run, revised = local
+    victim = work[1]
+    move = next(m for m in revised["replan"]["moved"] if m["from"] == victim["date"])
+    start, end = (date.fromisoformat(move[k]) for k in ("from", "to"))
 
-    assert "Revision of" in run.stdout and "Fri 18 Sep -> Sun 20 Sep" in run.stdout
+    assert "Revision of" in run.stdout
+    assert f"{start:%a} {start.day} {start:%b} -> {end:%a} {end.day} {end:%b}" in run.stdout
     assert "Changes since the input schedule" in (work[0] / "local" / "2026.html").read_text()
 
 

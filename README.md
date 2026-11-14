@@ -355,6 +355,12 @@ cup pair): the real opponent where UEFA has named one, "TBD" where the tie
 is still conditional. A written plan for all of this lives in
 `docs/european_qualifiers_plan.md`.
 
+The women's competitions (`womens_champions_league_2026.yml`, `womens_europa_cup_2026.yml`, #14)
+use the same schema with `gender: women`: Brann and Vålerenga enter UWCL qualifying
+round 2 (a mini-tournament, so both legs are its two match days), Rosenborg enter the
+Women's Europa Cup first qualifying round, and a loss drops into the Europa Cup. Their
+UEFA weeks are scoped to the Toppserien clubs involved. Both files are `verified: false`.
+
 ### Elimination-aware commitments (#8)
 
 Real clubs plan for elimination: a cup tie or European round only blocks the
