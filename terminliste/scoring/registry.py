@@ -8,6 +8,7 @@ into a solver.
 
 from __future__ import annotations
 
+from ..contingency import ContingencyPlanner
 from ..model.loader import World
 from ..model.schema import Competition, Season
 from ..rounds.commitments import CommitmentSet
@@ -16,6 +17,8 @@ from .hard import (
     BlackoutDates,
     ClubHomeClash,
     CommitmentConflict,
+    ContingencyCollision,
+    ContingencyCoverage,
     FinalRoundSameSlot,
     FixedDateRequirement,
     FixedRoundDates,
@@ -23,13 +26,14 @@ from .hard import (
     LegOrdering,
     MinRestDays,
     OneMatchPerTeamPerDay,
+    ReserveDateUnused,
     RoundDayQuota,
     VenueDoubleBooking,
 )
 from .soft import (
     ConsecutiveAwayDays,
     ConsecutiveHomeDays,
-    ContingentCommitmentConflict,
+    ExpectedDisruption,
     GrassAwayRoundOne,
     GrassSeasonEdge,
     HomeAwayBalance,
@@ -54,7 +58,7 @@ def build_constraints(
     `competitions` are the league(s) being scheduled. `commitments` are the
     already-resolved cup and UEFA dates of teams sharing them — never
     scheduled here, only kept clear of: the hard ones by `CommitmentConflict`,
-    the contingent ones by `ContingentCommitmentConflict` (#8).
+    the contingent ones by the fallback rules over a `ContingencyPlanner` (#9).
     """
     hard_requirements = [r for r in season.fixed_requirements if r.hard]
 
@@ -76,10 +80,17 @@ def build_constraints(
         constraints.append(FixedRoundDates(competitions=competitions))
     if any(c.day_quota for c in competitions):
         constraints.append(RoundDayQuota(competitions=competitions))
+    if season.reserve_dates:
+        constraints.append(ReserveDateUnused())
     commitments = commitments or CommitmentSet()
     for source in ("cup", "uefa"):
         if any(c.source == source for c in commitments):
             constraints.append(CommitmentConflict(commitments=commitments, source=source))
+    planner = None
+    if any(not c.hard for c in commitments):
+        planner = ContingencyPlanner(world, season, competitions, commitments)
+        constraints.append(ContingencyCoverage(planner=planner))
+        constraints.append(ContingencyCollision(planner=planner))
 
     constraints.extend(
         [
@@ -96,8 +107,8 @@ def build_constraints(
             TvTimeSpread(competitions=competitions),
         ]
     )
-    if any(not c.hard for c in commitments):
-        constraints.append(ContingentCommitmentConflict(commitments=commitments))
+    if planner is not None:
+        constraints.append(ExpectedDisruption(planner=planner))
 
     # Soft fixed requirements ride on the same constraint as hard ones, scored
     # rather than enforced.
@@ -129,7 +140,10 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
     "fixed_requirement": "A named team must be at home on a named date.",
     "cup_round_conflict": "A team's league matches stay clear of the cup rounds it is certain to play.",
     "european_commitment_conflict": "A team's league matches stay clear of the European legs it is certain to play.",
-    "contingent_commitment_conflict": "A team's league matches prefer to stay clear of a cup or European date it only reaches with some probability, weighted by that probability.",
+    "reserve_date_unused": "No league fixture on a reserve date; those are kept free for fallbacks.",
+    "contingency_coverage": "Every match a possible later cup or European round could displace has a valid fallback date.",
+    "contingency_collision": "Two fallbacks share a team, venue or club date only if their triggers can never both happen.",
+    "expected_disruption": "The expected cost of the fallback moves, weighted by the chance each cup or European round is reached.",
     "fixed_requirement_preferred": "A named team should be at home on a named date.",
     "preferred_weekday": "Matches on the league's preferred weekday.",
     "consecutive_home_days": "A club's two teams at home on back-to-back days.",
@@ -162,7 +176,10 @@ RULE_NAMES: dict[str, str] = {
     "fixed_requirement": "Fixed home date",
     "cup_round_conflict": "Cup round clash",
     "european_commitment_conflict": "European clash",
-    "contingent_commitment_conflict": "Likely cup or European clash",
+    "reserve_date_unused": "Reserve date used",
+    "contingency_coverage": "Fallback coverage",
+    "contingency_collision": "Fallback collision",
+    "expected_disruption": "Expected disruption",
     "fixed_requirement_preferred": "Preferred home date",
     "preferred_weekday": "Preferred weekday",
     "consecutive_home_days": "Back-to-back home days",
@@ -195,7 +212,10 @@ BADGE_LABELS: dict[str, str] = {
     "fixed_requirement": "fixed date",
     "cup_round_conflict": "cup clash",
     "european_commitment_conflict": "Europe clash",
-    "contingent_commitment_conflict": "likely clash",
+    "reserve_date_unused": "reserve date",
+    "contingency_coverage": "no fallback",
+    "contingency_collision": "fallback clash",
+    "expected_disruption": "may move",
     "fixed_requirement_preferred": "preferred date",
     "preferred_weekday": "off-day",
     "consecutive_home_days": "home pair",

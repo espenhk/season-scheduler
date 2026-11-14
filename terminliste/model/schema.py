@@ -733,6 +733,9 @@ class RivalryFixture(BaseModel):
     reason: str = ""
 
 
+FallbackKind = Literal["same_slot", "reserve_date", "next_free_slot"]
+
+
 class ContingencyPolicy(BaseModel):
     """How the season treats commitments it may not reach (#8).
 
@@ -745,6 +748,34 @@ class ContingencyPolicy(BaseModel):
     """
 
     hard_threshold: float = Field(default=1.0, ge=0.0, le=1.0)
+    # How far after its base date a match may be moved when a later round is
+    # reached (#9).
+    max_fallback_days: int = Field(default=21, ge=1)
+    # Preference order for a match's fallback: a different day of its own
+    # round weekend, a reserve date, or the next free weekend day.
+    fallback_kinds: list[FallbackKind] = Field(
+        default_factory=lambda: ["same_slot", "reserve_date", "next_free_slot"]
+    )
+
+    @field_validator("fallback_kinds")
+    @classmethod
+    def _kinds_are_distinct(cls, v: list[FallbackKind]) -> list[FallbackKind]:
+        if not v or len(set(v)) != len(v):
+            raise ValueError("fallback_kinds must be non-empty and list each kind once")
+        return v
+
+
+class ReserveDate(BaseModel):
+    """A catch-up date kept free of league fixtures (#9): only a fallback
+    for a match displaced by a later cup or UEFA round may land here.
+
+    `capacity` is how many displaced matches one such date can host.
+    """
+
+    date: date
+    capacity: int = Field(default=3, ge=1)
+    reason: str = ""
+    verified: bool = False
 
 
 class FixedRequirement(BaseModel):
@@ -804,6 +835,11 @@ class Season(BaseModel):
     rivalry_fixtures: list[RivalryFixture] = Field(default_factory=list)
     extra_round_slots: list[ExtraRoundSlot] = Field(default_factory=list)
     contingency_policy: ContingencyPolicy = Field(default_factory=ContingencyPolicy)
+    reserve_dates: list[ReserveDate] = Field(default_factory=list)
+
+    @cached_property
+    def reserve_date_set(self) -> frozenset[date]:
+        return frozenset(r.date for r in self.reserve_dates)
 
     @cached_property
     def blacked_out_dates(self) -> dict[date, str]:

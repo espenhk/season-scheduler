@@ -1847,6 +1847,11 @@ def write_json(result: SolverResult, output_path: Path) -> Path:
                     }
                     for m in candidate.matches
                 ],
+                **(
+                    {"contingency_plan": candidate.contingency_plan.to_dict(candidate.matches)}
+                    if candidate.contingency_plan is not None
+                    else {}
+                ),
             }
             for candidate in result.candidates
         ],

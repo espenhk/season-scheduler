@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import yaml
@@ -366,6 +366,7 @@ def validate_world(world: World) -> list[str]:
         errors.extend(_validate_fixed_requirements(world, season))
         errors.extend(_validate_full_round_requirements(world, season))
         errors.extend(_validate_rivalry_fixtures(world, season))
+        errors.extend(_validate_reserve_dates(season))
         errors.extend(_validate_calendar_capacity(world, season))
 
     for override in world.travel_overrides:
@@ -733,6 +734,27 @@ def _validate_fixed_requirements(world: World, season: Season) -> list[str]:
                 f"requirement {requirement.id!r} demands a match on {requirement.date}, which "
                 f"falls inside a global blackout range — these cannot both hold"
             )
+    return errors
+
+
+def _validate_reserve_dates(season: Season) -> list[str]:
+    errors: list[str] = []
+    seen: set[date] = set()
+    required = {r.date for r in season.fixed_requirements if r.hard} | {
+        r.date for r in season.full_round_requirements if r.hard
+    }
+    for reserve in season.reserve_dates:
+        if reserve.date in seen:
+            errors.append(f"reserve date {reserve.date} is listed twice")
+        seen.add(reserve.date)
+        if not season.start <= reserve.date <= season.end:
+            errors.append(
+                f"reserve date {reserve.date} is outside the season {season.start}..{season.end}"
+            )
+        if reserve.date in season.blacked_out_dates:
+            errors.append(f"reserve date {reserve.date} is also a global blackout")
+        if reserve.date in required:
+            errors.append(f"reserve date {reserve.date} is also a hard required match date")
     return errors
 
 

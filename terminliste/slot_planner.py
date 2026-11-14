@@ -20,6 +20,10 @@ _UNCOVERED_REQUIREMENT_COST = 50.0
 _OFF_WEEKDAY_COST = 3.0
 _EXTRA_SLOT_COST = 2.0
 _DISCOURAGED_COST = 3.0
+# A round next to a cup or UEFA date many teams may reach cannot give each of
+# them a fallback, so teams beyond the first few cost quadratically (#9).
+_CONTINGENT_FREE_TEAMS = 3
+_CONTINGENT_CLASH_COST = 10.0
 
 
 class SlotPlanningError(ValueError):
@@ -231,6 +235,10 @@ def _with_clashes(
     """The slot with its default day moved to the day fewest teams clash on,
     nearest the preferred weekday among equals. A pinned day stays put."""
     dates = {team_id: _hard_dates(frame, team_id) for team_id in competition.teams}
+    maybe = {
+        team_id: [(c.date, c.min_rest_days) for c in frame.commitments.contingent_for(team_id)]
+        for team_id in competition.teams
+    }
 
     def clashing(day: date) -> tuple[str, ...]:
         return tuple(
@@ -239,13 +247,26 @@ def _with_clashes(
             if any(abs((day - d).days) - 1 < min_rest for d, min_rest in hard)
         )
 
+    def contingent_clashes(day: date) -> int:
+        return sum(
+            1
+            for items in maybe.values()
+            if any(abs((day - d).days) - 1 < min_rest for d, min_rest in items)
+        )
+
     preferred = WEEKDAYS.index(competition.preferred_weekday)
     pinned = [d for d in slot.days if d in pins]
     options = pinned or list(slot.days)
     day = min(
-        options, key=lambda d: (len(clashing(d)), abs(d.weekday() - preferred), d)
+        options,
+        key=lambda d: (len(clashing(d)), contingent_clashes(d), abs(d.weekday() - preferred), d),
     )
-    return replace(slot, default_day=day, clashing_teams=clashing(day))
+    return replace(
+        slot,
+        default_day=day,
+        clashing_teams=clashing(day),
+        contingent_clashes=contingent_clashes(day),
+    )
 
 
 def _trim_unusable_days(
@@ -292,6 +313,7 @@ def _hard_dates(frame: SeasonFrame, team_id: str) -> list[tuple[date, int]]:
 
 def _slot_cost(slot: RoundSlot, competition: Competition, calendar: SeasonCalendar) -> float:
     cost = _CLASH_COST * len(slot.clashing_teams)
+    cost += _CONTINGENT_CLASH_COST * max(0, slot.contingent_clashes - _CONTINGENT_FREE_TEAMS) ** 2
     if slot.weekday != competition.preferred_weekday:
         cost += _OFF_WEEKDAY_COST
     if slot.kind != "weekend":

@@ -14,10 +14,14 @@ import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from ..contingency import ContingencyPlanner
 from ..model.schema import WEEKDAYS, Competition, Match, RivalryFixture
 from ..model.schema import TvTimeSpread as TvTimeSpreadConfig
-from ..rounds.commitments import CommitmentSet
 from .base import ConstraintResult, EvalContext, Event, ScheduleIndex
+
+# Per unit of probability-weighted move cost; also prices CP-SAT's steering
+# away from days near a commitment a team only maybe reaches (#9).
+EXPECTED_DISRUPTION_WEIGHT = 3.0
 
 
 @dataclass
@@ -844,64 +848,55 @@ def _weights_by_team(
 
 
 @dataclass
-class ContingentCommitmentConflict:
-    """Discourage a league match too close to a commitment the team only
-    reaches with some probability (#8).
+class ExpectedDisruption:
+    """Expected cost of the fallback moves the plan may have to make (#9).
 
-    A team that wins a round plays the next one, one that loses plays
-    something else or nothing, so blocking every branch outright would
-    over-constrain the calendar for an outcome that is still a coin flip. The
-    penalty is the rest shortfall weighted by the probability the team gets
-    there, which steers the solver away when a cheaper date exists. It stands
-    in for a planned fallback until contingency plans exist (#9).
+    Each exposed match costs the chance its trigger rounds are reached times
+    the move's cost, so the base plan avoids likely moves when a cheaper date
+    exists. A match with no fallback is priced as the worst move; the hard
+    `contingency_coverage` rule is what forbids it.
     """
 
-    commitments: CommitmentSet
-    id: str = "contingent_commitment_conflict"
+    planner: ContingencyPlanner
+    id: str = "expected_disruption"
     kind: str = "soft"
-    weight: float = 3.0
+    weight: float = EXPECTED_DISRUPTION_WEIGHT
 
     def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        analysis = self.planner.analyse(index)
+        plan = analysis.plan
         total = 0.0
-        count = 0
         events: list[Event] = []
-
-        for team_id in self.commitments.team_ids:
-            contingent = self.commitments.contingent_for(team_id)
-            if not contingent:
+        count = 0
+        for match in index.matches:
+            triggers = analysis.triggers.get(match.key)
+            if not triggers:
                 continue
-            for match in index.by_team.get(team_id, ()):
-                for commitment in contingent:
-                    rest_days = abs((match.date - commitment.date).days) - 1
-                    if rest_days >= commitment.min_rest_days:
-                        continue
-                    shortfall = commitment.min_rest_days - rest_days
-                    delta = -self.weight * shortfall * commitment.reached_probability
-                    total += delta
-                    count += 1
-                    if ctx.detail:
-                        events.append(
-                            Event(
-                                delta=delta,
-                                detail=(
-                                    f"{ctx.world.team_label(team_id)} plays {match.date} in "
-                                    f"{match.competition_id}, {rest_days} rest day(s) from "
-                                    f"{commitment.label} on {commitment.date}, which they "
-                                    f"reach with p={commitment.reached_probability:.2f} — "
-                                    f"needs {commitment.min_rest_days}"
-                                ),
-                                match_keys=(match.key,),
-                                team_ids=(team_id,),
-                            )
-                        )
-
+            probability = self.planner.disruption_probability(triggers)
+            fallback = plan.fallbacks.get(match.key)
+            delta = -self.weight * probability * self.planner.move_cost(match, fallback)
+            total += delta
+            count += 1
+            if ctx.detail:
+                move = f"moves to {fallback.date} ({fallback.kind})" if fallback else "has no fallback"
+                events.append(
+                    Event(
+                        delta=delta,
+                        detail=(
+                            f"{match.key} on {match.date} {move} with p={probability:.2f} "
+                            f"if {', '.join(triggers)} is reached"
+                        ),
+                        match_keys=(match.key,),
+                        team_ids=(match.home_team, match.away_team),
+                    )
+                )
         return ConstraintResult(self.id, "soft", total, count, events)
 
 
 __all__ = [
     "ConsecutiveAwayDays",
     "ConsecutiveHomeDays",
-    "ContingentCommitmentConflict",
+        "ExpectedDisruption",
     "GrassAwayRoundOne",
     "GrassSeasonEdge",
     "HomeAwayBalance",

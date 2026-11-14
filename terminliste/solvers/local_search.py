@@ -37,6 +37,7 @@ import time
 from dataclasses import dataclass, replace
 from datetime import date
 
+from ..contingency import plan_for
 from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
 from ..model.schema import WEEKDAYS, Match
 from ..model.slots import RoundSlot
@@ -244,6 +245,8 @@ class LocalSearchScheduler:
 
         for position, candidate in enumerate(chosen, start=1):
             candidate.label = f"Option {position}"
+            # After polishing, which replaces a candidate's matches.
+            candidate.contingency_plan = plan_for(candidate.matches, request.constraints)
 
         if not any(c.score.feasible for c in chosen):
             notes.append(

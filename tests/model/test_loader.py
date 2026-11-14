@@ -1021,3 +1021,41 @@ def test_a_data_root_without_travel_overrides_still_loads(tmp_path):
     loaded = load_world(root)
     assert loaded.travel_overrides == []
     assert loaded.unverified_data == ["club", "venue"]
+
+
+def test_reserve_dates_that_cannot_work_are_caught():
+    import factories as f
+
+    from terminliste.model.loader import _validate_reserve_dates
+    from terminliste.model.schema import DatedNote, ReserveDate
+
+    blackout = date(2026, 5, 17)
+    season = f.season(
+        start=date(2026, 3, 1),
+        end=date(2026, 11, 30),
+        global_blackouts=[DatedNote(date=blackout, reason="holiday")],
+        reserve_dates=[
+            ReserveDate(date=blackout),
+            ReserveDate(date=date(2026, 6, 3)),
+            ReserveDate(date=date(2026, 6, 3)),
+            ReserveDate(date=date(2027, 1, 6)),
+        ],
+    )
+
+    errors = _validate_reserve_dates(season)
+
+    assert len(errors) == 3
+    assert any("blackout" in e for e in errors)
+    assert any("twice" in e for e in errors)
+    assert any("outside the season" in e for e in errors)
+
+
+def test_a_contingency_policy_needs_distinct_fallback_kinds():
+    from pydantic import ValidationError
+
+    from terminliste.model.schema import ContingencyPolicy
+
+    with pytest.raises(ValidationError):
+        ContingencyPolicy(fallback_kinds=[])
+    with pytest.raises(ValidationError):
+        ContingencyPolicy(fallback_kinds=["same_slot", "same_slot"])

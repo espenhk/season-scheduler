@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import NamedTuple
 
+from ..contingency import plan_for
 from ..display import short_date
 from ..frame import SeasonFrame
 from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
@@ -37,7 +38,7 @@ from ..model.slots import RoundSlot, max_compatible_slots, slots_compatible
 from ..rounds.commitments import CommitmentSet
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import evaluate
-from ..scoring.soft import ContingentCommitmentConflict
+from ..scoring.soft import EXPECTED_DISRUPTION_WEIGHT
 from ..slot_planner import SlotPlan
 from .base import (
     Candidate,
@@ -315,6 +316,7 @@ class CpSatScheduler:
                 round_slots={
                     (c, r): plans[c].chosen[r] for c in plans for r in range(plans[c].rounds)
                 },
+                contingency_plan=plan_for(matches, request.constraints),
             )
             candidates.append(candidate)
             plans_by_candidate[id(candidate)] = plans
@@ -324,6 +326,13 @@ class CpSatScheduler:
         chosen = select_diverse(candidates, request.top_n)
         for position, candidate in enumerate(chosen, start=1):
             candidate.label = f"Option {position}"
+        if any(c.contingency_plan is not None for c in chosen):
+            notes.append(
+                info(
+                    "Fallback dates are planned after solving, not by the model: a schedule the "
+                    "model accepts can still fail contingency_coverage (#9)."
+                )
+            )
         if chosen and not any(c.score.feasible for c in chosen):
             notes.append(
                 error(
@@ -1033,9 +1042,10 @@ def _build_level_two(cp_model, problem: _Problem, placed: list[_Placed], previou
             if d in discouraged:
                 terms.append((-_scaled(venue_weight), var))
 
-    # Same price as the scorer's `ContingentCommitmentConflict`, so a day near a
-    # commitment the team only maybe reaches is steered away from (#8).
-    contingent_weight = ContingentCommitmentConflict.weight
+    # Same price scale as the scorer's `expected_disruption`, so a day near a
+    # commitment the team only maybe reaches is steered away from (#8). The
+    # fallbacks themselves are planned after solving (#9).
+    contingent_weight = EXPECTED_DISRUPTION_WEIGHT
     for item in placed:
         for team_id in (item.fixture.home_team, item.fixture.away_team):
             for commitment in problem.commitments.contingent_for(team_id):
