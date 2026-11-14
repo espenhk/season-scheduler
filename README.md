@@ -437,8 +437,11 @@ Conference League play-offs can share; two teams' independent wins cannot);
 `expected_disruption` (soft, weight 3.0 x probability x move cost) steers the
 base plan away from likely moves. The slot planner also penalises a round slot
 that more than three teams share with a contingent commitment, since those
-matches cannot all be covered. CP-SAT plans the fallbacks after solving, so
-its schedule can still fail coverage.
+matches cannot all be covered. CP-SAT does not model fallbacks: after each
+Level 2 solve it runs the planner, bans the days of matches left uncovered and
+re-solves, and if repairs still leave matches uncovered it cuts that Level 1
+slot choice for their rounds, within the pass, and re-solves Level 1 (#53). A schedule can still fail coverage if the budget
+runs out first.
 
 #### Scenario evaluation (#10)
 
