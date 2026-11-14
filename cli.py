@@ -231,6 +231,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         seed=args.seed,
         top_n=args.top_n,
         time_budget_s=args.time_budget,
+        iterations=args.iterations,
         relax_min_rest=args.relax_min_rest,
         progress=_print_progress if live else None,
     )
@@ -600,6 +601,17 @@ def build_parser() -> argparse.ArgumentParser:
             "commitments need real search headroom over a Europe-free season "
             "to reliably reach a feasible schedule; see README's 'Suggested "
             "next steps')"
+        ),
+    )
+    p_generate.add_argument(
+        "--iterations",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "local solver only: run exactly N moves instead of pacing to --time-budget; "
+            "the same --seed and N then give the same schedule (a time-budgeted run adapts "
+            "to machine speed and is not reproducible)"
         ),
     )
     p_generate.add_argument(

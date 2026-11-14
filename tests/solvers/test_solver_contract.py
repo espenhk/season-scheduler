@@ -319,9 +319,11 @@ def test_local_search_is_deterministic_for_a_fixed_seed():
     scheduler = _get_scheduler("local")
 
     def run():
+        # A move count rather than a time budget: a paced run follows the
+        # machine's speed, so only a fixed count is reproducible (#11).
         request = SolveRequest(
             world=world, season=season, competitions=competitions, constraints=constraints,
-            ctx=ctx, seed=7, top_n=1, time_budget_s=4.0,
+            ctx=ctx, seed=7, top_n=1, time_budget_s=4.0, iterations=3_000,
         )
         return scheduler.solve(request).best.assignment()
 

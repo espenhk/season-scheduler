@@ -39,11 +39,12 @@ tests having run first.
 | `terminliste/rounds/european_schedule.py` | **all** |
 | `terminliste/rounds/round_robin.py`, `terminliste/rounds/kickoff.py` | `rounds`, `solvers`, `integration` |
 | `terminliste/scoring/**`, `terminliste/contingency.py`, `terminliste/scenarios.py` | `scoring`, `solvers`, `report`, `integration` |
-| `terminliste/solvers/**`, `terminliste/slot_planner.py`, `terminliste/frame.py` | `solvers`, `integration` |
+| `terminliste/solvers/**`, `terminliste/slot_planner.py`, `terminliste/frame.py` | `solvers`, `integration` (`solvers/local_search.py` and `solvers/domains.py` also `scoring`: `tests/scoring/test_incremental.py` drives the real operators) |
 | `terminliste/report/**` | `report` |
 | `terminliste/refdata/**` | `refdata`, `scripts` |
 | `terminliste/external_schedule.py`, `terminliste/baseline.py` | `integration` |
 | `scripts/**` | `scripts`, `integration` (`refresh_baselines.py --check` is asserted by `tests/integration/test_baselines.py`) |
+| `scripts/bench_scoring.py` | `scoring` (`tests/scoring/test_incremental.py` builds its schedule through it) |
 | `cli.py` | `integration` — nothing under `tests/` imports `cli.py` directly; this is a placeholder so the path isn't silently untested, not real coverage |
 | `data/**` | **all** |
 | `baselines/**` | `integration` |
