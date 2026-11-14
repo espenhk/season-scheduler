@@ -2472,7 +2472,7 @@ def test_drop_indentation_keeps_script_and_style_bodies_whatever_their_case():
     )
 
 
-def test_the_report_lists_each_contingency_move_by_trigger_and_the_robustness_stats():
+def test_the_report_lists_each_contingency_move_with_its_triggers_and_the_robustness_stats():
     from report_support import _world as small_world
 
     from terminliste.contingency import ContingencyPlan, Fallback
@@ -2499,8 +2499,8 @@ def test_the_report_lists_each_contingency_move_by_trigger_and_the_robustness_st
 
     html = _render(world, season, [candidate], commitments=commitments)
 
-    assert f"If {world.team_label('a_m')} reach NM Cup: Round 2" in html
-    assert "p=0.50" in html and "Sun 23 Aug" in html and "Wed 2 Sep" in html and "reserve date" in html
+    assert f"{world.team_label('a_m')}: NM Cup: Round 2 <b>50%</b>" in html
+    assert "Sun 23 Aug" in html and "Wed 2 Sep" in html and "+10 days" in html and "reserve date" in html
     assert "80% of outcomes feasible" in html
     assert "min_rest_days" in html and "at most 3" in html
     assert _report_data(html)["maybe"] == {

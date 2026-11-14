@@ -50,7 +50,16 @@ from ..scoring.soft import PreferredWeekday
 from ..slot_planner import search_space_log10
 from ..solvers.base import Candidate, SearchStats, SolverResult, severity_of
 from . import payload
-from .contingency_view import contingency_view, maybe_by_day, replan_view, robustness_view
+from .contingency_view import (
+    KIND_LABELS,
+    KIND_ORDER,
+    MoveIndex,
+    contingency_view,
+    maybe_by_day,
+    moves_wire,
+    replan_view,
+    robustness_view,
+)
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -174,6 +183,7 @@ def render_report(
         "export": {"season": season.id},
         "tint": {"good": TINT_GOOD, "cost": TINT_COST},
         "preferred": _preferred_days(world, competitions),
+        "moveKinds": [KIND_LABELS[kind] for kind in KIND_ORDER],
         # Dates a team plays only if it advances: one line per team and round.
         "maybe": maybe_by_day(world, season, commitments or CommitmentSet()),
         "shared": [payload.shared_entry_wire(entry) for entry in shared_entries],
@@ -324,8 +334,12 @@ def _build_option(
     score = candidate.score
     limit = 200 if full_diagnostics else 4
     entries = _match_entries(world, candidate, dual_club_ids, competition_colors)
+    commitments = commitments or CommitmentSet()
+    move_index = MoveIndex(world, candidate.contingency_plan, candidate.matches, commitments)
+    move_triggers, move_wire = moves_wire(move_index)
     for uid, entry in enumerate(entries, start=len(shared_entries)):
         entry["uid"] = uid
+        entry["moves"] = move_wire.get(entry["key"])
     combined_entries = entries + shared_entries
     # Rules with at least one fixture to show, and how many.
     pinned = _pinned_fixture_counts(entries)
@@ -367,7 +381,7 @@ def _build_option(
         "soft": _soft_summary(score, gross, world, pinned),
         "fairness": fairness,
         "contingency": contingency_view(
-            world, candidate.contingency_plan, candidate.matches, commitments or CommitmentSet()
+            world, candidate.contingency_plan, candidate.matches, commitments, move_index
         ),
         "robustness": robustness_view(candidate.robustness),
         "replan": replan_view(world, candidate.replan),
@@ -379,7 +393,10 @@ def _build_option(
             headlines=[{"value": h["value"], "label": h["label"]} for h in headlines],
             club_headlines=club_headlines,
             league_views=_competition_views(world, entries),
-            combined_calendar=_combined_calendar_view(combined_entries),
+            combined_calendar=_combined_calendar_view(
+                combined_entries,
+                [d.to_date for e in move_index.by_match for d in e.moves],
+            ),
             combined_list=_combined_list_view(combined_entries),
             month_calendar=month_calendar,
             month_calendar_details=month_calendar_details,
@@ -388,6 +405,7 @@ def _build_option(
             score_order=[rule_index[r.constraint_id] for r in _ordered_results(score)],
             club_unpinned=_club_unpinned(world, candidate, rule_index),
             club_ranks=_club_ranks(fairness),
+            move_triggers=move_triggers,
             fairness=fairness,
             limit=limit,
             full=full_diagnostics,
@@ -1160,6 +1178,7 @@ def _match_entries(
         comp_color = competition_colors.get(match.competition_id, _DEFAULT_COMP_COLOR)
         entries.append(
             {
+                "key": match.key,
                 "date": match.date,
                 "kickoff_time": match.kickoff_time,
                 "home_team": match.home_team,
@@ -1369,7 +1388,7 @@ def _reading_order(entry: dict) -> tuple:
     )
 
 
-def _combined_calendar_view(entries: list[dict]) -> list[dict]:
+def _combined_calendar_view(entries: list[dict], extra_days: list[date] | None = None) -> list[dict]:
     """Every league's matches, plus every cup's per-team round dates, merged
     into one calendar, grouped by ISO week.
 
@@ -1377,8 +1396,14 @@ def _combined_calendar_view(entries: list[dict]) -> list[dict]:
     counts, so week-of-year is the only grouping that interleaves them (#24).
     The sort key falls back to a cup entry's team name where a league entry
     has `home`, so both shapes interleave by date without a KeyError.
+
+    `extra_days` are fallback dates: their weeks exist even with nothing else
+    in them, so a ghost fixture has a week to stand in.
     """
     weeks: dict[tuple[int, int], list[dict]] = defaultdict(list)
+    for day in extra_days or ():
+        iso_year, iso_week, _ = day.isocalendar()
+        weeks.setdefault((iso_year, iso_week), [])
     for entry in entries:
         iso_year, iso_week, _ = entry["date"].isocalendar()
         weeks[(iso_year, iso_week)].append(entry)
@@ -1393,6 +1418,7 @@ def _combined_calendar_view(entries: list[dict]) -> list[dict]:
             {
                 "label": f"Week {iso_week}, {iso_year}",
                 "dates": _round_date_label(week_entries),
+                "start": date.fromisocalendar(iso_year, iso_week, 1),
                 "matches": week_entries,
             }
         )

@@ -192,8 +192,25 @@
       uid: uid, key: e.c + '-' + e.d + '-' + e.t, venueId: '',
       kind: european ? 'european' : 'cup', date: e.d, time: '', comp: e.c,
       clubs: [home.club], teams: [e.t], home: home, away: null, versus: european ? e.o : 'TBD', round: e.n,
-      venue: e.vl
+      venue: e.vl, moves: [], noFallback: null
     }, null, null, null);
+  }
+
+  // Where a match goes if a later round is reached (`g`, or `x` when nothing is planned), see payload.py.
+  function withMoves(fx, m, triggers) {
+    function decode(list) {
+      return list.map(function (t) {
+        return { sentence: triggers[t[0]], forcing: t[1] };
+      });
+    }
+    fx.moves = (m.g || []).map(function (g) {
+      return {
+        fx: fx, to: g.d, kind: g.k, p: g.p, triggers: decode(g.t),
+        time: g.h === undefined ? fx.time : g.h, venue: g.v ? DATA.venues[g.v] : fx.venue
+      };
+    });
+    fx.noFallback = m.x ? { p: m.x.p, triggers: decode(m.x.t) } : null;
+    return fx;
   }
 
   var sharedFixtures = null;
@@ -206,7 +223,7 @@
     }
     var offset = sharedFixtures.length;
     var all = sharedFixtures.concat(optionData.matches.map(function (m, i) {
-      return leagueFixture(offset + i, m, optionData.notes, optionData.groups);
+      return withMoves(leagueFixture(offset + i, m, optionData.notes, optionData.groups), m, optionData.moveTriggers);
     }));
     // A key doubles as the fixture's DOM id, so a repeat (a team twice on a date in a competition) is numbered.
     var seen = {};
@@ -355,16 +372,43 @@
     return flag.rule.hard ? 'broken rule' : flag.delta === 0 ? 'reward forgone' : signed(flag.delta) + ' pts';
   }
 
-  function flagBadge(flag) {
-    var polarity = flag.rule.hard ? 'broken' : flag.delta > 0 ? 'good' : 'cost';
-    var badge = el('button', 'info-wrap flag flag-' + polarity, flag.rule.label);
+  // -- fallback moves
+  //
+  // The expected-disruption rule's badge says where the match goes rather than naming the rule: the
+  // fallback day and its chance, or the number of alternatives. A match with no fallback says so.
+
+  // Chances arrive as whole percents, so the page and the table print the same figure.
+  function percent(p) { return p + '%'; }
+
+  function isMoveFlag(flag, fx) {
+    return flag.rule.id === 'expected_disruption' && (fx.moves.length > 0 || !!fx.noFallback);
+  }
+
+  function moveLabel(fx) {
+    if (!fx.moves.length) return 'no fallback';
+    if (fx.moves.length > 1) return fx.moves.length + ' alternatives';
+    return shortDate(fx.moves[0].to) + ' · ' + percent(fx.moves[0].p);
+  }
+
+  function moveSpeech(fx) {
+    if (!fx.moves.length) return 'no fallback date if a later round is reached';
+    return 'may move to ' + fx.moves.map(function (move) { return longDateUnpadded(move.to).slice(0, -5); }).join(' or ');
+  }
+
+  var moveOf = new WeakMap();
+
+  function flagBadge(flag, fx) {
+    var isMove = isMoveFlag(flag, fx);
+    var polarity = isMove ? (fx.moves.length ? 'move' : 'cost flag-nofallback') : flag.rule.hard ? 'broken' : flag.delta > 0 ? 'good' : 'cost';
+    var badge = el('button', 'info-wrap flag flag-' + polarity, isMove ? moveLabel(fx) : flag.rule.label);
     badge.type = 'button';
     badge.setAttribute('data-rule', flag.rule.id);
     badge.tabIndex = -1;
     badge.setAttribute('data-rove', '');
     // Starts with the visible label; the rest says what the colour and sign only show. Also
     // keeps the tooltip child out of the accessible name.
-    badge.setAttribute('aria-label', flag.rule.label + ', ' + flag.rule.name + ', ' + flagPoints(flag));
+    badge.setAttribute('aria-label', (isMove ? moveLabel(fx) + ', ' + moveSpeech(fx) : flag.rule.label) + ', ' + flag.rule.name + ', ' + flagPoints(flag));
+    if (isMove) moveOf.set(badge, fx);
     flagOf.set(badge, flag);
     return badge;
   }
@@ -381,13 +425,19 @@
     }
     hideFlagTip();
     flagTip.textContent = '';
-    append(flagTip, el('b', 'tt-head', flag.rule.name + ' · ' + flagPoints(flag)));
-    flag.items.forEach(function (item) {
-      var text = item.detail;
-      if (item.n > 1) text += ' (this fixture’s share of ' + signed(item.delta * item.n) + ', split over ' + item.n + ' fixtures)';
-      if (text) flagTip.appendChild(el('span', 'tt-detail', text));
-    });
-    append(flagTip, el('span', 'tt-hint', (HOVER_NONE ? 'Tap again' : 'Click') + ' to highlight this rule in the calendar'));
+    var move = moveOf.get(badge);
+    flagTip.className = move ? 'tooltip tt-move' : 'tooltip';
+    if (move) {
+      fillMoveTip(flagTip, move, flag);
+    } else {
+      append(flagTip, el('b', 'tt-head', flag.rule.name + ' · ' + flagPoints(flag)));
+      flag.items.forEach(function (item) {
+        var text = item.detail;
+        if (item.n > 1) text += ' (this fixture’s share of ' + signed(item.delta * item.n) + ', split over ' + item.n + ' fixtures)';
+        if (text) flagTip.appendChild(el('span', 'tt-detail', text));
+      });
+    }
+    append(flagTip, el('span', 'tt-hint', (HOVER_NONE ? 'Tap again' : 'Click') + ' to highlight ' + (move ? 'this match and where it may move' : 'this rule') + ' in the calendar'));
     badge.setAttribute('aria-describedby', flagTip.id);
     flagTipOwner = badge;
     flagTip.classList.add('show');
@@ -401,10 +451,63 @@
     flagTipOwner = null;
   }
 
+  // One side of a move: weekday and date, kickoff, ground.
+  function tipSide(label, iso, time, venue) {
+    var side = el('span', 'tt-side');
+    append(side, el('span', 'tt-k', label), el('b', '', shortDate(iso)), el('span', '', time || 'kickoff not set'), el('span', 'tt-venue', venue || ''));
+    return side;
+  }
+
+  function triggerList(triggers, tail) {
+    var list = el('ul', 'tt-triggers');
+    triggers.forEach(function (t) {
+      var item = el('li', '', t.sentence);
+      if (t.forcing) item.appendChild(el('span', 'tt-sub', tail + shortDate(t.forcing)));
+      list.appendChild(item);
+    });
+    return list;
+  }
+
+  function chanceLine(p, text) {
+    var bar = el('span', 'tt-bar');
+    var fill = el('i');
+    fill.style.width = Math.max(2, p) + '%';
+    bar.appendChild(fill);
+    return append(el('span', 'tt-chance'), bar, el('span', '', text));
+  }
+
+  function shiftWords(from, to) {
+    var days = daysBetween(from, to);
+    return (days > 0 ? '+' : '−') + Math.abs(days) + (Math.abs(days) === 1 ? ' day' : ' days');
+  }
+
+  // The structured tooltip of a move badge: the match, from and to, what sets it off and how likely that is.
+  function fillMoveTip(tip, fx, flag) {
+    var teams = fx.home.full + ' – ' + fx.away.full;
+    if (!fx.moves.length) {
+      append(tip, el('b', 'tt-head', 'No fallback · ' + teams));
+      append(tip, el('span', 'tt-detail', 'No allowed date was found if the match has to move.'));
+      var none = fx.noFallback;
+      if (none) append(tip, triggerList(none.triggers, 'plays '), chanceLine(none.p, percent(none.p) + ' chance · ' + flagPoints(flag) + ' expected'));
+      return;
+    }
+    append(tip, el('b', 'tt-head', 'May move · ' + teams));
+    fx.moves.forEach(function (move) {
+      var pair = append(el('span', 'tt-move-pair'), tipSide('Now', fx.date, fx.time, fx.venue), el('span', 'tt-arrow', '→'), tipSide('If moved', move.to, move.time, move.venue));
+      pair.setAttribute('role', 'group');
+      var kind = DATA.moveKinds[move.kind] + ' · ' + shiftWords(fx.date, move.to);
+      append(tip, pair, el('span', 'tt-kind', kind), triggerList(move.triggers, 'plays '));
+      var text = percent(move.p) + ' chance';
+      if (fx.moves.length === 1) text += ' · ' + flagPoints(flag) + ' expected';
+      append(tip, chanceLine(move.p, text));
+    });
+    if (fx.moves.length > 1) append(tip, el('span', 'tt-detail', flagPoints(flag) + ' expected in all'));
+  }
+
   function flagBox(fx) {
     if (!fx.flags.length) return null;
     var box = el('span', 'flags');
-    fx.flags.forEach(function (flag) { box.appendChild(flagBadge(flag)); });
+    fx.flags.forEach(function (flag) { box.appendChild(flagBadge(flag, fx)); });
     return box;
   }
 
@@ -534,6 +637,64 @@
     }
     if (fx.time) main.appendChild(el('span', 'd', fx.time));
     return append(row, main, el('span', 'sr-only', fixtureSentence(fx)), flagBox(fx));
+  }
+
+  // -- ghosts
+  //
+  // A fallback date is drawn where the match would be played: a dashed, dimmed card on that day,
+  // naming the match, where it comes from and what sets the move off. It is not a fixture: it has
+  // no data-uid, so no count, total, filter or summary sees it. A click on it finds the real match.
+
+  function lowerFirst(text) { return text.charAt(0).toLowerCase() + text.slice(1); }
+
+  function ghostSentence(move) {
+    var fx = move.fx;
+    return 'Possible move: ' + fx.home.full + ' v ' + fx.away.full + ' may move here from ' + longDateUnpadded(fx.date).slice(0, -5) +
+      ', ' + percent(move.p) + ' chance, ' + move.triggers.map(function (t) { return lowerFirst(t.sentence); }).join(' or ') + '.';
+  }
+
+  function ghostCard(move, club, showCompetition) {
+    var fx = move.fx;
+    var card = el('span', 'fx-ghost');
+    card.setAttribute('data-ghost-of', fx.uid);
+    card.setAttribute('data-rules', fx.rules.join(' '));
+    var visual = el('span', 'fx-visual');
+    var view = perspective(fx, club);
+    append(visual, el('span', 'ghost-mark', '↷'), move.time ? el('span', 'd', move.time) : null, showCompetition ? competitionTag(fx) : null);
+    if (view) {
+      if (view.where) visual.appendChild(wherePill(view.where));
+      append(visual, el('span', 'vs', view.word));
+      opponentNodes(view).forEach(function (node) { visual.appendChild(node); });
+    } else {
+      append(visual, marker(fx.home), named(fx.home, 'h'), el('span', 'vs', 'v'), marker(fx.away), named(fx.away, ''));
+    }
+    var why = move.triggers.map(function (t) { return lowerFirst(t.sentence); }).join(' or ');
+    var body = append(
+      el('span', 'ghost-body'), visual,
+      el('span', 'ghost-when', 'may move here from ' + shortDate(fx.date) + ' · ' + percent(move.p)),
+      el('span', 'ghost-why', why)
+    );
+    body.setAttribute('aria-hidden', 'true');
+    var button = el('button', 'ghost-main');
+    button.type = 'button';
+    button.tabIndex = -1;
+    button.setAttribute('data-rove', '');
+    append(button, body, el('span', 'sr-only', ghostSentence(move)));
+    return append(card, button);
+  }
+
+  // Ghosts read in kickoff order, untimed last.
+  function byKickoff(a, b) {
+    var ta = a.time || '99:99';
+    var tb = b.time || '99:99';
+    return ta < tb ? -1 : ta > tb ? 1 : a.fx.uid - b.fx.uid;
+  }
+
+  // The moves of the fixtures among `ids` that the filters leave showing.
+  function movesOf(ctx, ids) {
+    var out = [];
+    ctx.visible(ids).forEach(function (uid) { out = out.concat(ctx.fx[uid].moves); });
+    return out;
   }
 
   // ------------------------------------------------------------ indicators
@@ -778,12 +939,23 @@
     return box;
   }
 
-  // The drawn fixtures of `ids`, under a heading per date.
-  function fixturesOf(ctx, ids, showCompetition, level) {
+  // The drawn fixtures of `ids`, under a heading per date. Fallback dates are drawn as ghosts on
+  // their day, which gets a heading of its own when nothing else is played then. A round shows the
+  // ghosts of its own fixtures (where its matches may go, even outside its other dates); a week
+  // passes `moves`, those whose date falls in it.
+  function fixturesOf(ctx, ids, showCompetition, level, moves) {
     var box = roveGroup(el('div', 'fixtures'));
-    itemsByDay(drawItems(ctx, ids)).forEach(function (day) {
+    var days = itemsByDay(drawItems(ctx, ids));
+    var ghosts = {};
+    (moves || movesOf(ctx, ids)).slice().sort(byKickoff).forEach(function (move) { (ghosts[move.to] = ghosts[move.to] || []).push(move); });
+    Object.keys(ghosts).forEach(function (date) {
+      if (!days.some(function (day) { return day.date === date; })) days.push({ date: date, items: [] });
+    });
+    days.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+    days.forEach(function (day) {
       box.appendChild(dayHeading(day.date, day.items, level));
       appendItems(box, day.items, function (fx, inGroup) { return fixtureCard(fx, showCompetition && !inGroup, ctx.club); });
+      (ghosts[day.date] || []).forEach(function (move) { box.appendChild(ghostCard(move, ctx.club, showCompetition)); });
     });
     return box;
   }
@@ -912,16 +1084,28 @@
     return root;
   }
 
+  // The ghosts a week shows are the moves landing on its seven days, wherever the fixture sits.
+  function weekMoves(ctx, start) {
+    var out = [];
+    for (var i = 0; i < 7; i++) out = out.concat(ctx.ghostsOn(shiftIso(start, i)));
+    return out;
+  }
+
+  function shiftIso(iso, n) {
+    return new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10) + n)).toISOString().slice(0, 10);
+  }
+
   function combinedCalendarView(ctx) {
     var root = document.createDocumentFragment();
     var any = false;
     ctx.opt.data.weeks.forEach(function (week) {
       var shown = ctx.visible(week.ids);
-      if (!shown.length) return;
+      var moves = weekMoves(ctx, week.start);
+      if (!shown.length && !moves.length) return;
       if (!any) roundTools(ctx, root);
       any = true;
       root.appendChild(roundBlock(
-        ctx, 'week|' + week.label, roundLabel(week.label, week.dates, null, totals(ctx.fx, shown)), fixturesOf(ctx, week.ids, true, 3)
+        ctx, 'week|' + week.label, roundLabel(week.label, week.dates, null, totals(ctx.fx, shown)), fixturesOf(ctx, week.ids, true, 3, moves)
       ));
     });
     return root;
@@ -1070,7 +1254,9 @@
       button.setAttribute('aria-expanded', 'false');
       // One tab stop for the whole calendar; the arrow keys walk the days (#41).
       button.tabIndex = -1;
+      var ghosts = ctx.ghostsOn(iso);
       var label = longDateUnpadded(iso) + (maybes[iso] ? ' (a team may play, if it advances)' : '') +
+        (ghosts.length ? ' (' + plural(ghosts.length, 'game', 'games') + ' may move here)' : '') +
         (comps.length ? ': ' + comps.map(function (c) {
           return DATA.competitions[c.comp].name + ' ' + c.n;
         }).join(', ') : '') +
@@ -1096,6 +1282,12 @@
         maybeMark.setAttribute('aria-hidden', 'true');
         maybeMark.title = 'A team plays here only if it advances';
         button.appendChild(maybeMark);
+      }
+      if (ghosts.length) {
+        var moveMark = el('span', 'cal-move', '↷');
+        moveMark.setAttribute('aria-hidden', 'true');
+        moveMark.title = plural(ghosts.length, 'game', 'games') + ' may move here if a later round is reached';
+        button.appendChild(moveMark);
       }
       if (sum) button.appendChild(dayFigure(sum));
       cells[iso] = button;
@@ -1224,13 +1416,20 @@
       details.setAttribute('aria-label', 'Games on ' + longDateUnpadded(iso));
       var day = days[iso];
       var ids = day ? ctx.visible(day.ids) : [];
+      var ghosts = ctx.ghostsOn(iso);
       var head = append(el('div', 'rlabel'), el('b', '', day ? day.label : longDateUnpadded(iso)));
       var body = append(el('div', 'day-detail'), head);
       if (ids.length) {
         var box = appendItems(roveGroup(el('div', 'fixtures')), drawItems(ctx, day.ids), function (fx, inGroup) { return dayRow(fx, inGroup, ctx.club); });
+        ghosts.forEach(function (move) { box.appendChild(ghostCard(move, ctx.club)); });
         append(body, summaryNode(totals(ctx.fx, ids), false), box);
       } else {
         append(body, el('div', 'day-detail-empty', 'No games on this day.'));
+        if (ghosts.length) {
+          var ghostBox = roveGroup(el('div', 'fixtures'));
+          ghosts.forEach(function (move) { ghostBox.appendChild(ghostCard(move, ctx.club)); });
+          body.appendChild(ghostBox);
+        }
       }
       if (maybes[iso]) {
         var maybeList = el('ul', 'day-maybe');
@@ -1265,9 +1464,10 @@
       }
       var day = days[iso];
       var ids = day ? ctx.visible(day.ids) : [];
+      var moving = ctx.ghostsOn(iso).length;
       live.textContent = longDateUnpadded(iso) + ': ' + (ids.length
         ? plural(ids.length, 'game', 'games') + ' shown just below. Tab moves into the list.'
-        : 'no games.');
+        : 'no games.') + (moving ? ' ' + plural(moving, 'game', 'games') + ' may move here.' : '');
     }
 
     function openDay(iso, moveFocus) {
@@ -1714,6 +1914,7 @@
   };
 
   Option.prototype.context = function () {
+    var opt = this;
     var club = this.state.club;
     var team = this.state.team;
     var rule = this.state.rule;
@@ -1734,7 +1935,11 @@
       filtering: !!club || !!team || only || kinds.length !== ALL_KINDS.length,
       matches: matches,
       show: show,
-      visible: function (ids) { return ids.filter(function (uid) { return show(fx[uid]); }); }
+      visible: function (ids) { return ids.filter(function (uid) { return show(fx[uid]); }); },
+      // The fallback moves arriving on `iso` from fixtures the filters leave showing.
+      ghostsOn: function (iso) {
+        return (opt.movesByDate()[iso] || []).filter(function (move) { return show(move.fx); }).sort(byKickoff);
+      }
     };
   };
 
@@ -2117,6 +2322,16 @@
     return this.panel.querySelector('.view-pane:not([hidden]) .pane-body');
   };
 
+  Option.prototype.movesByDate = function () {
+    if (!this.moveDates) {
+      var byDate = this.moveDates = {};
+      this.fx.forEach(function (fx) {
+        fx.moves.forEach(function (move) { (byDate[move.to] = byDate[move.to] || []).push(move); });
+      });
+    }
+    return this.moveDates;
+  };
+
   Option.prototype.dayIndex = function () {
     if (!this.days) {
       this.days = {};
@@ -2130,7 +2345,7 @@
   Option.prototype.markLens = function (root) {
     var rule = this.state.rule;
     if (!root) return;
-    root.querySelectorAll('[data-uid]').forEach(function (node) {
+    root.querySelectorAll('[data-uid], [data-ghost-of]').forEach(function (node) {
       var hit = (' ' + node.getAttribute('data-rules') + ' ').indexOf(' ' + rule + ' ') !== -1;
       node.classList.toggle('lens-hit', !!rule && hit);
       node.classList.toggle('lens-dim', !!rule && !hit);
@@ -2247,15 +2462,42 @@
     var node = this.activeBody().querySelector('[data-uid="' + uid + '"]');
     if (!node) return;
     openAround(node);
-    node.classList.remove('flash');
-    void node.offsetWidth;
-    node.classList.add('flash');
+    flashNode(node);
+    this.flashMoves(uid);
     // Focus lands on the card's own control, so its group's tab stop moves with it (#41).
     var control = node.querySelector('[data-rove]');
     if (!control) node.tabIndex = -1;
     (control || node).focus({ preventScroll: true });
     node.scrollIntoView({ block: 'center', behavior: REDUCED_MOTION || restoring ? 'auto' : 'smooth' });
+  };
+
+  function flashNode(node) {
+    node.classList.remove('flash');
+    void node.offsetWidth;
+    node.classList.add('flash');
     setTimeout(function () { node.classList.remove('flash'); }, 2400);
+  }
+
+  // Flashes what a fixture's possible moves touch where drawn: its ghosts and, in the month
+  // calendar, the days it would leave and join.
+  Option.prototype.flashMoves = function (uid) {
+    var body = this.activeBody();
+    var fx = this.fx[uid];
+    if (!body || !fx || !fx.moves.length) return;
+    body.querySelectorAll('[data-ghost-of="' + uid + '"]').forEach(flashNode);
+    fx.moves.map(function (move) { return move.to; }).concat(fx.date).forEach(function (iso) {
+      var cell = body.querySelector('.cal-day[data-date="' + iso + '"]');
+      if (cell) flashNode(cell);
+    });
+  };
+
+  // A click on a move badge: the match and everywhere it may go light up together.
+  Option.prototype.flashMatch = function (uid) {
+    var body = this.activeBody();
+    if (!body) return;
+    var node = body.querySelector('[data-uid="' + uid + '"]');
+    if (node) flashNode(node);
+    this.flashMoves(uid);
   };
 
   // Scrolls so the drawn view starts just under the sticky bar (the root's
@@ -2908,7 +3150,10 @@
     var touch = e.pointerType ? e.pointerType !== 'mouse' : e.detail > 0 && HOVER_NONE;
     if (isBadge && (!touch || wrap.classList.contains('open'))) {
       closeTooltips();
-      optionOf(wrap).setLens(wrap.getAttribute('data-rule'));
+      var opt = optionOf(wrap);
+      var moved = moveOf.get(wrap);
+      opt.setLens(wrap.getAttribute('data-rule'));
+      if (moved) opt.flashMatch(moved.uid);
       if (!touch && wrap.isConnected) showFlagTip(wrap);
       return;
     }
@@ -2933,6 +3178,20 @@
   document.addEventListener('click', function (e) {
     var card = e.target.closest ? e.target.closest('.fx, .tl-fx') : null;
     if (card && !e.target.closest('.flag, .fx-detail')) toggleDetail(card);
+  });
+  // A ghost leads back to the match it stands for.
+  document.addEventListener('click', function (e) {
+    var ghost = e.target.closest ? e.target.closest('.fx-ghost') : null;
+    if (ghost) optionOf(ghost).reveal(+ghost.getAttribute('data-ghost-of'));
+  });
+  // The contingency table's links open the match in the calendar, even when the hash already says so.
+  document.addEventListener('click', function (e) {
+    var link = e.target.closest ? e.target.closest('a.cont-link') : null;
+    if (!link) return;
+    e.preventDefault();
+    var hash = link.getAttribute('href');
+    if (location.hash === hash) applyHash();
+    else location.hash = hash;
   });
   // The page prints what is on screen: the drawn view's collapsed sections are opened for the print and shut again after (#39).
   var openedForPrint = [];

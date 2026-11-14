@@ -10,9 +10,11 @@ view refers to fixtures by `uid` only.
 
 Wire shapes, one per fixture kind (short keys: league matches dominate the size):
 
-    league    {d, t?, c, r, h, a, v?, f?, q?}  date, kickoff, competition, round number,
+    league    {d, t?, c, r, h, a, v?, f?, q?, g?, x?}  date, kickoff, competition, round number,
                                          home/away team, venue if not the home team's own
-                                         ground, f=badges, q=quiet rewards (below)
+                                         ground, f=badges, q=quiet rewards (below), g=where
+                                         the match goes if a later round is reached, x=no
+                                         fallback (below)
     cup       {k: "cup", d, c, n, t, vt, vl}
     european  {k: "eu",  d, c, n, t, vt, vl, o}
               round name, team, venue type (home/away/neutral/unknown), venue label,
@@ -45,6 +47,13 @@ carries cannot be derived that way, so `clubUnpinned` gives them per club as
 rows (`{id, by, of, found: [[label, count, rank]]}`). `order` is the rules in breakdown order, `limit` how
 many upsides or problems the scorecard lists, and `full` whether it is the
 every-rule diagnostic.
+
+Fallback moves. `moveTriggers` is the sentence of each cup or European round that can displace a
+match. A league match's `g` lists its destinations, each `{d, k, t, p, h?, v?}`: date, kind (an
+index into the page's `moveKinds`), the triggers as `[moveTriggers index, date of the commitment
+forcing the move]`, the whole percent chance one of them is reached, and the kickoff ("" when the
+fallback has none) and venue when they differ from the match's. `x` is `{t, p}` for an exposed
+match no fallback was found for. The page draws a ghost of the match on each destination day.
 
 Fairness (#23, #42). `fairness` is one `[rule, flagged, [[label, count], ...]]` per rule that
 compares teams or dual clubs, entries most events first; the page draws the rows when the section
@@ -285,6 +294,8 @@ def league_entry_wire(
     quiet = [
         _flag_wire(flag, rule_index, notes, groups)[:2] for flag in entry["flags"] if flag["quiet"]
     ]
+    if entry.get("moves"):
+        wire.update(entry["moves"])
     if shown:
         wire["f"] = shown
     if quiet:
@@ -341,6 +352,7 @@ def option_wire(
     fairness: list[dict],
     limit: int,
     full: bool,
+    move_triggers: list[str] | None = None,
 ) -> dict:
     """Everything one option's views need on top of the shared tables and
     shared entries."""
@@ -375,9 +387,15 @@ def option_wire(
         ],
         "limit": limit,
         "full": full,
+        "moveTriggers": move_triggers or [],
         "byCompetition": by_competition_wire(league_views),
         "weeks": [
-            {"label": week["label"], "dates": week["dates"], "ids": _uids(week["matches"])}
+            {
+                "label": week["label"],
+                "dates": week["dates"],
+                "start": week["start"].isoformat(),
+                "ids": _uids(week["matches"]),
+            }
             for week in combined_calendar
         ],
         "list": _uids(combined_list),
