@@ -41,6 +41,7 @@ from ..contingency import (
 from .base import HARD_PENALTY, Constraint, EvalContext, ScheduleIndex
 
 _Fields = tuple[str, str, str, date]
+_ZERO = (0.0, 0)
 _MISSING = object()
 _EMPTY: dict = {}
 
@@ -512,8 +513,10 @@ class DeltaScorer:
         self._has_order_only = any(self._order_only)
         self._scope_set = set(self._scopes)
         # Hard rules first so a move that breaks one can skip the soft ones.
-        self._order = self._hard + [i for i, c in enumerate(self.constraints) if c.kind != "hard"]
-        self._first_soft = len(self._hard)
+        self._hard_steps = [self._step(ci) for ci in self._hard]
+        self._soft_steps = [
+            self._step(ci) for ci, c in enumerate(self.constraints) if c.kind != "hard"
+        ]
 
         for ci, constraint in enumerate(self.constraints):
             scope = self._scopes[ci]
@@ -532,6 +535,7 @@ class DeltaScorer:
 
         self.cost = self._cost_of(self._total, self._count)
         self._pending: tuple | None = None
+        self._pending_cost = self.cost
 
     def _cost_of(self, totals: list[float], counts: list[int]) -> float:
         cost = 0.0
@@ -622,6 +626,20 @@ class DeltaScorer:
 
     # -- per-move protocol ---------------------------------------------------
 
+    def _step(self, ci: int) -> tuple:
+        """What `propose` needs per rule, looked up once: (index, rule, scope,
+        sign of its cost, cached unit values, match-field memo, order-only)."""
+        constraint = self.constraints[ci]
+        return (
+            ci,
+            constraint,
+            self._scopes[ci],
+            HARD_PENALTY if constraint.kind == "hard" else -1.0,
+            self._cache[ci],
+            self._pure[ci],
+            self._order_only[ci],
+        )
+
     def propose(
         self, changed: Sequence[int], prune: bool = False
     ) -> tuple[float, tuple[str, ...]]:
@@ -647,7 +665,7 @@ class DeltaScorer:
             venue_dates.add((before[2], before[3]))
             venue_dates.add((after[2], after[3]))
         used = self._scope_set
-        units: dict[str, object] = {"team": teams, "venue_date": venue_dates, "match": changed}
+        units: dict[str, object] = {"team": teams, "venue_date": venue_dates}
         if "club" in used:
             units["club"] = {self._club_of[t] for t in teams if t in self._club_of}
         if "competition" in used:
@@ -664,32 +682,40 @@ class DeltaScorer:
             live.contingency = (self._planner, analysis)
 
         pending_cache: list[tuple[int, tuple | None, dict | None]] = []
-        views: dict[tuple[str, bool], tuple[_View, EvalContext]] = {}
         totals = list(self._total)
         counts = list(self._count)
+        views: dict[tuple[str, bool], tuple[_View, EvalContext]] = {}
+        run = (changed, units, views, totals, counts, pending_cache, analysis_moved)
         self._pending = (pending_cache, totals, counts)
-        hard_before = sum(self._count[ci] for ci in self._hard)
-        for position, ci in enumerate(self._order):
-            if prune and position == self._first_soft:
-                if sum(counts[hi] for hi in self._hard) > hard_before:
-                    self._pending = None
-                    return float("inf"), self._broken(counts)
-            constraint = self.constraints[ci]
-            scope = self._scopes[ci]
+        cost = self.cost + self._score(self._hard_steps, run)
+        if prune and cost >= self.cost + HARD_PENALTY / 2:
+            self._pending = None
+            return float("inf"), self._broken(counts)
+        cost += self._score(self._soft_steps, run)
+        self._pending_cost = cost
+        return cost, self._broken(counts)
+
+    def _score(self, steps: list[tuple], run: tuple) -> float:
+        """Re-score `steps` for the move in `run`, updating its totals and
+        counts; returns the change in search cost."""
+        changed, units, views, totals, counts, pending_cache, analysis_moved = run
+        matches = self.matches
+        live = self.live
+        ctx = self.ctx
+        delta = 0.0
+        for ci, constraint, scope, sign, cache, pure, order_only in steps:
+            total_before, count_before = totals[ci], counts[ci]
             if scope == "static":
                 continue
             if scope == "contingency":
-                if analysis_moved:
-                    result = constraint.evaluate(live, self.ctx)
-                    totals[ci], counts[ci] = result.total, result.count
-                continue
-            if scope is None:
-                result = constraint.evaluate(live, self.ctx)
+                if not analysis_moved:
+                    continue
+                result = constraint.evaluate(live, ctx)
                 totals[ci], counts[ci] = result.total, result.count
-                continue
-            cache = self._cache[ci]
-            if scope == "match":
-                pure = self._pure[ci]
+            elif scope is None:
+                result = constraint.evaluate(live, ctx)
+                totals[ci], counts[ci] = result.total, result.count
+            elif scope == "match":
                 values = {}
                 for i in changed:
                     m = matches[i]
@@ -700,32 +726,34 @@ class DeltaScorer:
                     value = pure.get(fields)
                     if value is None:
                         value = pure[fields] = self._unit_value(constraint, scope, i)
-                    before = cache.get(i, (0.0, 0))
+                    before = cache.get(i, _ZERO)
                     totals[ci] += value[0] - before[0]
                     counts[ci] += value[1] - before[1]
                     values[i] = value
                 pending_cache.append((ci, None, values))
-                continue
-            order_only = self._order_only[ci]
-            touched = units["team_order" if order_only else scope]
-            if not touched:
-                continue
-            # The touched units are scored as one view, shared by the rules of
-            # a scope; their individual values are only needed if the move is
-            # kept, so `accept` recomputes them.
-            shared = views.get((scope, order_only))
-            if shared is None:
-                shared = views[(scope, order_only)] = self._view(scope, touched)
-            result = constraint.evaluate(shared[0], shared[1])  # type: ignore[arg-type]
-            for unit in touched:
-                before = cache.get(unit, (0.0, 0))
-                totals[ci] -= before[0]
-                counts[ci] -= before[1]
-            totals[ci] += result.total
-            counts[ci] += result.count
-            pending_cache.append((ci, tuple(touched), None))
-
-        return self._cost_of(totals, counts), self._broken(counts)
+            else:
+                touched = units["team_order" if order_only else scope]
+                if not touched:
+                    continue
+                # The touched units are scored as one view, shared by the rules
+                # of a scope; their individual values are only needed if the
+                # move is kept, so `accept` recomputes them.
+                shared = views.get((scope, order_only))
+                if shared is None:
+                    shared = views[(scope, order_only)] = self._view(scope, touched)
+                result = constraint.evaluate(shared[0], shared[1])  # type: ignore[arg-type]
+                for unit in touched:
+                    before = cache.get(unit, _ZERO)
+                    totals[ci] -= before[0]
+                    counts[ci] -= before[1]
+                totals[ci] += result.total
+                counts[ci] += result.count
+                pending_cache.append((ci, tuple(touched), None))
+            if sign > 0:
+                delta += (counts[ci] - count_before) * sign
+            else:
+                delta += (totals[ci] - total_before) * sign
+        return delta
 
     def _teams_reordered(self, changed: Sequence[int], old_fields: list[_Fields]) -> set[str]:
         """Teams whose home/away sequence may differ from before the move: a
@@ -762,7 +790,7 @@ class DeltaScorer:
             for unit in units:
                 self._store(ci, scope, unit, self._unit_value(self.constraints[ci], scope, unit))
         self._total, self._count = totals, counts
-        self.cost = self._cost_of(totals, counts)
+        self.cost = self._pending_cost
         if self.tracker is not None:
             self.tracker.accept()
         self._pending = None

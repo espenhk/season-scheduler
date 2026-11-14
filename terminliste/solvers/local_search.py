@@ -756,6 +756,8 @@ class _MoveSet:
         return True
 
     def _neighbours_ok_scan(self, index: int, day: date) -> bool:
+        """`_neighbours_ok` by scanning every match: for a move set without a
+        live index, and what the indexed check is tested against."""
         match = self._matches[index]
         home, away, venue = match.home_team, match.away_team, match.venue
         club = self._club_of[home]
