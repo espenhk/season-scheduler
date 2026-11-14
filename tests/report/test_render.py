@@ -2468,3 +2468,39 @@ def test_drop_indentation_keeps_script_and_style_bodies_whatever_their_case():
         "<SCRIPT>\n    var s = '  x';\n</SCRIPT >\n"
         "<style media=print>\n  p { x: 1 }\n</Style>\n<b>z</b>"
     )
+
+
+def test_the_report_lists_each_contingency_move_by_trigger_and_the_robustness_stats():
+    from report_support import _world as small_world
+
+    from terminliste.contingency import ContingencyPlan, Fallback
+    from terminliste.scenarios import RobustnessReport, ScenarioResult
+
+    world, season = small_world()
+    match = f.match("elite", "a_m", "opp_m", date(2026, 8, 23), "va")
+    node = "a_m/cup/r2"
+    plan = ContingencyPlan(
+        fallbacks={match.key: Fallback(date(2026, 9, 2), "va", None, (node,), "reserve_date")}
+    )
+    commitments = f.commitment_set(
+        f.commitment("a_m", date(2026, 8, 20), hard=False, probability=0.5, source="cup",
+                     label="NM Cup: Round 2", node_id=node)
+    )
+    candidate = _candidate(world, season, [match], [], label="Option 1")
+    candidate.contingency_plan = plan
+    candidate.robustness = RobustnessReport(
+        seed=1, requested=10, exhaustive=False, outcomes=10, feasible_share=0.8, expected_moves=1.5,
+        max_moves=3, mean_points=70.0, min_points=20.0, base_points=80.0,
+        top_failing=[("min_rest_days", 0.2, 1.0)],
+        worst_case=ScenarioResult(3, 1, 20.0, (("min_rest_days", 1),)),
+    )
+
+    html = _render(world, season, [candidate], commitments=commitments)
+
+    assert f"If {world.team_label('a_m')} reach NM Cup: Round 2" in html
+    assert "p=0.50" in html and "Sun 23 Aug" in html and "Wed 2 Sep" in html and "reserve date" in html
+    assert "80% of outcomes feasible" in html
+    assert "min_rest_days" in html and "at most 3" in html
+    assert _report_data(html)["maybe"] == {
+        "2026-08-20": [f"{world.team_label('a_m')}: NM Cup: Round 2, if they advance (p=0.50)"]
+    }

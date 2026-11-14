@@ -891,6 +891,10 @@
   .section-list { margin-top: 26px; border: 1px solid var(--line); border-radius: 8px; padding: 0 16px; }
   .section-list:not(:has(> details:not([hidden]))) { display: none; }
   .section-list > details { margin: 0; }
+  .contingency-table { margin: 4px 0 8px; }
+  .day-maybe { margin: 8px 0 0; padding: 0; list-style: none; color: var(--muted); font-size: 13px; }
+  .day-maybe::before { content: "If they advance"; display: block; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .cal-maybe { color: var(--muted); font-size: 12px; line-height: 1; }
   .section-list > details + details { border-top: 1px solid var(--line); }
   .section-list > details > summary { padding: 12px 0; }
   .section-list > details[open] { padding-bottom: 14px; }
@@ -1453,6 +1457,52 @@
     </table>
     </div>
   </details>
+
+  {% if option.robustness %}
+  {% set rb = option.robustness %}
+  <details class="season-part robustness">
+    <summary>Robustness — does the plan hold if teams advance? ({{ rb.feasible_pct }}% of outcomes feasible)</summary>
+    <p class="desc">{{ rb.report.outcomes }} {{ rb.mode }} cup and European outcomes, each re-scored with its fallback moves applied: {{ rb.feasible_pct }}% stay feasible. Moves per outcome: expected {{ '%.1f'|format(rb.report.expected_moves) }}, at most {{ rb.report.max_moves }}. Points: mean {{ '%.0f'|format(rb.report.mean_points) }}, lowest {{ '%.0f'|format(rb.report.min_points) }}, base plan {{ '%.0f'|format(rb.report.base_points) }}.</p>
+    {% if rb.worst %}
+    <p class="desc">Worst case, every team goes as far as it can ({{ rb.worst.moves }} move{{ '' if rb.worst.moves == 1 else 's' }}): {% if rb.worst.feasible %}feasible{% else %}{{ rb.worst.violations }} hard violation{{ '' if rb.worst.violations == 1 else 's' }} ({{ rb.worst.rules|join(', ') }}){% endif %}, {{ rb.worst.points }}/100.</p>
+    {% endif %}
+    {% if rb.failing %}
+    <h4 class="group-head">Rules that fail most often</h4>
+    <ul class="examples">
+      {% for rule in rb.failing %}<li><b>{{ rule.id }}</b> in {{ rule.pct }}% of outcomes, {{ rule.mean }} violations on average{% if rule.description %} — {{ rule.description }}{% endif %}</li>{% endfor %}
+    </ul>
+    {% endif %}
+  </details>
+  {% endif %}
+
+  {% if option.contingency and (option.contingency.groups or option.contingency.uncovered) %}
+  {% set cont = option.contingency %}
+  <details class="season-part contingency">
+    <summary>Contingency moves — {{ cont.moves }} fallback{{ '' if cont.moves == 1 else 's' }} if a later cup or European round is reached</summary>
+    {% for group in cont.groups %}
+    <h4 class="group-head">{{ group.trigger }} <span class="desc">({{ group.probability }})</span></h4>
+    <table class="breakdown contingency-table">
+      <thead>
+        <tr><th>Fixture</th><th>From</th><th>To</th><th>Kind</th></tr>
+      </thead>
+      <tbody>
+      {% for row in group.rows %}
+        <tr>
+          <td>{{ row.fixture }}</td>
+          <td data-label="From">{{ row.from }}</td>
+          <td data-label="To">{{ row.to }}</td>
+          <td data-label="Kind">{{ row.kind }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endfor %}
+    {% if cont.uncovered %}
+    <h4 class="group-head">No fallback found ({{ cont.uncovered|length }})</h4>
+    <ul class="examples">{% for item in cont.uncovered %}<li>{{ item }}</li>{% endfor %}</ul>
+    {% endif %}
+  </details>
+  {% endif %}
 
   {% if option.fairness %}
   <details class="fairness">

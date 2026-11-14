@@ -2449,3 +2449,20 @@ def test_the_fold_state_carries_to_the_other_option(phone):
     phone.locator("#panel-2 .expand-all").tap()
     phone.locator(".tab").nth(0).tap()
     assert phone.locator("#panel-1 .round.is-open").count() == 3
+
+
+def test_a_day_a_team_plays_only_if_it_advances_is_marked_and_listed(browser, maybe_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(maybe_url)
+    body = _view(page, "month-calendar")
+    day = body.locator('.cal-day[data-date="2026-06-13"]')
+
+    assert day.locator(".cal-maybe").count() == 1
+    assert body.locator(f'.cal-day[data-date="{DAY}"] .cal-maybe').count() == 0
+
+    day.click()
+
+    lines = _texts(body.locator(".day-detail .day-maybe li"))
+    assert len(lines) == 1
+    assert "NM Cup: Round 2, if they advance (p=0.50)" in lines[0]
+    page.close()

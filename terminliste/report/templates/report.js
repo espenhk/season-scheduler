@@ -1040,6 +1040,7 @@
     var state = ctx.opt.state;
     var days = {};
     data.days.forEach(function (day) { days[day.date] = day; });
+    var maybes = DATA.maybe || {};
     if (!data.months.length) return el('div', 'desc', 'Nothing scheduled yet.');
     var root = el('div');
     var cells = {};
@@ -1069,7 +1070,7 @@
       button.setAttribute('aria-expanded', 'false');
       // One tab stop for the whole calendar; the arrow keys walk the days (#41).
       button.tabIndex = -1;
-      var label = longDateUnpadded(iso) +
+      var label = longDateUnpadded(iso) + (maybes[iso] ? ' (a team may play, if it advances)' : '') +
         (comps.length ? ': ' + comps.map(function (c) {
           return DATA.competitions[c.comp].name + ' ' + c.n;
         }).join(', ') : '') +
@@ -1090,6 +1091,12 @@
         box.appendChild(item);
       });
       button.appendChild(box);
+      if (maybes[iso]) {
+        var maybeMark = el('span', 'cal-maybe', '?');
+        maybeMark.setAttribute('aria-hidden', 'true');
+        maybeMark.title = 'A team plays here only if it advances';
+        button.appendChild(maybeMark);
+      }
       if (sum) button.appendChild(dayFigure(sum));
       cells[iso] = button;
       return button;
@@ -1224,6 +1231,11 @@
         append(body, summaryNode(totals(ctx.fx, ids), false), box);
       } else {
         append(body, el('div', 'day-detail-empty', 'No games on this day.'));
+      }
+      if (maybes[iso]) {
+        var maybeList = el('ul', 'day-maybe');
+        maybes[iso].forEach(function (line) { maybeList.appendChild(el('li', '', line)); });
+        body.appendChild(maybeList);
       }
       append(details, body, dayStep(iso));
       anchor.closest('.month-grid-row, .other-row').insertAdjacentElement('afterend', details);

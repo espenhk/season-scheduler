@@ -413,6 +413,25 @@ that more than three teams share with a contingent commitment, since those
 matches cannot all be covered. CP-SAT plans the fallbacks after solving, so
 its schedule can still fail coverage.
 
+#### Scenario evaluation (#10)
+
+`terminliste/scenarios.py` checks the base plan *together with* its moves. An
+outcome is the set of outcome-tree nodes some elimination results make real
+(`OutcomeTree.paths()`); trees are treated as independent, so a cup round two
+top-flight sides could meet in is slightly optimistic. For each outcome the
+evaluator moves every match whose fallback a played node triggers, makes the
+played commitments hard and re-scores with the full rule set (minus
+`reserve_date_unused`, since fallbacks may use reserve dates). Few outcomes are
+enumerated and weighted by probability; more than `N` are sampled with a seeded
+RNG. A deterministic worst case plays, in every tree, the run displacing the
+most matches. Run it with `python cli.py generate --scenarios N` or
+`python cli.py explain schedules/2026.json --scenarios N`; the report then
+shows the share of feasible outcomes, expected and maximum moves and the rules
+failing most often, and the JSON gains a `robustness` object per option. The
+report always lists the moves grouped by trigger and marks, on the calendar,
+the days a team plays only if it advances. Robustness is a report, not part of
+the search objective. `scripts/publish_web.py` passes `--scenarios 200`.
+
 ### Main tournaments (Champions/Europa/Conference League)
 
 Issue #79 lifts the "qualifying only" boundary above for the three UEFA

@@ -82,6 +82,15 @@ def other_months_url(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
+def maybe_url(tmp_path_factory):
+    # Club A's men play a cup round on 13 June only if they win the one on the 6th.
+    maybe = f.commitment(
+        "a_m", date(2026, 6, 13), hard=False, probability=0.5, source="cup", label="NM Cup: Round 2"
+    )
+    return _report_url(tmp_path_factory, _base_matches(), commitments=f.commitment_set(maybe))
+
+
+@pytest.fixture(scope="module")
 def rules_url(tmp_path_factory):
     # Club A's men play twice on 6 June (a hard break: one match per team per day).
     # Round 4's two games each come four days after the team's previous one, a
@@ -103,6 +112,7 @@ def _report_url(
     cup_on=date(2026, 6, 6),
     europe_on=date(2026, 6, 6),
     cup_dates=None,
+    commitments=None,
 ):
     world, season = _world()
     ctx = EvalContext(world=world, season=season, travel=_FixedTravel(), detail=True)
@@ -137,6 +147,7 @@ def _report_url(
         cup_schedules=[cup],
         european_competitions=[europe] if with_europe else None,
         resolved_legs={("cl", "q3"): (europe_on, europe_on)} if with_europe else None,
+        commitments=commitments,
     )
     return path.as_uri()
 

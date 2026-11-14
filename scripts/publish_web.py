@@ -25,6 +25,7 @@ def main() -> int:
     parser.add_argument("--solver", choices=["local", "cpsat"], default="local")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--time-budget", type=float, default=60.0, help="seconds")
+    parser.add_argument("--scenarios", type=int, default=200, help="cup/UEFA outcomes for the robustness section")
     args = parser.parse_args()
 
     SITE_DIR.mkdir(parents=True, exist_ok=True)
@@ -41,6 +42,8 @@ def main() -> int:
             str(args.seed),
             "--time-budget",
             str(args.time_budget),
+            "--scenarios",
+            str(args.scenarios),
             "--out",
             str(SITE_DIR),
         ],
