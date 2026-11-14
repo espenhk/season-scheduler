@@ -34,6 +34,7 @@ from __future__ import annotations
 import math
 import random
 import time
+from bisect import bisect_left
 from dataclasses import dataclass, replace
 from datetime import date
 
@@ -49,6 +50,7 @@ from ..scoring.base import (
     ScheduleIndex,
     evaluate,
 )
+from ..scoring.incremental import DeltaScorer, LiveIndex
 from ..slot_planner import SlotPlan
 from .base import (
     Candidate,
@@ -61,6 +63,7 @@ from .base import (
     resolve_slot_plans,
     select_diverse,
 )
+from .domains import DayDomains
 from .greedy import build_initial_schedule
 
 
@@ -147,6 +150,13 @@ class LocalSearchScheduler:
         explore_budget_s = request.time_budget_s * (1 - self.polish_fraction)
         polish_budget_s = request.time_budget_s * self.polish_fraction
         budget_per_restart = explore_budget_s / max(1, self.restarts)
+        iterations_per_restart = polish_iterations_total = None
+        if request.iterations is not None:
+            polish_iterations_total = round(request.iterations * self.polish_fraction)
+            explore_iterations = request.iterations - polish_iterations_total
+            iterations_per_restart = max(1, explore_iterations // max(1, self.restarts))
+        domains = DayDomains(by_competition, request.commitments)
+        reported_empty_domains = False
 
         candidates: list[Candidate] = []
         # Parallel to `candidates`: each restart's final annealed state and
@@ -192,6 +202,16 @@ class LocalSearchScheduler:
                 for m in initial
             ]
 
+            if not reported_empty_domains:
+                reported_empty_domains = True
+                stuck = domains.empty_fixtures(working)
+                if stuck:
+                    notes.append(
+                        f"{len(stuck)} fixture(s) have no day in their round's slot that clears "
+                        f"the blackouts and hard commitments, e.g. {stuck[0].key} — a data or "
+                        "planning problem the search cannot fix"
+                    )
+
             best, iterations, restart_stats = _anneal(
                 working,
                 pinned,
@@ -203,6 +223,7 @@ class LocalSearchScheduler:
                 end_temperature=self.end_temperature,
                 restart_index=restart,
                 total_restarts=self.restarts,
+                iterations=iterations_per_restart,
             )
             total_iterations += iterations
             overall_stats += restart_stats
@@ -239,6 +260,7 @@ class LocalSearchScheduler:
                 start_temperature=self.end_temperature,
                 end_temperature=self.polish_end_temperature,
                 notes=notes,
+                iterations=polish_iterations_total,
             )
             total_iterations += polish_iterations
             overall_stats += polish_stats
@@ -309,6 +331,7 @@ def _polish_candidates(
     start_temperature: float,
     end_temperature: float,
     notes: list[str],
+    iterations: int | None = None,
 ) -> tuple[int, SearchStats]:
     """Anneal each shortlisted candidate further from its own final state, at a
     low temperature so moves stay local (#98).
@@ -318,6 +341,7 @@ def _polish_candidates(
     found it.
     """
     per_candidate_budget = budget_s / len(chosen)
+    per_candidate_iterations = None if iterations is None else max(1, iterations // len(chosen))
     total_iterations = 0
     stats = SearchStats()
     improved = 0
@@ -338,6 +362,7 @@ def _polish_candidates(
             end_temperature=end_temperature,
             restart_index=restarts + position,
             total_restarts=restarts + len(chosen),
+            iterations=per_candidate_iterations,
         )
         total_iterations += iterations
         stats += restart_stats
@@ -393,6 +418,19 @@ def _cost(matches: list[WorkingMatch], constraints: list[Constraint], ctx: EvalC
     return _CostResult(cost, tuple(hard_ids))
 
 
+# Moves between full resyncs of the scorer. A rule with a wrong `delta_scope`
+# would drift silently; the property test is what catches that, this bounds how
+# long any residual float drift can live (#11).
+_RESYNC_EVERY = 4096
+# Moves between re-targeting a time-budgeted run's iteration count from its
+# measured pace.
+_PACE_EVERY = 512
+_FIRST_PACE = 128
+_PROVISIONAL_ITERATIONS = 2_000
+_REWEIGHT_EVERY = 500
+_MAX_IDLE_DRAWS = 200_000
+
+
 def _anneal(
     matches: list[WorkingMatch],
     pinned: set[str],
@@ -404,39 +442,57 @@ def _anneal(
     end_temperature: float,
     restart_index: int = 0,
     total_restarts: int = 1,
+    iterations: int | None = None,
 ) -> tuple[list[WorkingMatch], int, SearchStats]:
-    ctx = request.ctx
-    constraints = request.constraints
+    """Anneal `matches` in place and return the best state seen.
+
+    With `iterations`, runs exactly that many moves, so the seed fixes the
+    result. Without, the move count follows the measured pace so the run fills
+    `budget_s`. Cooling follows move progress either way.
+    """
     if any(m.slot is None for m in matches):
         plans = request.slot_plans or resolve_slot_plans(
             request, build_calendar(request.world, request.season)
         )
         _assign_missing_slots(matches, plans)
 
-    # Cooling follows iteration progress rather than the clock, so the draws
-    # taken from the seeded RNG depend only on the seed and the calibrated
-    # rate, not on scheduling jitter. The target count is still budget-derived,
-    # so a slower machine runs fewer iterations rather than taking longer.
-    total_iterations = max(1, round(budget_s * _iterations_per_second(matches, request, calendars)))
-
+    scorer = DeltaScorer(matches, request.constraints, request.ctx)
+    moves = _MoveSet(matches, pinned, request, calendars, live=scorer.live)
     rng = random.Random(seed)
-    moves = _MoveSet(matches, pinned, request, calendars)
 
-    current_cost = _cost(matches, constraints, ctx).cost
+    current_cost = scorer.cost
     best_cost = current_cost
     best_snapshot = _capture_all(matches)
+    # The state being searched is the best so far and `best_snapshot` is stale:
+    # the copy is deferred until a move leaves it, since improving runs would
+    # otherwise copy the whole schedule on every step.
+    best_is_current = False
 
+    paced = iterations is None
+    total_iterations = _PROVISIONAL_ITERATIONS if paced else max(1, iterations)
+    next_pace = _FIRST_PACE
     decay = math.log(end_temperature / start_temperature)
     stats = SearchStats()
     # Throttled by iteration count: a clock poll every iteration would be the
     # one genuinely costly thing in this loop. ~40 updates per restart is
     # plenty for a human watching a terminal.
     report_every = max(1, total_iterations // 40)
+    started = time.perf_counter()
 
-    iterations = 0
+    tried = [0] * _OPERATORS
+    improved = [0] * _OPERATORS
+    done = 0
     idle_draws = 0
-    while iterations < total_iterations:
-        anneal_progress = iterations / max(1, total_iterations - 1)
+    while done < total_iterations:
+        if paced and done >= next_pace:
+            next_pace = done + _PACE_EVERY
+            elapsed = time.perf_counter() - started
+            if elapsed >= budget_s:
+                break
+            total_iterations = done + max(1, round((budget_s - elapsed) * done / elapsed))
+            report_every = max(1, total_iterations // 40)
+
+        anneal_progress = done / max(1, total_iterations - 1)
         temperature = start_temperature * math.exp(decay * anneal_progress)
 
         undo = moves.apply(rng)
@@ -446,85 +502,62 @@ def _anneal(
             if idle_draws > _MAX_IDLE_DRAWS:
                 break
             continue
-        iterations += 1
+        done += 1
+        operator = moves.last_operator
+        tried[operator] += 1
 
-        evaluated = _cost(matches, constraints, ctx)
-        new_cost = evaluated.cost
+        new_cost, hard_ids = scorer.propose([entry[0] for entry in undo], prune=True)
         stats.investigated += 1
-        if evaluated.hard_ids:
+        if hard_ids:
             stats.hard_violation_scenarios += 1
-            stats.hard_violation_counts.update(evaluated.hard_ids)
+            stats.hard_violation_counts.update(hard_ids)
         else:
             stats.feasible += 1
 
         delta = new_cost - current_cost
 
         if delta <= 0 or rng.random() < math.exp(-delta / max(temperature, 1e-9)):
+            if best_is_current and new_cost >= best_cost:
+                # Leaving the best state: its snapshot is the matches as they
+                # were before this move.
+                best_snapshot = _capture_all(matches)
+                for entry in undo:
+                    best_snapshot[entry[0]] = entry
+                best_is_current = False
+            scorer.accept()
             current_cost = new_cost
+            if delta < 0:
+                improved[operator] += 1
             if new_cost < best_cost:
                 best_cost = new_cost
-                best_snapshot = _capture_all(matches)
+                best_is_current = True
         else:
             _restore(matches, undo)
+            scorer.reject()
 
-        if request.progress is not None and iterations % report_every == 0:
+        if done % _REWEIGHT_EVERY == 0:
+            moves.reweight(improved)
+            improved = [0] * _OPERATORS
+        if done % _RESYNC_EVERY == 0:
+            scorer.resync()
+            correction = scorer.cost - current_cost
+            current_cost += correction
+            best_cost += correction
+
+        if request.progress is not None and done % report_every == 0:
             request.progress(
                 ProgressUpdate(
                     restart=restart_index,
                     total_restarts=total_restarts,
-                    iterations=iterations,
+                    iterations=done,
                     total_iterations=total_iterations,
                     stats=stats.copy(),
                 )
             )
 
-    _restore(matches, best_snapshot)
-    return matches, iterations, stats
-
-
-# Iterations/second per problem size, measured once per (match count,
-# constraint count). Measuring per call would make the search irreproducible:
-# two runs with the same seed could time differently and so take a different
-# number of iterations.
-_RATE_CACHE: dict[tuple[int, int], float] = {}
-
-_CALIBRATION_PROBES = 200
-_MAX_IDLE_DRAWS = 200_000
-
-
-def _iterations_per_second(
-    matches: list[WorkingMatch],
-    request: SolveRequest,
-    calendars: dict[str, SeasonCalendar],
-) -> float:
-    key = (len(matches), len(request.constraints))
-    cached = _RATE_CACHE.get(key)
-    if cached is not None:
-        return cached
-
-    probe_moves = _MoveSet(matches, set(), request, calendars)
-    probe_rng = random.Random()
-    snapshot = _capture_all(matches)
-
-    started = time.perf_counter()
-    completed = 0
-    idle_draws = 0
-    while completed < _CALIBRATION_PROBES:
-        undo = probe_moves.apply(probe_rng)
-        if undo is None:
-            idle_draws += 1
-            if idle_draws > _MAX_IDLE_DRAWS:
-                break
-            continue
-        _cost(matches, request.constraints, request.ctx)
-        completed += 1
-    elapsed = time.perf_counter() - started
-
-    _restore(matches, snapshot)
-
-    rate = completed / elapsed if completed and elapsed > 0 else float(max(1, completed))
-    _RATE_CACHE[key] = rate
-    return rate
+    if not best_is_current:
+        _restore(matches, best_snapshot)
+    return matches, done, stats
 
 
 def _capture_all(matches: list[WorkingMatch]) -> list[_Snapshot]:
@@ -545,12 +578,30 @@ def _restore(matches: list[WorkingMatch], snapshot: list[_Snapshot]) -> None:
         match.slot = slot
 
 
+_OPERATORS = 4
+# Shift, round swap, orientation flip, team swap: the share of draws each gets
+# before the adaptive reweighting starts.
+_BASE_WEIGHTS = (0.55, 0.20, 0.15, 0.10)
+_MIN_WEIGHT = 0.03
+# Pseudo-improvements spread over the base mix, so a window with few real ones
+# leaves the weights near it.
+_WEIGHT_PRIOR = 2.0
+
+
+def _date_of(match: WorkingMatch) -> date:
+    return match.date
+
+
 class _MoveSet:
     """The four move operators, plus the indexes they need to run cheaply.
 
     Every operator proposes only dates inside the match's round slot and
     drops a proposal that would put a team on a blackout, cup or European
-    date, so the full scorer only sees moves that can be viable (#7).
+    date (`DayDomains`), so the scorer only sees moves that can be viable (#7).
+    With the scorer's `live` index, the shift operator also checks rest and
+    double-booking against it instead of scanning the whole schedule (#11);
+    `reweight` shifts the operator mix towards whichever has been improving
+    the schedule.
     """
 
     def __init__(
@@ -559,14 +610,20 @@ class _MoveSet:
         pinned: set[str],
         request: SolveRequest,
         calendars: dict[str, SeasonCalendar],
+        live: LiveIndex | None = None,
     ) -> None:
+        self._live = live
+        self._domains = DayDomains(calendars, request.commitments)
+        self._weights = list(_BASE_WEIGHTS)
+        self._cuts = self._cumulative(self._weights)
+        self.last_operator = 0
         self._matches = matches
         self._pinned = pinned
         self._world = request.world
         self._calendars = calendars
         self._competitions = {c.id: c for c in request.competitions}
-        self._commitments = request.commitments
         self._club_of = {team_id: team.club_id for team_id, team in request.world.teams.items()}
+        self._max_gap = max((c.min_rest_days + 1 for c in request.competitions), default=1)
 
         # Pinned matches are tracked by list position, not by key: a key
         # contains the home team, and the orientation moves rewrite that.
@@ -602,24 +659,45 @@ class _MoveSet:
                 self._mirror_of[i] = partner
                 self._mirror_of[partner] = i
 
+    @staticmethod
+    def _cumulative(weights: list[float]) -> list[float]:
+        cuts, running = [], 0.0
+        for weight in weights[:-1]:
+            running += weight
+            cuts.append(running)
+        return cuts
+
     def apply(self, rng: random.Random) -> list[_Snapshot] | None:
         roll = rng.random()
-        if roll < 0.55:
+        operator = next((i for i, cut in enumerate(self._cuts) if roll < cut), _OPERATORS - 1)
+        self.last_operator = operator
+        if operator == 0:
             return self._shift_day(rng)
-        if roll < 0.75:
+        if operator == 1:
             return self._swap_rounds(rng)
-        if roll < 0.90:
+        if operator == 2:
             return self._flip_orientation(rng)
         return self._swap_teams(rng)
+
+    def reweight(self, improved: list[int]) -> None:
+        """Move the operator mix towards the operators that produced the recent
+        improvements, keeping every one above a floor so none starves."""
+        total = sum(improved)
+        shares = [
+            (improved[i] + _WEIGHT_PRIOR * _BASE_WEIGHTS[i]) / (total + _WEIGHT_PRIOR)
+            for i in range(_OPERATORS)
+        ]
+        blended = [max(0.5 * w + 0.5 * share, _MIN_WEIGHT) for w, share in zip(self._weights, shares, strict=True)]
+        norm = sum(blended)
+        self._weights = [w / norm for w in blended]
+        self._cuts = self._cumulative(self._weights)
 
     # -- date admissibility ---------------------------------------------------
 
     def _date_ok(self, home: str, away: str, venue: str, competition_id: str, day: date) -> bool:
         """Whether `day` clears the blackouts and the hard commitments of both
         teams."""
-        if not self._calendars[competition_id].is_allowed(day, venue):
-            return False
-        return not (self._commitments.blocked(home, day) or self._commitments.blocked(away, day))
+        return self._domains.allows(home, away, venue, competition_id, day)
 
     def _quota_allows(self, index: int, day: date) -> bool:
         """Whether `day`'s weekday still has room in the match's round."""
@@ -647,6 +725,37 @@ class _MoveSet:
     def _neighbours_ok(self, index: int, day: date) -> bool:
         """Whether `day` leaves both teams their rest and double-books neither
         the venue nor the club's home day, given every other match as placed."""
+        live = self._live
+        if live is None:
+            return self._neighbours_ok_scan(index, day)
+        match = self._matches[index]
+        venue = match.venue
+        club = self._club_of[match.home_team]
+        for other in live.by_date.get(day, ()):
+            if other is not match and (
+                other.venue == venue or self._club_of[other.home_team] == club
+            ):
+                return False
+        own_gap = self._gap_of(match)
+        max_gap = self._max_gap
+        for team in (match.home_team, match.away_team):
+            dated = live.by_team.get(team, ())
+            at = bisect_left(dated, day, key=_date_of)
+            for other in dated[at:]:
+                delta = (other.date - day).days
+                if delta >= max_gap:
+                    break
+                if other is not match and delta < max(own_gap, self._gap_of(other)):
+                    return False
+            for other in reversed(dated[:at]):
+                delta = (day - other.date).days
+                if delta >= max_gap:
+                    break
+                if other is not match and delta < max(own_gap, self._gap_of(other)):
+                    return False
+        return True
+
+    def _neighbours_ok_scan(self, index: int, day: date) -> bool:
         match = self._matches[index]
         home, away, venue = match.home_team, match.away_team, match.venue
         club = self._club_of[home]
@@ -682,12 +791,9 @@ class _MoveSet:
 
         options = [
             day
-            for day in match.slot.days
+            for day in self._domains.days(match.slot, match.home_team, match.away_team, match.venue)
             if day != match.date
             and self._quota_allows(index, day)
-            and self._date_ok(
-                match.home_team, match.away_team, match.venue, match.competition_id, day
-            )
             and self._neighbours_ok(index, day)
         ]
         if not options:

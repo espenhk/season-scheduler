@@ -67,7 +67,15 @@ gitignored `data/.refdata_cache/`, never to `data/*.yml`. See
 - **`terminliste/scoring/`** — the constraint framework. Every rule (hard or
   soft) is an object with an `evaluate()` method; `registry.py` assembles the
   list for a season. Add a rule by writing a class and registering it — both
-  solvers and the report pick it up automatically.
+  solvers and the report pick it up automatically. `incremental.py` is what
+  makes local search cheap (#11): a rule may declare `delta_scope`, the unit
+  its total is a sum over (a team's matches, a venue-day, a dual club, one
+  match, a competition, a round), and `DeltaScorer` then re-scores only the
+  units a move touches. A rule without one is simply re-evaluated in full, so
+  it stays correct, just slower; `tests/scoring/test_incremental.py` replays
+  random moves against full evaluation and is the check that a declared scope
+  is right — run it for any new rule. The fallback plan (#9) has its own
+  tracker, which replans only when a move can change it.
 - **`terminliste/solvers/`** — two interchangeable backends behind one
   `Scheduler` protocol:
   - `local_search.py` (default): greedy construction + simulated annealing
@@ -81,7 +89,18 @@ gitignored `data/.refdata_cache/`, never to `data/*.yml`. See
     actually gets, rather than one more blind restart. `polish_fraction`
     (default 0.25) is the share of the time budget phase two gets; a
     polished candidate only replaces the original when it scores strictly
-    better, so this phase can only help. No extra dependencies.
+    better, so this phase can only help. Every proposed move is scored by
+    delta (#11): moves are drawn only from days that already clear the
+    blackouts and hard commitments (`domains.py`, which also reports up
+    front any fixture with no such day), the shift operator checks rest and
+    double-booking against the live index, a move that adds a hard violation
+    skips the soft rules, and the share of each operator among the moves
+    adapts to which ones have been improving the schedule. `cli.py generate
+    --iterations N` runs exactly N moves instead of pacing to the time
+    budget, so the same `--seed` and N give the same schedule; a
+    time-budgeted run adapts to machine speed and is not reproducible.
+    `python scripts/bench_scoring.py` measures scores per second. No extra
+    dependencies.
   - `cpsat.py` (`--solver cpsat`): OR-Tools CP-SAT as a two-level model
     (#12). Level 1 puts each league's rounds in the planner's typed slots
     and orients every pairing home or away (breaks, home/away balance and
@@ -696,6 +715,10 @@ python -m pytest tests/ -v
   skipped if OR-Tools isn't installed): diverse top-N candidates, every
   fixture placed once, feasibility achievable, determinism, and a graceful
   report on an unsolvable calendar.
+- `test_incremental.py` — delta scoring against full evaluation after every
+  move of long random sequences (the annealer's operators plus unfiltered
+  edits), on the 2026 data and on a small crowded world; per-rule totals, the
+  live index and the fallback plan must all match a from-scratch evaluation.
 - `test_integration_coupled_leagues.py` — the actual point of this project:
   on the real 2026 data, scheduling the two leagues together produces
   strictly more back-to-back home days for dual clubs than scheduling them

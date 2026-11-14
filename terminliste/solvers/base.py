@@ -189,6 +189,10 @@ class SolveRequest:
     seed: int = 42
     top_n: int = 3
     time_budget_s: float = 30.0
+    # Local search only: run exactly this many moves instead of pacing to
+    # `time_budget_s`, which makes the same seed give the same schedule (a
+    # time-budgeted run adapts to machine speed and is not reproducible) (#11).
+    iterations: int | None = None
     # Cups sharing teams with `competitions`, already resolved to a date per
     # team — not scheduled themselves, only used to steer league placement.
     cup_schedules: list[CupSchedule] = field(default_factory=list)

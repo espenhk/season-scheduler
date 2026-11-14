@@ -10,6 +10,7 @@ rule sees the same plan for the same schedule.
 from __future__ import annotations
 
 import math
+from bisect import bisect_left
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
@@ -95,12 +96,111 @@ class ContingencyAnalysis:
     triggers: dict[str, tuple[str, ...]] = field(default_factory=dict)
     invalid: list[tuple[str, str]] = field(default_factory=list)
     collisions: list[tuple[str, str, str]] = field(default_factory=list)
+    # The exposed matches with their triggers, in planning order.
+    exposed: list[tuple[Match, tuple[str, ...]]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PlanFootprint:
+    """What planning reads of the schedule besides the exposed matches
+    themselves: a change outside it cannot alter the plan (#11).
+
+    `team_days[team]` are dates on which another match of `team` could make a
+    candidate fallback date invalid for lack of rest; `venue_days` and
+    `home_days` the (venue, day) and (sibling team, day) cells a candidate date
+    is checked against; `leg_edges` the (competition, leg, "start"|"end")
+    extremes the leg-order check reads; `keys` the exposed matches' keys, which
+    the plan looks matches up by.
+    """
+
+    team_days: dict[str, frozenset[date]]
+    venue_days: frozenset[tuple[str, date]]
+    home_days: frozenset[tuple[str, date]]
+    leg_edges: frozenset[tuple[str, int, str]]
+    keys: frozenset[str]
+
+    @classmethod
+    def union(cls, parts: list[PlanFootprint]) -> PlanFootprint:
+        team_days: dict[str, set[date]] = {}
+        for part in parts:
+            for team, days in part.team_days.items():
+                team_days.setdefault(team, set()).update(days)
+        return cls(
+            team_days={team: frozenset(days) for team, days in team_days.items()},
+            venue_days=frozenset().union(*(p.venue_days for p in parts)),
+            home_days=frozenset().union(*(p.home_days for p in parts)),
+            leg_edges=frozenset().union(*(p.leg_edges for p in parts)),
+            keys=frozenset().union(*(p.keys for p in parts)),
+        )
+
+
+def _date_of(match: Match) -> date:
+    return match.date
 
 
 def _weekend_anchor(day: date) -> date | None:
     """The Friday starting `day`'s Fri-Mon weekend, None for Tue-Thu."""
     offset = (day.weekday() - _WEEKEND_SPAN) % 7
     return day - timedelta(days=offset) if offset < _WEEKEND_SPAN else None
+
+
+class _Chosen:
+    """The fallbacks picked so far, indexed by team and by date: two fallbacks
+    can only clash through a shared team or a shared date, so a candidate is
+    only tested against those (#11)."""
+
+    def __init__(self) -> None:
+        self.entries: dict[str, tuple[Match, Fallback]] = {}
+        self._by_team: dict[str, list[str]] = {}
+        self._by_day: dict[date, list[str]] = {}
+
+    def add(self, match: Match, fallback: Fallback) -> None:
+        key = match.key
+        self.entries[key] = (match, fallback)
+        for team_id in {match.home_team, match.away_team}:
+            self._by_team.setdefault(team_id, []).append(key)
+        self._by_day.setdefault(fallback.date, []).append(key)
+
+    def near(self, match: Match, fallback: Fallback):
+        """Entries sharing a team or the fallback date with the candidate."""
+        seen: set[str] = set()
+        for keys in (
+            self._by_team.get(match.home_team, ()),
+            self._by_team.get(match.away_team, ()),
+            self._by_day.get(fallback.date, ()),
+        ):
+            for key in keys:
+                if key not in seen:
+                    seen.add(key)
+                    yield self.entries[key]
+
+
+class ReasonCache:
+    """`invalid_reason` results by (match, day), reused while nothing the match's
+    footprint covers has changed (#11).
+
+    `committed` holds the results valid for the schedule as it stands. A match
+    in `stale` was touched by the proposal being scored, so its results go to
+    `scratch` instead and only replace the committed ones if the proposal is
+    kept; the rest are valid either way and are shared.
+    """
+
+    def __init__(
+        self,
+        committed: dict[int, dict[date, str | None]],
+        stale: frozenset[int] = frozenset(),
+    ) -> None:
+        self.committed = committed
+        self.stale = stale
+        self.scratch: dict[int, dict[date, str | None]] = {}
+
+    def of(self, match: Match) -> dict[date, str | None]:
+        key = id(match)
+        target = self.scratch if key in self.stale else self.committed
+        reasons = target.get(key)
+        if reasons is None:
+            reasons = target[key] = {}
+        return reasons
 
 
 class ContingencyPlanner:
@@ -143,6 +243,22 @@ class ContingencyPlanner:
             team_id: tuple((c.date.toordinal(), c.min_rest_days, c.node_id) for c in items)
             for team_id, items in self._contingent.items()
         }
+        # What `invalid_reason` scans per trigger: (ordinal, rest days, node,
+        # label), so the loop needs no method call per commitment.
+        self._clash_flat = {
+            team_id: tuple((c.date.toordinal(), c.min_rest_days, c.node_id, c.label) for c in items)
+            for team_id, items in self._contingent.items()
+        }
+        # Every day too close to a hard commitment, so `blocked` is one lookup.
+        self._hard_blocked = {
+            team_id: frozenset(
+                c.date + timedelta(days=offset)
+                for c in commitments.hard_for(team_id)
+                for offset in range(-c.min_rest_days, c.min_rest_days + 1)
+            )
+            for team_id in commitments.team_ids
+        }
+        self._candidate_days: dict[tuple[date, str], tuple[date, ...]] = {}
         self._node_team: dict[str, str] = {}
         self._node_exclusive: dict[str, frozenset[str]] = {}
         self._node_probability: dict[str, float] = {}
@@ -155,6 +271,17 @@ class ContingencyPlanner:
                 self._node_probability[c.node_id] = c.reached_probability
                 if c.source == "cup":
                     teams_in_group.setdefault(c.node_id.split("/", 1)[1], set()).add(c.team_id)
+        # Days (as ordinals) too close to a commitment that comes with each
+        # node, so a clear day is one lookup and only a clash scans for its label.
+        self._node_forbidden = {
+            node_id: frozenset(
+                day
+                for ordinal, rest, other_node, _ in self._clash_flat.get(team_id, ())
+                if other_node not in self._node_exclusive[node_id]
+                for day in range(ordinal - rest, ordinal + rest + 1)
+            )
+            for node_id, team_id in self._node_team.items()
+        }
         # Top-flight sides can meet in a cup round, so at most half of those
         # alive in it get through together: a reserve date is sized for that.
         self._bracket_cap = {
@@ -220,22 +347,29 @@ class ContingencyPlanner:
         if day in season.venue_blacked_out_dates.get(match.venue, {}):
             return "venue blackout"
 
+        key = match.key
         for team_id in (match.home_team, match.away_team):
             minimum = self._min_rest.get(team_id, 0)
-            for other in index.by_team.get(team_id, ()):
-                if other.key != match.key and abs((other.date - day).days) - 1 < minimum:
+            dated = index.by_team.get(team_id, ())
+            # Sorted by date, so only the window around `day` can be too close.
+            start = bisect_left(dated, day - timedelta(days=minimum), key=_date_of)
+            for other in dated[start:]:
+                if (other.date - day).days > minimum:
+                    break
+                if other.key != key:
                     return f"too close to {other.key} for {team_id}"
-            if self.commitments.blocked(team_id, day):
+            if day in self._hard_blocked.get(team_id, ()):
                 return f"too close to a hard commitment of {team_id}"
 
+        ordinal = day.toordinal()
         for node_id in triggers:
+            if ordinal not in self._node_forbidden[node_id]:
+                continue
             team_id = self._node_team[node_id]
             excluded = self._node_exclusive[node_id]
-            for commitment in self._contingent.get(team_id, ()):
-                if commitment.node_id in excluded:
-                    continue
-                if commitment.clashes(day):
-                    return f"too close to {commitment.label} of {team_id}, which comes with {node_id}"
+            for other_ordinal, rest, other_node, label in self._clash_flat.get(team_id, ()):
+                if other_node not in excluded and abs(ordinal - other_ordinal) - 1 < rest:
+                    return f"too close to {label} of {team_id}, which comes with {node_id}"
 
         if any(m.key != match.key for m in index.by_venue_date.get((match.venue, day), ())):
             return "venue already booked"
@@ -256,18 +390,21 @@ class ContingencyPlanner:
     def _clash(self, a: tuple[Match, Fallback], b: tuple[Match, Fallback]) -> str | None:
         """Why two fallbacks cannot both be played, or None. Fallbacks whose
         triggers are mutually exclusive never both happen, so never clash."""
-        if not self._co_triggerable(a[1].trigger_node_ids, b[1].trigger_node_ids):
-            return None
         (match_a, fb_a), (match_b, fb_b) = a, b
+        reason = None
         for team_id in {match_a.home_team, match_a.away_team} & {match_b.home_team, match_b.away_team}:
             if abs((fb_a.date - fb_b.date).days) - 1 < self._min_rest.get(team_id, 0):
-                return f"{team_id} plays both with too little rest"
-        if fb_a.date == fb_b.date:
+                reason = f"{team_id} plays both with too little rest"
+                break
+        if reason is None and fb_a.date == fb_b.date:
             if fb_a.venue == fb_b.venue:
-                return "same venue the same day"
-            if match_b.home_team in self._siblings.get(match_a.home_team, ()):
-                return "a club's teams both at home the same day"
-        return None
+                reason = "same venue the same day"
+            elif match_b.home_team in self._siblings.get(match_a.home_team, ()):
+                reason = "a club's teams both at home the same day"
+        # The triggers test is the dear one, so it only runs for a real clash.
+        if reason is None or not self._co_triggerable(a[1].trigger_node_ids, b[1].trigger_node_ids):
+            return None
+        return reason
 
     def _co_triggerable(self, left: tuple[str, ...], right: tuple[str, ...]) -> bool:
         return any(
@@ -295,8 +432,16 @@ class ContingencyPlanner:
 
     # -- planning -------------------------------------------------------------
 
-    def _candidates(self, match: Match, kind: FallbackKind) -> list[date]:
-        base = match.date
+    def _candidates(self, match: Match, kind: FallbackKind) -> tuple[date, ...]:
+        """Where a fallback of `kind` could go, nearest first; a function of the
+        match's date alone, so remembered."""
+        key = (match.date, kind)
+        found = self._candidate_days.get(key)
+        if found is None:
+            found = self._candidate_days[key] = tuple(self._candidates_for(match.date, kind))
+        return found
+
+    def _candidates_for(self, base: date, kind: FallbackKind) -> list[date]:
         horizon = base + timedelta(days=self.policy.max_fallback_days)
         if kind == "same_slot":
             anchor = _weekend_anchor(base)
@@ -313,15 +458,46 @@ class ContingencyPlanner:
         days = (base + timedelta(days=n) for n in range(1, self.policy.max_fallback_days + 1))
         return [d for d in days if d.weekday() in (5, 6) and d not in self._reserve_capacity]
 
-    def _leg_bounds(self, index: ScheduleIndex) -> dict[str, dict[int, tuple[date, date]]]:
-        bounds: dict[str, dict[int, tuple[date, date]]] = {}
+    def footprint(self, exposed: list[tuple[Match, tuple[str, ...]]]) -> PlanFootprint:
+        """The `PlanFootprint` of planning and checking `exposed`. A superset of
+        what `invalid_reason` reads on any candidate date, since the plan stops
+        at the first valid one."""
+        team_days: dict[str, set[date]] = {}
+        venue_days: set[tuple[str, date]] = set()
+        home_days: set[tuple[str, date]] = set()
+        leg_edges: set[tuple[str, int, str]] = set()
+        for match, _triggers in exposed:
+            candidates: set[date] = set()
+            for kind in self.policy.fallback_kinds:
+                candidates.update(self._candidates(match, kind))
+            for team_id in (match.home_team, match.away_team):
+                reach = self._min_rest.get(team_id, 0)
+                near = team_days.setdefault(team_id, set())
+                for day in candidates:
+                    near.update(day + timedelta(days=n) for n in range(-reach, reach + 1))
+            venue_days.update((match.venue, day) for day in candidates)
+            for sibling in self._siblings.get(match.home_team, ()):
+                home_days.update((sibling, day) for day in candidates)
+            leg_edges.add((match.competition_id, match.leg - 1, "end"))
+            leg_edges.add((match.competition_id, match.leg + 1, "start"))
+        return PlanFootprint(
+            team_days={team: frozenset(days) for team, days in team_days.items()},
+            venue_days=frozenset(venue_days),
+            home_days=frozenset(home_days),
+            leg_edges=frozenset(leg_edges),
+            keys=frozenset(match.key for match, _ in exposed),
+        )
+
+    def leg_bounds_of(self, index: ScheduleIndex) -> dict[str, dict[int, tuple[date, date]]]:
+        by_leg: dict[str, dict[int, list[date]]] = {}
         for competition_id, matches in index.by_competition.items():
-            legs: dict[int, tuple[date, date]] = {}
+            legs = by_leg.setdefault(competition_id, {})
             for m in matches:
-                first, last = legs.get(m.leg, (m.date, m.date))
-                legs[m.leg] = (min(first, m.date), max(last, m.date))
-            bounds[competition_id] = legs
-        return bounds
+                legs.setdefault(m.leg, []).append(m.date)
+        return {
+            competition_id: {leg: (min(days), max(days)) for leg, days in legs.items()}
+            for competition_id, legs in by_leg.items()
+        }
 
     def exposed(self, index: ScheduleIndex) -> list[tuple[Match, tuple[str, ...]]]:
         found = [(m, t) for m in index.matches if (t := self.triggers_of(m))]
@@ -329,32 +505,50 @@ class ContingencyPlanner:
         return found
 
     def plan(
-        self, index: ScheduleIndex, exposed: list[tuple[Match, tuple[str, ...]]] | None = None
+        self,
+        index: ScheduleIndex,
+        exposed: list[tuple[Match, tuple[str, ...]]] | None = None,
+        leg_bounds: dict[str, dict[int, tuple[date, date]]] | None = None,
+        cache: ReasonCache | None = None,
     ) -> ContingencyPlan:
-        leg_bounds = self._leg_bounds(index)
+        if leg_bounds is None:
+            leg_bounds = self.leg_bounds_of(index)
         if exposed is None:
             exposed = self.exposed(index)
 
         plan = ContingencyPlan()
-        chosen: dict[str, tuple[Match, Fallback]] = {}
+        chosen = _Chosen()
         on_reserve: dict[date, list[Fallback]] = {}
         for match, triggers in exposed:
             fallback = None
             if self._movable(match):
-                fallback = self._pick(match, triggers, index, leg_bounds, chosen, on_reserve)
+                fallback = self._pick(match, triggers, index, leg_bounds, chosen, on_reserve, cache)
             if fallback is None:
                 plan.uncovered.append(match.key)
                 continue
             plan.fallbacks[match.key] = fallback
-            chosen[match.key] = (match, fallback)
+            chosen.add(match, fallback)
             if fallback.kind == "reserve_date":
                 on_reserve.setdefault(fallback.date, []).append(fallback)
         return plan
 
-    def _pick(self, match, triggers, index, leg_bounds, chosen, on_reserve) -> Fallback | None:
+    def _reason(
+        self, match, day, triggers, index, leg_bounds, cache: ReasonCache | None
+    ) -> str | None:
+        if cache is None:
+            return self.invalid_reason(match, day, triggers, index, leg_bounds)
+        reasons = cache.of(match)
+        if day in reasons:
+            return reasons[day]
+        reason = reasons[day] = self.invalid_reason(match, day, triggers, index, leg_bounds)
+        return reason
+
+    def _pick(
+        self, match, triggers, index, leg_bounds, chosen, on_reserve, cache=None
+    ) -> Fallback | None:
         for kind in self.policy.fallback_kinds:
             for day in self._candidates(match, kind):
-                if self.invalid_reason(match, day, triggers, index, leg_bounds) is not None:
+                if self._reason(match, day, triggers, index, leg_bounds, cache) is not None:
                     continue
                 fallback = Fallback(day, match.venue, match.kickoff_time, triggers, kind)
                 if kind == "reserve_date" and (
@@ -362,17 +556,24 @@ class ContingencyPlanner:
                     > self._reserve_capacity[day]
                 ):
                     continue
-                if any(self._clash((match, fallback), other) for other in chosen.values()):
+                if any(self._clash((match, fallback), other) for other in chosen.near(match, fallback)):
                     continue
                 return fallback
         return None
 
     # -- checking -------------------------------------------------------------
 
-    def check(self, index: ScheduleIndex, plan: ContingencyPlan) -> ContingencyAnalysis:
+    def check(
+        self,
+        index: ScheduleIndex,
+        plan: ContingencyPlan,
+        leg_bounds: dict[str, dict[int, tuple[date, date]]] | None = None,
+        cache: ReasonCache | None = None,
+    ) -> ContingencyAnalysis:
         """Re-verify `plan` against the schedule, independently of how it was made."""
         analysis = ContingencyAnalysis(plan)
-        leg_bounds = self._leg_bounds(index)
+        if leg_bounds is None:
+            leg_bounds = self.leg_bounds_of(index)
         by_key = {m.key: m for m in index.matches}
         entries: list[tuple[Match, Fallback]] = []
         for key, fallback in sorted(plan.fallbacks.items()):
@@ -380,16 +581,34 @@ class ContingencyPlanner:
             if match is None:
                 analysis.invalid.append((key, "no such match"))
                 continue
-            reason = self.invalid_reason(match, fallback.date, fallback.trigger_node_ids, index, leg_bounds)
+            reason = self._reason(
+                match, fallback.date, fallback.trigger_node_ids, index, leg_bounds, cache
+            )
             if reason is not None:
                 analysis.invalid.append((key, reason))
             entries.append((match, fallback))
 
-        for i, a in enumerate(entries):
-            for b in entries[i + 1 :]:
-                reason = self._clash(a, b)
-                if reason is not None:
-                    analysis.collisions.append((a[0].key, b[0].key, reason))
+        # Only entries sharing a team or a fallback date can clash.
+        buckets: list[list[int]] = []
+        by_team: dict[str, list[int]] = {}
+        by_day: dict[date, list[int]] = {}
+        for n, (match, fallback) in enumerate(entries):
+            for team_id in {match.home_team, match.away_team}:
+                by_team.setdefault(team_id, []).append(n)
+            by_day.setdefault(fallback.date, []).append(n)
+        buckets.extend(by_team.values())
+        buckets.extend(by_day.values())
+        pairs = {
+            (bucket[x], bucket[y])
+            for bucket in buckets
+            for x in range(len(bucket))
+            for y in range(x + 1, len(bucket))
+        }
+        for i, j in sorted(pairs):
+            a, b = entries[i], entries[j]
+            reason = self._clash(a, b)
+            if reason is not None:
+                analysis.collisions.append((a[0].key, b[0].key, reason))
 
         reserve: dict[date, list[Fallback]] = {}
         for _, fallback in entries:
@@ -407,8 +626,10 @@ class ContingencyPlanner:
         if cached is not None and cached[0] is self:
             return cached[1]
         exposed = self.exposed(index)
-        analysis = self.check(index, self.plan(index, exposed))
+        leg_bounds = self.leg_bounds_of(index)
+        analysis = self.check(index, self.plan(index, exposed, leg_bounds), leg_bounds)
         analysis.triggers = {m.key: t for m, t in exposed}
+        analysis.exposed = exposed
         index.contingency = (self, analysis)
         return analysis
 
@@ -437,5 +658,7 @@ __all__ = [
     "ContingencyPlan",
     "ContingencyPlanner",
     "Fallback",
+    "PlanFootprint",
+    "ReasonCache",
     "plan_for",
 ]

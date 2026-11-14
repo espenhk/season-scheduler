@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from typing import ClassVar
 
 from ..contingency import ContingencyPlanner
 from ..model.schema import WEEKDAYS, Competition, Match, RivalryFixture
@@ -32,6 +33,7 @@ class PreferredWeekday:
     preference just earns fewer points instead of being punished.
     """
 
+    delta_scope: ClassVar[str | None] = "match"
     competitions: list[Competition]
     id: str = "preferred_weekday"
     kind: str = "soft"
@@ -90,6 +92,7 @@ class ConsecutiveHomeDays:
     buys a supporter two matches, and the club runs one match weekend.
     """
 
+    delta_scope: ClassVar[str | None] = "club"
     competitions: list[Competition]
     id: str = "consecutive_home_days"
     kind: str = "soft"
@@ -168,6 +171,7 @@ class ConsecutiveAwayDays:
     road (in Norway, most things involving Tromsø), earns nothing.
     """
 
+    delta_scope: ClassVar[str | None] = "club"
     competitions: list[Competition]
     id: str = "consecutive_away_days"
     kind: str = "soft"
@@ -247,6 +251,8 @@ class HomeAwayBreaks:
     """Penalise runs of three or more consecutive home or away matches — the
     classic measure of schedule quality in the round-robin literature."""
 
+    delta_scope: ClassVar[str | None] = "team"
+    delta_order_only: ClassVar[bool] = True
     competitions: list[Competition]
     id: str = "home_away_breaks"
     kind: str = "soft"
@@ -329,6 +335,8 @@ class HomeAwayBalance:
     season-end total, so an odd `rounds_per_pairing` needs no special case.
     """
 
+    delta_scope: ClassVar[str | None] = "team"
+    delta_order_only: ClassVar[bool] = True
     competitions: list[Competition]
     id: str = "home_away_balance"
     kind: str = "soft"
@@ -389,6 +397,7 @@ class RestComfort:
     what pushes the solver towards a humane calendar once feasibility is
     settled."""
 
+    delta_scope: ClassVar[str | None] = "team"
     competitions: list[Competition]
     id: str = "rest_comfort"
     kind: str = "soft"
@@ -451,6 +460,7 @@ class RestComfort:
 class SoftVenuePreference:
     """Penalise matches on dates that are legal but discouraged."""
 
+    delta_scope: ClassVar[str | None] = "match"
     competitions: list[Competition]
     id: str = "soft_venue_preference"
     kind: str = "soft"
@@ -500,6 +510,7 @@ class GrassAwayRoundOne:
     """Reward a grass-pitch club playing away in round 1 — natural turf often
     isn't match-ready by the first weekend of the season."""
 
+    delta_scope: ClassVar[str | None] = "match"
     competitions: list[Competition]
     id: str = "grass_away_round_one"
     kind: str = "soft"
@@ -544,6 +555,7 @@ class GrassAwayRoundOne:
 class GrassSeasonEdge:
     """Penalise grass-venue home matches outside the playable window, with cutoffs shifted by latitude (#16)."""
 
+    delta_scope: ClassVar[str | None] = "match"
     competitions: list[Competition]
     id: str = "grass_season_edge"
     kind: str = "soft"
@@ -611,6 +623,7 @@ class LateKickoffLongTravel:
     fine, the combination is what makes for a bad night.
     """
 
+    delta_scope: ClassVar[str | None] = "kickoff"
     competitions: list[Competition]
     id: str = "late_kickoff_long_travel"
     kind: str = "soft"
@@ -727,6 +740,7 @@ class TvTimeSpread:
     matches without one are skipped — during annealing, that is all of them.
     """
 
+    delta_scope: ClassVar[str | None] = "kickoff"
     competitions: list[Competition]
     id: str = "tv_time_spread"
     kind: str = "soft"
@@ -857,6 +871,7 @@ class ExpectedDisruption:
     `contingency_coverage` rule is what forbids it.
     """
 
+    delta_scope: ClassVar[str | None] = "contingency"
     planner: ContingencyPlanner
     id: str = "expected_disruption"
     kind: str = "soft"
@@ -868,10 +883,7 @@ class ExpectedDisruption:
         total = 0.0
         events: list[Event] = []
         count = 0
-        for match in index.matches:
-            triggers = analysis.triggers.get(match.key)
-            if not triggers:
-                continue
+        for match, triggers in analysis.exposed:
             probability = self.planner.disruption_probability(triggers)
             fallback = plan.fallbacks.get(match.key)
             delta = -self.weight * probability * self.planner.move_cost(match, fallback)

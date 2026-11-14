@@ -44,6 +44,7 @@ tests having run first.
 | `terminliste/refdata/**` | `refdata`, `scripts` |
 | `terminliste/external_schedule.py`, `terminliste/baseline.py` | `integration` |
 | `scripts/**` | `scripts`, `integration` (`refresh_baselines.py --check` is asserted by `tests/integration/test_baselines.py`) |
+| `scripts/bench_scoring.py` | `scoring` (`tests/scoring/test_incremental.py` builds its schedule through it) |
 | `cli.py` | `integration` — nothing under `tests/` imports `cli.py` directly; this is a placeholder so the path isn't silently untested, not real coverage |
 | `data/**` | **all** |
 | `baselines/**` | `integration` |

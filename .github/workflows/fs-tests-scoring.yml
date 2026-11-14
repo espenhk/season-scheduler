@@ -12,6 +12,7 @@ on:
       - "terminliste/scoring/**"
       - "terminliste/contingency.py"
       - "terminliste/scenarios.py"
+      - "scripts/bench_scoring.py"
       - "tests/scoring/**"
       - "tests/report/**"
       - "tests/solvers/**"
