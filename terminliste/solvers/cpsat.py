@@ -69,6 +69,12 @@ _NO_ESCAPE_WEIGHT = 30.0
 # Share of rounds a later pass may leave in an earlier pass's slot.
 _SLOT_REUSE_SHARE = 0.8
 _MAX_LEVEL_TWO_RETRIES = 6
+# Level 2 re-solves per Level 1 choice that ban the days of matches the contingency
+# planner found no fallback for, and the share of the pass's remaining time each
+# may spend (#53).
+_MAX_COVERAGE_REPAIRS = 8
+_REPAIR_BUDGET_SHARE = 0.2
+_FIRST_SOLVE_SHARE = 0.4
 # Share of a pass's remaining time one conflict shrink may spend.
 _SHRINK_BUDGET_SHARE = 0.25
 _LEVEL_ONE_BUDGET_SHARE = 0.3
@@ -505,9 +511,13 @@ def _run_pass(
     stays a conflict whatever the diversity cuts.
     """
     request = problem.request
+    repairable = _has_contingency(request)
     cuts: list[_LevelOneSolution] = list(previous)
     tried = learned
     failed_culprits: list[list[str]] = []
+    # The schedule with the fewest matches lacking a fallback, kept in case no
+    # Level 1 choice gets them all covered.
+    best: tuple[int, _LevelOneSolution, list[Match]] | None = None
 
     def give_up_on_level_two() -> None:
         culprits = sorted({c for group in failed_culprits for c in group})
@@ -538,6 +548,9 @@ def _run_pass(
                 )
             )
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            if best is not None:
+                # The cuts left no other slot choice; the best schedule so far stands.
+                return best[1], best[2], _slot_plans(problem, best[1])
             if status != cp_model.INFEASIBLE:
                 notes.extend(_level_one_report(problem, solver, status, [], cp_model, pass_index))
             elif failed_culprits:
@@ -565,7 +578,9 @@ def _run_pass(
 
         built = _build_level_two(cp_model, problem, placed, previous_dates, relax=False)
         two = cp_model.CpSolver()
-        two.parameters.max_time_in_seconds = max(1.0, remaining)
+        # Leave the repairs time: Level 2 otherwise optimises until the deadline.
+        share = _FIRST_SOLVE_SHARE if repairable else 1.0
+        two.parameters.max_time_in_seconds = max(1.0, remaining * share)
         two.parameters.num_search_workers = 8
         two.parameters.random_seed = request.seed + pass_index + attempt
         status2 = two.Solve(built.model)
@@ -576,7 +591,9 @@ def _run_pass(
                     f"{built.counts[1]} constraints"
                 )
             )
+        relaxed_model = False
         if status2 == cp_model.INFEASIBLE and request.relax_min_rest:
+            relaxed_model = True
             relaxed = _build_level_two(cp_model, problem, placed, previous_dates, relax=True)
             two = cp_model.CpSolver()
             two.parameters.max_time_in_seconds = max(1.0, deadline - time.perf_counter())
@@ -592,6 +609,20 @@ def _run_pass(
                 )
 
         if status2 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            matches = _extract(two, built.placed, built.days)
+            matches, uncovered = _repair_coverage(
+                cp_model, problem, placed, previous_dates, matches, deadline,
+                request.seed + pass_index + attempt, relaxed_model,
+            )
+            if uncovered and attempt + 1 < _MAX_LEVEL_TWO_RETRIES:
+                # No day left for these matches under this slot choice: the slot is the
+                # problem, so Level 1 must not repeat it.
+                if best is None or len(uncovered) < best[0]:
+                    best = (len(uncovered), solution, matches)
+                tried.append((solution, _rounds_of(uncovered)))
+                continue
+            if best is not None and len(uncovered) >= best[0]:
+                _, solution, matches = best
             if failed_culprits:
                 notes.append(
                     info(
@@ -599,7 +630,6 @@ def _run_pass(
                         "level 2 before one fit"
                     )
                 )
-            matches = _extract(two, built.placed, built.days)
             return solution, matches, _slot_plans(problem, solution)
 
         if status2 != cp_model.INFEASIBLE:
@@ -624,11 +654,66 @@ def _run_pass(
             )
         )
 
+    if best is not None:
+        return best[1], best[2], _slot_plans(problem, best[1])
     if failed_culprits:
         give_up_on_level_two()
     else:
         notes.append(f"pass {pass_index}: time budget ran out before a schedule was found")
     return None
+
+
+def _has_contingency(request: SolveRequest) -> bool:
+    return any(getattr(c, "planner", None) for c in request.constraints)
+
+
+def _uncovered(problem: _Problem, matches: list[Match]) -> list[str]:
+    plan = plan_for(matches, problem.request.constraints)
+    return list(plan.uncovered) if plan else []
+
+
+def _rounds_of(keys: list[str]) -> list[tuple[str, int]]:
+    """The `(league, round)` of match keys (`league:round:home-away`)."""
+    found = {(key.split(":")[0], int(key.split(":")[1])) for key in keys}
+    return sorted(found)
+
+
+def _repair_coverage(
+    cp_model, problem: _Problem, placed, previous_dates, matches, deadline, seed, relax
+):
+    """Re-solve Level 2 with the days of matches that have no fallback banned,
+    so they move to a day the planner can cover (#53).
+
+    Fallback availability depends on other matches' days (rest, venue), which
+    Level 2 does not model, so it is learned from the planner instead. Returns
+    the schedule with the fewest uncovered matches and those matches' keys; the
+    bans may run out of days, which leaves the slot choice to blame.
+    """
+    uncovered = _uncovered(problem, matches)
+    best = (len(uncovered), matches, uncovered)
+    banned: set[tuple[str, date]] = set()
+    current = matches
+    for _ in range(_MAX_COVERAGE_REPAIRS):
+        remaining = deadline - time.perf_counter()
+        if not uncovered or remaining <= 1.0:
+            break
+        by_key = {m.key: m for m in current}
+        banned |= {(key, by_key[key].date) for key in uncovered}
+        built = _build_level_two(
+            cp_model, problem, placed, previous_dates, relax=relax,
+            banned=banned, hint={m.key: m.date for m in current},
+        )
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = max(1.0, remaining * _REPAIR_BUDGET_SHARE)
+        solver.parameters.num_search_workers = 8
+        solver.parameters.random_seed = seed
+        if solver.Solve(built.model) not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            break
+        current = _extract(solver, built.placed, built.days)
+        uncovered = _uncovered(problem, current)
+        if len(uncovered) < best[0]:
+            best = (len(uncovered), current, uncovered)
+    return best[1], best[2]
 
 
 # -- level 1 ------------------------------------------------------------------
@@ -1076,7 +1161,10 @@ class _LevelTwo:
     counts: tuple[int, int] = (0, 0)
 
 
-def _build_level_two(cp_model, problem: _Problem, placed: list[_Placed], previous_dates, relax: bool):
+def _build_level_two(
+    cp_model, problem: _Problem, placed: list[_Placed], previous_dates, relax: bool,
+    banned: set[tuple[str, date]] | None = None, hint: dict[str, date] | None = None,
+):
     model = cp_model.CpModel()
     world = problem.world
     season = problem.season
@@ -1091,6 +1179,11 @@ def _build_level_two(cp_model, problem: _Problem, placed: list[_Placed], previou
     for item in placed:
         days[item.index] = {d: model.NewBoolVar(f"d_{item.index}_{d}") for d in item.days}
         model.AddExactlyOne(days[item.index].values())
+        for d, var in days[item.index].items():
+            if banned and (item.key, d) in banned:
+                model.Add(var == 0)
+            if hint is not None:
+                model.AddHint(var, 1 if hint.get(item.key) == d else 0)
 
     # The final round of a league shares one date.
     for lg in problem.leagues:
