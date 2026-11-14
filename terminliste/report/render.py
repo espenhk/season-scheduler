@@ -50,7 +50,7 @@ from ..scoring.soft import PreferredWeekday
 from ..slot_planner import search_space_log10
 from ..solvers.base import Candidate, SearchStats, SolverResult, severity_of
 from . import payload
-from .contingency_view import contingency_view, maybe_by_day, robustness_view
+from .contingency_view import contingency_view, maybe_by_day, replan_view, robustness_view
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -370,6 +370,7 @@ def _build_option(
             world, candidate.contingency_plan, candidate.matches, commitments or CommitmentSet()
         ),
         "robustness": robustness_view(candidate.robustness),
+        "replan": replan_view(world, candidate.replan),
         "league_entries": entries,
         "client": payload.option_wire(
             entries=entries,
@@ -1816,8 +1817,13 @@ def _round_date_label(entries: list[dict]) -> str:
     return f"{short_date(days[0])} – {short_date(days[-1])}"
 
 
-def write_json(result: SolverResult, output_path: Path) -> Path:
-    """Machine-readable twin of the HTML, for diffing and test snapshots."""
+def write_json(
+    result: SolverResult, output_path: Path, locked: frozenset[str] = frozenset()
+) -> Path:
+    """Machine-readable twin of the HTML, for diffing and test snapshots.
+
+    `locked` are the keys of a re-plan's locked matches, written back as
+    `locked: true` so the next re-plan keeps them frozen (#13)."""
     stats = result.search_stats
     payload = {
         "solver": result.solver,
@@ -1858,6 +1864,7 @@ def write_json(result: SolverResult, output_path: Path) -> Path:
                         "away": m.away_team,
                         "venue": m.venue,
                         "kickoff_time": m.kickoff_time,
+                        **({"locked": True} if m.key in locked else {}),
                     }
                     for m in candidate.matches
                 ],
@@ -1871,6 +1878,7 @@ def write_json(result: SolverResult, output_path: Path) -> Path:
                     if candidate.robustness is not None
                     else {}
                 ),
+                **({"replan": candidate.replan.to_dict()} if candidate.replan is not None else {}),
             }
             for candidate in result.candidates
         ],

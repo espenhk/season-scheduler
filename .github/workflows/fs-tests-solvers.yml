@@ -12,6 +12,7 @@ on:
       - "terminliste/solvers/**"
       - "terminliste/slot_planner.py"
       - "terminliste/frame.py"
+      - "terminliste/replan.py"
       - "tests/solvers/**"
       - "tests/integration/**"
       - ".github/workflows/fs-tests-solvers.yml"

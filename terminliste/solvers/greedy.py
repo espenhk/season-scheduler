@@ -101,6 +101,7 @@ def plan_competitions(
     calendar: SeasonCalendar,
     rng: random.Random | None = None,
     slot_plans: dict[str, SlotPlan] | None = None,
+    fixtures: dict[str, list[Fixture]] | None = None,
 ) -> list[PlannedCompetition]:
     """Generate fixtures and take each round's slot and anchor from the plan.
 
@@ -111,22 +112,26 @@ def plan_competitions(
     choice.
 
     `slot_plans` come from the season frame; without them the slots are
-    planned against blackouts alone. Raises `SlotPlanningError` (a
-    `ValueError`) when a league has fewer slots than rounds.
+    planned against blackouts alone. `fixtures` (a re-plan's, #13) replace the
+    generated ones. Raises `SlotPlanningError` (a `ValueError`) when a league
+    has fewer slots than rounds.
     """
     if slot_plans is None:
         slot_plans = plan_slots(world, season, competitions, calendar)
     planned: list[PlannedCompetition] = []
     for competition in competitions:
-        teams = list(competition.teams)
-        if rng is not None:
-            rng.shuffle(teams)
-        fixtures = generate_fixtures(competition.id, teams, competition.rounds_per_pairing)
+        if fixtures is not None:
+            league_fixtures = list(fixtures[competition.id])
+        else:
+            teams = list(competition.teams)
+            if rng is not None:
+                rng.shuffle(teams)
+            league_fixtures = generate_fixtures(competition.id, teams, competition.rounds_per_pairing)
         slot_plan = slot_plans[competition.id]
         planned.append(
             PlannedCompetition(
                 competition=competition,
-                fixtures=fixtures,
+                fixtures=league_fixtures,
                 anchors=slot_plan.anchors,
                 slots=dict(enumerate(slot_plan.chosen)),
             )

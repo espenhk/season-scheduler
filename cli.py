@@ -3,6 +3,8 @@
 
     python cli.py validate                       # data integrity, no solving
     python cli.py generate --season 2026          # solve and write a report
+    python cli.py generate --from-schedule schedules/2026.json --freeze-before 2026-08-15 \\
+        --outcomes results.yml                    # re-plan, past rounds frozen
     python cli.py score my_schedule.csv --season 2026
                                                    # score a real/proposed schedule
     python cli.py explain schedules/2026.json      # score breakdown in the terminal
@@ -25,7 +27,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
+
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_ROOT = PROJECT_ROOT / "data"
@@ -37,6 +42,7 @@ from terminliste.contingency import plan_for  # noqa: E402
 from terminliste.external_schedule import (  # noqa: E402
     ExternalScheduleError,
     load_external_schedule,
+    load_schedule,
 )
 from terminliste.frame import build_season_frame  # noqa: E402
 from terminliste.model.calendar import build_calendar, calendars_by_competition  # noqa: E402
@@ -44,6 +50,13 @@ from terminliste.model.loader import DataError, load_world  # noqa: E402
 from terminliste.model.schema import Match  # noqa: E402
 from terminliste.model.travel import ApiTravelModel  # noqa: E402
 from terminliste.refdata import refresh_competition, refresh_travel_times  # noqa: E402
+from terminliste.replan import (  # noqa: E402
+    ReplanError,
+    build_replan_spec,
+    check_frozen,
+    diff_schedules,
+    settle_frame,
+)
 from terminliste.report.render import render_report, write_json  # noqa: E402
 from terminliste.rounds.cup_schedule import CupSchedulingError  # noqa: E402
 from terminliste.rounds.european_schedule import (  # noqa: E402
@@ -52,6 +65,7 @@ from terminliste.rounds.european_schedule import (  # noqa: E402
     resolve_all_legs,
     teams_reaching,
 )
+from terminliste.rounds.known_outcomes import KnownOutcomeError  # noqa: E402
 from terminliste.scenarios import evaluate_robustness  # noqa: E402
 from terminliste.scoring.base import EvalContext, Score, evaluate  # noqa: E402
 from terminliste.scoring.registry import build_constraints  # noqa: E402
@@ -201,14 +215,37 @@ def cmd_generate(args: argparse.Namespace) -> int:
     world = _load_world_or_exit()
     season = _season_or_exit(world, args.season)
     competitions = [world.competition(c) for c in season.competitions]
-    frame, frame_warnings = _build_frame_or_exit(world, season)
-    cup_schedules, commitments = frame.cup_schedules, frame.commitments
-    constraints = build_constraints(world, season, competitions, commitments)
+    outcomes = _load_outcomes_or_exit(args.outcomes)
+    frame, frame_warnings = _build_frame_or_exit(world, season, outcomes)
+    replan = _replan_or_exit(world, competitions, args)
+    if replan is not None:
+        # What is already over constrains nothing; the unsettled frame stays
+        # for the diff.
+        planning_frame = settle_frame(frame, replan.freeze_before)
+    else:
+        planning_frame = frame
+    cup_schedules, commitments = planning_frame.cup_schedules, planning_frame.commitments
+    constraints = build_constraints(
+        world,
+        season,
+        competitions,
+        commitments,
+        reference=replan.reference_dates if replan else None,
+        frozen=replan.frozen_keys if replan else frozenset(),
+        earliest=replan.freeze_before if replan else None,
+    )
     travel = ApiTravelModel(world)
     ctx = EvalContext(world=world, season=season, travel=travel)
 
     try:
-        slot_plans = plan_slots(world, season, competitions, build_calendar(world, season), frame)
+        slot_plans = plan_slots(
+            world,
+            season,
+            competitions,
+            build_calendar(world, season),
+            planning_frame,
+            replan.round_dates() if replan else None,
+        )
     except SlotPlanningError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
@@ -224,8 +261,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
         competitions=competitions,
         cup_schedules=cup_schedules,
         commitments=commitments,
-        frame=frame,
+        frame=planning_frame,
         slot_plans=slot_plans,
+        replan=replan,
         constraints=constraints,
         ctx=ctx,
         seed=args.seed,
@@ -255,11 +293,18 @@ def cmd_generate(args: argparse.Namespace) -> int:
             print(f"  - {note}", file=sys.stderr)
         return 1
 
+    if replan is not None:
+        try:
+            _finish_replan(world, season, competitions, frame, replan, result)
+        except RuntimeError as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+
     if args.scenarios:
         for candidate in result.candidates:
             if candidate.contingency_plan is not None:
                 candidate.robustness = evaluate_robustness(
-                    world, season, competitions, frame, candidate.matches,
+                    world, season, competitions, planning_frame, candidate.matches,
                     candidate.contingency_plan, candidate.score, ctx, args.scenarios, args.seed,
                 )
 
@@ -268,7 +313,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     html_path = out_dir / f"{season.id}.html"
     json_path = out_dir / f"{season.id}.json"
 
-    european_competitions, resolved_legs = _european_report_data(world, season, frame)
+    european_competitions, resolved_legs = _european_report_data(world, season, planning_frame)
     render_report(
         world,
         season,
@@ -281,11 +326,72 @@ def cmd_generate(args: argparse.Namespace) -> int:
         json_name=json_path.name,
         commitments=commitments,
     )
-    write_json(result, json_path)
+    write_json(result, json_path, replan.locked_keys if replan else frozenset())
 
     _print_summary(result)
+    if replan is not None and result.best is not None and result.best.replan is not None:
+        print(f"\nRevision of {args.from_schedule}:")
+        for line in result.best.replan.summary_lines(world, season.year):
+            print(f"  {line}")
     print(f"\nWrote {html_path} and {json_path}")
     return 0
+
+
+def _load_outcomes_or_exit(path: str | None) -> dict | None:
+    """Known results from a YAML file of team -> competition -> round -> result."""
+    if not path:
+        return None
+    try:
+        data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        print(f"FAIL: cannot read outcomes {path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(data, dict):
+        print(f"FAIL: {path}: expected team -> competition -> round -> result", file=sys.stderr)
+        sys.exit(1)
+    return data
+
+
+def _replan_or_exit(world, competitions, args):
+    """The `ReplanSpec` for `--from-schedule`, None for a fresh season."""
+    if not args.from_schedule:
+        if args.freeze_before or args.from_option:
+            print("FAIL: --freeze-before and --from-option need --from-schedule.", file=sys.stderr)
+            sys.exit(1)
+        return None
+    try:
+        schedule = load_schedule(Path(args.from_schedule), world, args.from_option)
+        freeze = date.fromisoformat(args.freeze_before) if args.freeze_before else None
+        return build_replan_spec(competitions, schedule, freeze)
+    except (ExternalScheduleError, ReplanError, ValueError) as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _finish_replan(world, season, competitions, frame, replan, result) -> None:
+    """Check every option kept the frozen matches exactly, and attach what
+    changed. `frame` is the one with the known results but not yet settled."""
+    try:
+        before = build_season_frame(world, season)[0].commitments
+    except (CupSchedulingError, EuropeanCascadeError) as exc:
+        raise RuntimeError(str(exc)) from exc
+    old_constraints = build_constraints(world, season, competitions, before)
+    old_plan = plan_for(list(replan.reference), old_constraints)
+    for candidate in result.candidates:
+        problems = check_frozen(replan, candidate.matches)
+        if problems:
+            raise RuntimeError(
+                f"{candidate.label} changed {len(problems)} frozen match(es), e.g. {problems[0]}"
+            )
+        plan = candidate.contingency_plan
+        counts = (
+            (len(old_plan.fallbacks), len(plan.fallbacks))
+            if old_plan is not None and plan is not None
+            else None
+        )
+        candidate.replan = diff_schedules(
+            replan, candidate.matches, before, frame.commitments, counts
+        )
 
 
 def cmd_score(args: argparse.Namespace) -> int:
@@ -542,12 +648,12 @@ def _season_or_exit(world, season_id: str):
         sys.exit(1)
 
 
-def _build_frame_or_exit(world, season):
+def _build_frame_or_exit(world, season, outcomes=None):
     """Resolve the season frame (UEFA weeks, then the cups around them), or
     exit with a clear reason why not."""
     try:
-        return build_season_frame(world, season)
-    except (CupSchedulingError, EuropeanCascadeError) as exc:
+        return build_season_frame(world, season, outcomes)
+    except (CupSchedulingError, EuropeanCascadeError, KnownOutcomeError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -627,6 +733,35 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "cpsat only: if match-day rest (min_rest_days) makes the season infeasible, "
             "retry with it as a penalty; slot spacing between rounds is never relaxed"
+        ),
+    )
+    p_generate.add_argument(
+        "--from-schedule",
+        metavar="FILE",
+        help=(
+            "re-plan this schedule (a previous generate's JSON, or a CSV with a round column) "
+            "instead of starting fresh; rows marked locked stay as they are"
+        ),
+    )
+    p_generate.add_argument(
+        "--freeze-before",
+        metavar="DATE",
+        help=(
+            "with --from-schedule: matches strictly before DATE (YYYY-MM-DD) stay exactly as "
+            "they are, and so do their rounds' slots; later matches may move"
+        ),
+    )
+    p_generate.add_argument(
+        "--from-option",
+        metavar="LABEL",
+        help="with --from-schedule: which option of a generate JSON to revise, e.g. 'Option 2' (default the first)",
+    )
+    p_generate.add_argument(
+        "--outcomes",
+        metavar="FILE",
+        help=(
+            "YAML of known cup/UEFA results, team -> competition -> round -> won|lost|reached; "
+            "a lost round drops the commitments after it, a won or reached one makes it certain"
         ),
     )
     p_generate.add_argument("--out", default=str(SCHEDULES_ROOT))

@@ -17,6 +17,11 @@ scales:
   the most effective, since a team stuck with a bad calendar can be relocated
   wholesale. It is a relabelling, so the tournament stays valid.
 
+A re-plan (#13) starts from the schedule being revised instead of a greedy
+one. Its frozen matches are pinned, no move reaches a day before the freeze
+date, and the two coarse moves are off: they reshuffle rounds and teams, which
+a revision must not.
+
 Hard violations are folded into the cost as a large finite penalty rather than
 rejected outright, so the search can cross infeasible ground to reach
 something better; if the answer is still infeasible the report says which
@@ -35,6 +40,7 @@ import math
 import random
 import time
 from bisect import bisect_left
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import date
 
@@ -155,7 +161,10 @@ class LocalSearchScheduler:
             polish_iterations_total = round(request.iterations * self.polish_fraction)
             explore_iterations = request.iterations - polish_iterations_total
             iterations_per_restart = max(1, explore_iterations // max(1, self.restarts))
-        domains = DayDomains(by_competition, request.commitments)
+        replan = request.replan
+        domains = DayDomains(
+            by_competition, request.commitments, replan.freeze_before if replan else None
+        )
         reported_empty_domains = False
 
         candidates: list[Candidate] = []
@@ -171,16 +180,19 @@ class LocalSearchScheduler:
         for restart in range(self.restarts):
             seed = request.seed + restart * 7919
             try:
-                initial, pinned, pin_warnings = build_initial_schedule(
-                    request.world,
-                    request.season,
-                    request.competitions,
-                    seed,
-                    calendar,
-                    cup_schedules=request.cup_schedules,
-                    commitments=request.commitments,
-                    slot_plans=slot_plans,
-                )
+                if replan is not None:
+                    initial, pinned, pin_warnings = list(replan.reference), set(replan.frozen_keys), []
+                else:
+                    initial, pinned, pin_warnings = build_initial_schedule(
+                        request.world,
+                        request.season,
+                        request.competitions,
+                        seed,
+                        calendar,
+                        cup_schedules=request.cup_schedules,
+                        commitments=request.commitments,
+                        slot_plans=slot_plans,
+                    )
             except ValueError as exc:
                 notes.append(f"restart {restart}: {exc}")
                 continue
@@ -204,7 +216,7 @@ class LocalSearchScheduler:
 
             if not reported_empty_domains:
                 reported_empty_domains = True
-                stuck = domains.empty_fixtures(working)
+                stuck = domains.empty_fixtures([m for m in working if m.key not in pinned])
                 if stuck:
                     notes.append(
                         f"{len(stuck)} fixture(s) have no day in their round's slot that clears "
@@ -231,7 +243,7 @@ class LocalSearchScheduler:
             matches = [m.to_match() for m in best]
             matches.sort(key=lambda m: (m.date, m.competition_id, m.home_team))
             matches = assign_kickoff_times(
-                matches, request.competitions, request.season.fixed_requirements
+                matches, request.competitions, request.season.fixed_requirements, _kickoffs(request)
             )
             detail_ctx = _with_detail(request.ctx)
             score = evaluate(matches, request.constraints, detail_ctx)
@@ -246,6 +258,9 @@ class LocalSearchScheduler:
             )
             restart_states.append((best, pinned))
 
+        if replan is not None:
+            # Every restart starts from the same schedule, so several often end on one.
+            candidates = _distinct(candidates)
         chosen = select_diverse(candidates, request.top_n)
 
         if polish_budget_s > 0 and chosen:
@@ -287,6 +302,21 @@ class LocalSearchScheduler:
             search_stats=overall_stats,
             slot_plans=slot_plans,
         )
+
+
+def _kickoffs(request: SolveRequest) -> dict[str, str | None] | None:
+    return request.replan.kickoffs if request.replan else None
+
+
+def _distinct(candidates: list[Candidate]) -> list[Candidate]:
+    seen: set[tuple] = set()
+    kept = []
+    for candidate in candidates:
+        fingerprint = tuple(sorted((m.key, m.date) for m in candidate.matches))
+        if fingerprint not in seen:
+            seen.add(fingerprint)
+            kept.append(candidate)
+    return kept
 
 
 def _round_slots(matches: list[WorkingMatch]) -> dict[tuple[str, int], RoundSlot]:
@@ -370,7 +400,7 @@ def _polish_candidates(
         matches = [m.to_match() for m in polished]
         matches.sort(key=lambda m: (m.date, m.competition_id, m.home_team))
         matches = assign_kickoff_times(
-            matches, request.competitions, request.season.fixed_requirements
+            matches, request.competitions, request.season.fixed_requirements, _kickoffs(request)
         )
         score = evaluate(matches, request.constraints, _with_detail(request.ctx))
         if score.sort_key < candidate.score.sort_key:
@@ -613,8 +643,15 @@ class _MoveSet:
         live: LiveIndex | None = None,
     ) -> None:
         self._live = live
-        self._domains = DayDomains(calendars, request.commitments)
-        self._weights = list(_BASE_WEIGHTS)
+        replan = request.replan
+        self._domains = DayDomains(
+            calendars, request.commitments, replan.freeze_before if replan else None
+        )
+        # The coarse moves reshuffle rounds and whole teams, which a revision
+        # must not (#13).
+        self._enabled = (True, replan is None, True, replan is None)
+        self._last_enabled = max(i for i, on in enumerate(self._enabled) if on)
+        self._weights = list(_BASE_WEIGHTS) if all(self._enabled) else self._normalised(_BASE_WEIGHTS)
         self._cuts = self._cumulative(self._weights)
         self.last_operator = 0
         self._matches = matches
@@ -669,7 +706,7 @@ class _MoveSet:
 
     def apply(self, rng: random.Random) -> list[_Snapshot] | None:
         roll = rng.random()
-        operator = next((i for i, cut in enumerate(self._cuts) if roll < cut), _OPERATORS - 1)
+        operator = next((i for i, cut in enumerate(self._cuts) if roll < cut), self._last_enabled)
         self.last_operator = operator
         if operator == 0:
             return self._shift_day(rng)
@@ -688,9 +725,14 @@ class _MoveSet:
             for i in range(_OPERATORS)
         ]
         blended = [max(0.5 * w + 0.5 * share, _MIN_WEIGHT) for w, share in zip(self._weights, shares, strict=True)]
-        norm = sum(blended)
-        self._weights = [w / norm for w in blended]
+        self._weights = self._normalised(blended)
         self._cuts = self._cumulative(self._weights)
+
+    def _normalised(self, weights: Sequence[float]) -> list[float]:
+        """`weights` scaled to sum to one, a disabled operator's share gone."""
+        live = [w if on else 0.0 for w, on in zip(weights, self._enabled, strict=True)]
+        norm = sum(live)
+        return [w / norm for w in live]
 
     # -- date admissibility ---------------------------------------------------
 

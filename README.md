@@ -17,6 +17,8 @@ poetry install                     # or: pip install pydantic pyyaml jinja2 pyte
 
 python cli.py validate                              # data integrity, no solving
 python cli.py generate --season 2026                 # solve, write schedules/2026.html
+python cli.py generate --from-schedule schedules/2026.json --freeze-before 2026-08-15 \
+    --outcomes results.yml                            # re-plan, played rounds frozen
 python cli.py score my_schedule.csv --season 2026     # score a real/proposed schedule
 python cli.py refresh-reference-data                  # diff data/*.yml against a live API
 python cli.py refresh-travel-times                    # fetch real ground travel times
@@ -451,6 +453,50 @@ report always lists the moves grouped by trigger and marks, on the calendar,
 the days a team plays only if it advances. Robustness is a report, not part of
 the search objective. `scripts/publish_web.py` passes `--scenarios 200`.
 
+#### Re-planning mid-season (#13)
+
+A fixture list is revised as results arrive, but a match already played or
+announced must not move. `generate --from-schedule FILE` revises an existing
+schedule instead of starting fresh: a previous `generate`'s JSON (`--from-option
+"Option 2"` picks an option, the first by default), or a CSV/JSON in the
+`score` format with a `round` column added. `leg`, `kickoff_time` and `locked`
+columns are read when present. The file must be a complete season of the
+season's leagues, since the fixtures it names (round, leg, who is at home) are
+reused as they are.
+
+- `--freeze-before DATE` freezes every match strictly before `DATE`; a row
+  with `locked: true` is frozen wherever it falls (the output JSON writes the
+  flag back, so a later revision keeps it). Frozen matches keep their date,
+  venue, kickoff time and home side, and the CLI refuses to write a result in
+  which one differs. A round keeps the slot its matches sit in, so a round the
+  freeze date cuts through keeps its days, but its open matches may not take
+  one before `DATE`.
+- `--outcomes FILE` folds known results into the outcome trees
+  (`rounds/known_outcomes.py`): YAML of `team -> competition -> round -> won |
+  lost | reached`, e.g. `brann_m: {conference_league_2026: {q3: lost}}`.
+  `lost` ends the branch (the commitments after it go), `won` and `reached`
+  make the round, and the ones before it, certain, so they turn hard. It also
+  works without `--from-schedule`, to plan a season knowing them.
+- Commitments whose rest days end before `DATE` are dropped, and a frozen match
+  is never given a fallback date; a fallback is never planned for a day before
+  `DATE`.
+- The local solver starts from the schedule being revised and moves only open
+  matches within their slot (`shift_day`, and `flip_orientation` for a pair
+  with both legs open; `swap_rounds` and `swap_teams` are off); CP-SAT keeps
+  the rounds and orientation too and solves the match days with frozen ones
+  fixed, so it returns one option. The soft `schedule_stability` rule
+  (`-10` per fixture off its old date, only present in a re-plan) keeps what the
+  new frame does not touch where it was.
+- The CLI, the report ("Changes since the input schedule") and the JSON
+  (`replan`) list the matches moved (from, to), the contingent rounds the results
+  made certain or ruled out, and the number of fallback dates before and after.
+  They are measured against the season's frame without `--outcomes`, so a
+  second revision lists everything settled since the season began.
+
+A frozen match that breaks a hard rule under the new frame (an announced match
+a now-certain UEFA leg crowds) cannot be repaired; it stays and the rule shows
+as violated.
+
 ### Main tournaments (Champions/Europa/Conference League)
 
 Issue #79 lifts the "qualifying only" boundary above for the three UEFA
@@ -555,7 +601,9 @@ shifted by latitude),
 `late_kickoff_long_travel` (penalises a late Sunday kickoff for an away team
 with a long trip home — tunable `late_from`/`long_travel_hours`),
 `rivalry_fixture_on_date` (a fixed annual pairing, home side alternating by
-year — `Season.rivalry_fixtures`; Bodø/Glimt vs Tromsø IL on May 16), and
+year — `Season.rivalry_fixtures`; Bodø/Glimt vs Tromsø IL on May 16),
+`schedule_stability` (only in a re-plan, #13: a fixture off the date it had in
+the schedule being revised), and
 `tv_time_spread` (issue #76: a round's matches on the preferred weekday
 following a TV-broadcast shape — most at a primary kickoff time, one shifted
 early, one shifted late — plus a penalty for colliding, at the same date and
@@ -719,6 +767,15 @@ python -m pytest tests/ -v
   move of long random sequences (the annealer's operators plus unfiltered
   edits), on the 2026 data and on a small crowded world; per-rule totals, the
   live index and the fallback plan must all match a from-scratch evaluation.
+- `test_replan_frozen.py` (solvers) — a re-plan against both backends: frozen
+  matches and their kickoff times come out byte-identical, a locked row stays,
+  no open match lands before the freeze date, an untouched frame changes
+  nothing, a new commitment moves only the match it hits, local search's
+  moves leave frozen matches alone, and fallbacks skip frozen matches and past
+  days. `tests/integration/test_replan.py` runs the same through the CLI on the
+  2026 data with a mid-August freeze and known UEFA results.
+- `test_known_outcomes.py` — `won`/`lost`/`reached` collapse the outcome trees
+  and unknown rounds are rejected.
 - `test_integration_coupled_leagues.py` — the actual point of this project:
   on the real 2026 data, scheduling the two leagues together produces
   strictly more back-to-back home days for dual clubs than scheduling them

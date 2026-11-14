@@ -8,6 +8,9 @@ into a solver.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from datetime import date
+
 from ..contingency import ContingencyPlanner
 from ..model.loader import World
 from ..model.schema import Competition, Season
@@ -42,6 +45,7 @@ from .soft import (
     PreferredWeekday,
     RestComfort,
     RivalryFixtureOnDate,
+    ScheduleStability,
     SoftVenuePreference,
     TvTimeSpread,
 )
@@ -52,6 +56,10 @@ def build_constraints(
     season: Season,
     competitions: list[Competition],
     commitments: CommitmentSet | None = None,
+    *,
+    reference: Mapping[str, date] | None = None,
+    frozen: frozenset[str] = frozenset(),
+    earliest: date | None = None,
 ) -> list[Constraint]:
     """Every rule in force for this season, hard first.
 
@@ -59,6 +67,11 @@ def build_constraints(
     already-resolved cup and UEFA dates of teams sharing them — never
     scheduled here, only kept clear of: the hard ones by `CommitmentConflict`,
     the contingent ones by the fallback rules over a `ContingencyPlanner` (#9).
+
+    A re-plan (#13) passes `reference`, each fixture's date in the schedule
+    being revised, which adds the stability rule, and `frozen`, the keys of
+    matches that stay as they are and so are never given a fallback;
+    `earliest` is the freeze date, before which no fallback is planned.
     """
     hard_requirements = [r for r in season.fixed_requirements if r.hard]
 
@@ -88,7 +101,7 @@ def build_constraints(
             constraints.append(CommitmentConflict(commitments=commitments, source=source))
     planner = None
     if any(not c.hard for c in commitments):
-        planner = ContingencyPlanner(world, season, competitions, commitments)
+        planner = ContingencyPlanner(world, season, competitions, commitments, frozen=frozen, earliest=earliest)
         constraints.append(ContingencyCoverage(planner=planner))
         constraints.append(ContingencyCollision(planner=planner))
 
@@ -124,6 +137,9 @@ def build_constraints(
         constraints.append(
             RivalryFixtureOnDate(fixtures=season.rivalry_fixtures, season_year=season.year)
         )
+
+    if reference is not None:
+        constraints.append(ScheduleStability(reference=dict(reference)))
 
     return constraints
 
@@ -161,6 +177,7 @@ CONSTRAINT_DESCRIPTIONS: dict[str, str] = {
     "late_kickoff_long_travel": "Away teams with a long trip avoid late Sunday kickoffs.",
     "rivalry_fixture_on_date": "A fixed annual pairing lands on its date, home side alternating by year.",
     "tv_time_spread": "A round's preferred-weekday matches spread across an early, primary, and late kickoff time, clear of other competitions' kickoffs.",
+    "schedule_stability": "In a re-plan, a fixture stays on the date it had in the schedule being revised.",
 }
 
 
@@ -197,6 +214,7 @@ RULE_NAMES: dict[str, str] = {
     "late_kickoff_long_travel": "Late kickoff on long trips",
     "rivalry_fixture_on_date": "Rivalry fixture date",
     "tv_time_spread": "TV kickoff spread",
+    "schedule_stability": "Schedule stability",
 }
 
 
@@ -233,6 +251,7 @@ BADGE_LABELS: dict[str, str] = {
     "late_kickoff_long_travel": "late + long trip",
     "rivalry_fixture_on_date": "rivalry date",
     "tv_time_spread": "TV slots",
+    "schedule_stability": "moved",
 }
 
 

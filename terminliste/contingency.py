@@ -210,11 +210,18 @@ class ContingencyPlanner:
         season: Season,
         competitions: list[Competition],
         commitments: CommitmentSet,
+        frozen: frozenset[str] = frozenset(),
+        earliest: date | None = None,
     ) -> None:
         self.world = world
         self.season = season
         self.policy = season.contingency_policy
         self.commitments = commitments
+        # Matches that stay as announced are never exposed: they get no
+        # fallback, and so need none (#13).
+        self._frozen = frozen
+        # A fallback on a day already gone is no fallback.
+        self._earliest = earliest
         self._competitions = {c.id: c for c in competitions}
         self._reserve_capacity = {r.date: r.capacity for r in season.reserve_dates}
         self._scoped_blackouts = {
@@ -299,6 +306,8 @@ class ContingencyPlanner:
 
     def triggers_of(self, match: Match) -> tuple[str, ...]:
         """Outcome-tree nodes whose commitments sit too close to `match`."""
+        if self._frozen and match.key in self._frozen:
+            return ()
         day = match.date.toordinal()
         nodes: set[str] = set()
         for team_id in (match.home_team, match.away_team):
@@ -438,7 +447,11 @@ class ContingencyPlanner:
         key = (match.date, kind)
         found = self._candidate_days.get(key)
         if found is None:
-            found = self._candidate_days[key] = tuple(self._candidates_for(match.date, kind))
+            found = self._candidate_days[key] = tuple(
+                d
+                for d in self._candidates_for(match.date, kind)
+                if self._earliest is None or d >= self._earliest
+            )
         return found
 
     def _candidates_for(self, base: date, kind: FallbackKind) -> list[date]:

@@ -201,3 +201,77 @@ def _entry_match(world, competition_id, home, away, date_str):
         date=day,
         venue=world.team(home).home_venue,
     )
+
+
+def test_round_leg_kickoff_and_locked_columns_are_read_when_given(tmp_path, world):
+    from terminliste.external_schedule import load_schedule
+
+    path = tmp_path / "schedule.csv"
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=["competition", "date", "home_team", "away_team", "round", "leg", "kickoff_time", "locked"],
+        )
+        writer.writeheader()
+        writer.writerow(
+            {"competition": "eliteserien_2026", "date": "2026-04-05", "home_team": "brann_m",
+             "away_team": "viking_m", "round": "3", "leg": "1", "kickoff_time": "18:30", "locked": "true"}
+        )
+        writer.writerow(
+            {"competition": "eliteserien_2026", "date": "2026-07-12", "home_team": "viking_m",
+             "away_team": "brann_m", "round": "17", "leg": "2", "kickoff_time": "", "locked": ""}
+        )
+    loaded = load_schedule(path, world)
+
+    assert [(m.round_index, m.leg, m.kickoff_time) for m in loaded.matches] == [(2, 1, "18:30"), (16, 2, None)]
+    assert loaded.locked == {loaded.matches[0].key}
+    assert loaded.has_rounds
+
+
+def test_a_schedule_without_rounds_says_so(tmp_path, world):
+    from terminliste.external_schedule import load_schedule
+
+    path = tmp_path / "schedule.csv"
+    _write_csv(
+        path,
+        [{"competition": "eliteserien_2026", "date": "2026-04-05", "home_team": "brann_m", "away_team": "viking_m", "venue": ""}],
+    )
+
+    assert not load_schedule(path, world).has_rounds
+
+
+def test_a_generate_json_reads_its_chosen_option(tmp_path, world):
+    from terminliste.external_schedule import load_schedule
+
+    def row(home, away, day):
+        return {"date": day, "competition": "eliteserien_2026", "round": 1, "leg": 1,
+                "home": home, "away": away, "venue": None, "kickoff_time": None}
+
+    path = tmp_path / "2026.json"
+    path.write_text(json.dumps({"options": [
+        {"label": "Option 1", "matches": [row("brann_m", "viking_m", "2026-04-05")]},
+        {"label": "Option 2", "matches": [row("viking_m", "brann_m", "2026-04-06")]},
+    ]}))
+
+    assert load_schedule(path, world).matches[0].home_team == "brann_m"
+    assert load_schedule(path, world, "Option 2").matches[0].home_team == "viking_m"
+    with pytest.raises(ExternalScheduleError, match="Option 3"):
+        load_schedule(path, world, "Option 3")
+
+
+def test_replan_spec_needs_a_complete_round_numbered_season(tmp_path, world, season):
+    from terminliste.external_schedule import ExternalSchedule, load_schedule
+    from terminliste.replan import ReplanError, build_replan_spec
+
+    competitions = [world.competition(c) for c in season.competitions]
+    path = tmp_path / "schedule.csv"
+    _write_csv(
+        path,
+        [{"competition": "eliteserien_2026", "date": "2026-04-05", "home_team": "brann_m", "away_team": "viking_m", "venue": ""}],
+    )
+    with pytest.raises(ReplanError, match="round number"):
+        build_replan_spec(competitions, load_schedule(path, world), None)
+
+    numbered = ExternalSchedule(matches=load_schedule(path, world).matches, has_rounds=True)
+    with pytest.raises(ReplanError, match="not a complete season"):
+        build_replan_spec(competitions, numbered, None)

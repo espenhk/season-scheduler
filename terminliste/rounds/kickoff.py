@@ -77,8 +77,12 @@ def assign_kickoff_times(
     matches: list[Match],
     competitions: list[Competition],
     requirements: list[FixedRequirement] | None = None,
+    fixed: dict[str, str | None] | None = None,
 ) -> list[Match]:
     """Return `matches` with `kickoff_time` filled in.
+
+    `fixed` maps a match key to the kickoff it keeps, even none, for the matches
+    of a re-plan that are already announced (#13).
 
     Non-destructive: returns a new list, leaving the input untouched.
     """
@@ -94,7 +98,9 @@ def assign_kickoff_times(
     for m in matches:
         competition = by_competition.get(m.competition_id)
         kickoff = explicit.get((m.competition_id, m.home_team, m.date))
-        if kickoff is None and competition is not None:
+        if fixed is not None and m.key in fixed:
+            kickoff = fixed[m.key]
+        elif kickoff is None and competition is not None:
             if m.round_index == final_round_index(competition):
                 kickoff = competition.final_round_kickoff_time
             elif m.key in tv_spread:

@@ -124,9 +124,14 @@ class _Problem:
         )
         self.slot_plans = slot_plans
         by_competition = calendars_by_competition(calendar, request.competitions)
+        replan = request.replan
         planned = plan_competitions(
             request.world, request.season, request.competitions, calendar,
             slot_plans=slot_plans,
+            fixtures=(
+                {c.id: replan.fixtures(c.id) for c in request.competitions if c.format == "league"}
+                if replan else None
+            ),
         )
         self.planned = planned
         self._clear: dict[tuple[str, date], bool] = {}
@@ -268,6 +273,9 @@ class CpSatScheduler:
         candidates: list[Candidate] = []
         plans_by_candidate: dict[int, dict[str, SlotPlan]] = {}
 
+        if request.replan is not None:
+            return _solve_replan(cp_model, problem, started, slot_plans)
+
         shortage = _slot_shortage(problem)
         if shortage:
             notes.extend(shortage)
@@ -357,6 +365,129 @@ class CpSatScheduler:
             search_stats=stats,
             slot_plans=best_plans or slot_plans,
         )
+
+
+# -- re-plan ------------------------------------------------------------------
+
+# What a fixture is worth staying on its old date; the scorer's `schedule_stability`
+# rule charges the same (#13).
+_STAY_WEIGHT = 10.0
+
+
+def _solve_replan(cp_model, problem: _Problem, started: float, slot_plans) -> SolverResult:
+    """Revise a schedule: rounds, orientation and frozen dates are fixed, so
+    only Level 2 (match days) is solved, rewarding each open match for staying
+    on its old date. One schedule comes out, since a revision has no use for
+    options forced apart from each other."""
+    request = problem.request
+    spec = request.replan
+    notes: list[str] = []
+    stats = SearchStats()
+    placed, problem_note = _place_replan(problem)
+    if problem_note:
+        stats.hard_violation_counts.update(["no_day_for_fixture"])
+        return SolverResult(
+            solver="cpsat", elapsed_s=time.perf_counter() - started, notes=[error(problem_note)],
+            search_stats=stats, slot_plans=slot_plans,
+        )
+
+    deadline = started + request.time_budget_s
+    built = _build_level_two(cp_model, problem, placed, [], relax=False)
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = max(1.0, deadline - time.perf_counter())
+    solver.parameters.num_search_workers = 8
+    solver.parameters.random_seed = request.seed
+    status = solver.Solve(built.model)
+    if status == cp_model.INFEASIBLE and request.relax_min_rest:
+        built = _build_level_two(cp_model, problem, placed, [], relax=True)
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = max(1.0, deadline - time.perf_counter())
+        solver.parameters.num_search_workers = 8
+        solver.parameters.random_seed = request.seed
+        status = solver.Solve(built.model)
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            notes.append(
+                "min_rest_days RELAXED on request — some matches fall on short rest; "
+                "see the min_rest_days row in the score breakdown."
+            )
+    stats.investigated += 1
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        culprits = (
+            _culprits(solver, status, built.assumptions, cp_model)
+            if status == cp_model.INFEASIBLE
+            else [solver.StatusName(status)]
+        )
+        stats.hard_violation_scenarios += 1
+        stats.hard_violation_counts.update(culprits or ["unknown"])
+        notes.append(
+            error(
+                "No revision keeps the frozen matches and satisfies the hard rules — "
+                "conflicts involve " + (", ".join(culprits) or solver.StatusName(status))
+            )
+        )
+        return SolverResult(
+            solver="cpsat", elapsed_s=time.perf_counter() - started, notes=notes,
+            search_stats=stats, slot_plans=slot_plans,
+        )
+
+    matches = _extract(solver, built.placed, built.days)
+    matches.sort(key=lambda m: (m.date, m.competition_id, m.home_team))
+    matches = assign_kickoff_times(
+        matches, request.competitions, request.season.fixed_requirements, spec.kickoffs
+    )
+    score = evaluate(matches, request.constraints, _with_detail(request.ctx))
+    if score.feasible:
+        stats.feasible += 1
+    else:
+        stats.hard_violation_scenarios += 1
+        stats.hard_violation_counts.update(r.constraint_id for r in score.hard_results() if r.count)
+        notes.append(
+            error(
+                "No fully feasible schedule found — see the hard-rule rows in the breakdown "
+                "(the contingency rules are checked after solving, not by the model)."
+            )
+        )
+    candidate = Candidate(
+        matches=matches,
+        score=score,
+        label="Option 1",
+        seed=request.seed,
+        round_slots={(c, r): slot_plans[c].chosen[r] for c in slot_plans for r in range(slot_plans[c].rounds)},
+        contingency_plan=plan_for(matches, request.constraints),
+    )
+    return SolverResult(
+        candidates=[candidate], solver="cpsat", elapsed_s=time.perf_counter() - started,
+        notes=notes, search_stats=stats, slot_plans=slot_plans,
+    )
+
+
+def _place_replan(problem: _Problem):
+    """The re-plan's fixtures as Level 2 sees them: a frozen match has its one
+    old day, an open one the days of its round's slot it may take from the
+    freeze date on. Returns `(placed, note)`; `note` names a fixture left with
+    no day."""
+    spec = problem.request.replan
+    reference = {m.key: m for m in spec.reference}
+    placed: list[_Placed] = []
+    for lg in problem.leagues:
+        for fixture in lg.plan.fixtures:
+            old = reference[fixture.key]
+            slot = lg.slot_plan.slot_of(fixture.round_index)
+            if fixture.key in spec.frozen_keys:
+                days = [old.date]
+            else:
+                days = [
+                    d
+                    for d in problem.fixture_days(lg, fixture.home_team, fixture.away_team, slot)
+                    if spec.freeze_before is None or d >= spec.freeze_before
+                ]
+            if not days:
+                return [], (
+                    f"no day for {fixture.home_team} v {fixture.away_team} in {lg.id} round "
+                    f"{fixture.round_index + 1} that clears the blackouts and hard commitments"
+                )
+            placed.append(_Placed(len(placed), fixture, lg, old.venue, slot, days))
+    return placed, None
 
 
 # -- one pass ----------------------------------------------------------------
@@ -1119,6 +1250,13 @@ def _build_level_two(cp_model, problem: _Problem, placed: list[_Placed], previou
                 clear = model.NewBoolVar(f"comfort_{team_id}_{start}_{length}")
                 model.Add(sum(window) <= 1).OnlyEnforceIf(clear)
                 terms.append((_scaled(weight), clear))
+
+    replan = problem.request.replan
+    if replan is not None:
+        for item in placed:
+            old = replan.reference_dates.get(item.key)
+            if item.key not in replan.frozen_keys and old in days[item.index]:
+                terms.append((_scaled(_STAY_WEIGHT), days[item.index][old]))
 
     for earlier in previous_dates:
         same = [

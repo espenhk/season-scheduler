@@ -37,15 +37,15 @@ tests having run first.
 | `terminliste/model/**` | **all** |
 | `terminliste/rounds/cup_schedule.py` | **all** |
 | `terminliste/rounds/european_schedule.py` | **all** |
-| `terminliste/rounds/round_robin.py`, `terminliste/rounds/kickoff.py` | `rounds`, `solvers`, `integration` |
+| `terminliste/rounds/round_robin.py`, `terminliste/rounds/kickoff.py`, `terminliste/rounds/known_outcomes.py` | `rounds`, `solvers`, `integration` |
 | `terminliste/scoring/**`, `terminliste/contingency.py`, `terminliste/scenarios.py` | `scoring`, `solvers`, `report`, `integration` |
-| `terminliste/solvers/**`, `terminliste/slot_planner.py`, `terminliste/frame.py` | `solvers`, `integration` (`solvers/local_search.py` and `solvers/domains.py` also `scoring`: `tests/scoring/test_incremental.py` drives the real operators) |
+| `terminliste/solvers/**`, `terminliste/slot_planner.py`, `terminliste/frame.py`, `terminliste/replan.py` | `solvers`, `integration` (`solvers/local_search.py` and `solvers/domains.py` also `scoring`: `tests/scoring/test_incremental.py` drives the real operators) |
 | `terminliste/report/**` | `report` |
 | `terminliste/refdata/**` | `refdata`, `scripts` |
 | `terminliste/external_schedule.py`, `terminliste/baseline.py` | `integration` |
 | `scripts/**` | `scripts`, `integration` (`refresh_baselines.py --check` is asserted by `tests/integration/test_baselines.py`) |
 | `scripts/bench_scoring.py` | `scoring` (`tests/scoring/test_incremental.py` builds its schedule through it) |
-| `cli.py` | `integration` — nothing under `tests/` imports `cli.py` directly; this is a placeholder so the path isn't silently untested, not real coverage |
+| `cli.py` | `integration` — nothing under `tests/` imports `cli.py` directly; `tests/integration/test_replan.py` runs `generate` through it as a subprocess, but most commands have no coverage beyond that |
 | `data/**` | **all** |
 | `baselines/**` | `integration` |
 | `tests/conftest.py`, `tests/factories.py`, `conftest.py` (repo root) | **all** |

@@ -206,6 +206,86 @@ def test_delta_matches_full_evaluation_on_random_move_sequences(state, seed):
     assert replans, "the fallback plan was never recomputed"
 
 
+def _as_replan(state):
+    """The state turned into a re-plan of its own starting schedule, frozen
+    before the middle of the season, with every rule that mode adds."""
+    from terminliste.replan import ReplanSpec
+    from terminliste.scoring.registry import build_constraints
+
+    request, working, pinned, calendars = state
+    days = sorted(m.date for m in working)
+    spec = ReplanSpec.build([m.to_match() for m in working], days[len(days) // 2], frozenset())
+    constraints = build_constraints(
+        request.world,
+        request.season,
+        request.competitions,
+        request.commitments,
+        reference=spec.reference_dates,
+        frozen=spec.frozen_keys,
+        earliest=spec.freeze_before,
+    )
+    return replace(request, constraints=constraints, replan=spec), working, set(spec.frozen_keys), calendars
+
+
+@pytest.mark.parametrize("seed", [21, 22])
+def test_delta_matches_full_evaluation_in_a_replan(state, seed):
+    """Frozen matches are exempt from fallbacks and each displaced fixture
+    costs stability; delta scoring agrees with full evaluation on both."""
+    request, working, pinned, calendars = _as_replan(state)
+    assert {"schedule_stability", "contingency_coverage"} <= {c.id for c in request.constraints}
+    working = _copy(working)
+    scorer = DeltaScorer(working, request.constraints, request.ctx)
+    moves = ls._MoveSet(working, pinned, request, calendars, live=scorer.live)
+    rng = random.Random(seed)
+
+    _assert_agrees(scorer, working, request)
+    steps = displaced = 0
+    while steps < 250:
+        undo = _raw_move(working, rng, moves)
+        if not undo:
+            continue
+        steps += 1
+        cost, broken = scorer.propose([entry[0] for entry in undo], prune=False)
+        full = ls._cost(working, request.constraints, request.ctx)
+        assert broken == full.hard_ids
+        assert cost == pytest.approx(full.cost)
+        displaced += scorer._count[
+            next(i for i, c in enumerate(request.constraints) if c.id == "schedule_stability")
+        ] > 0
+        if rng.random() < 0.5:
+            scorer.accept()
+        else:
+            ls._restore(working, undo)
+            scorer.reject()
+        _assert_agrees(scorer, working, request)
+    assert displaced
+
+
+def test_a_replans_moves_never_touch_a_frozen_match(state):
+    request, working, pinned, calendars = _as_replan(state)
+    working = _copy(working)
+    frozen = {i: ls._snap(i, m) for i, m in enumerate(working) if m.key in pinned}
+    scorer = DeltaScorer(working, request.constraints, request.ctx)
+    moves = ls._MoveSet(working, pinned, request, calendars, live=scorer.live)
+    rng = random.Random(4)
+
+    applied = 0
+    while applied < 600:
+        undo = moves.apply(rng)
+        if undo is None:
+            continue
+        applied += 1
+        assert not {entry[0] for entry in undo} & set(frozen)
+        cost, _ = scorer.propose([entry[0] for entry in undo], prune=True)
+        if rng.random() < 0.5 and cost != float("inf"):
+            scorer.accept()
+        else:
+            ls._restore(working, undo)
+            scorer.reject()
+    assert {i: ls._snap(i, working[i]) for i in frozen} == frozen
+    _assert_agrees(scorer, working, request)
+
+
 def test_the_fallback_plan_is_skipped_for_moves_that_cannot_reach_it(state):
     """Most proposals touch nothing the plan reads; the tracker must not
     replan for those, or the speedup is gone."""

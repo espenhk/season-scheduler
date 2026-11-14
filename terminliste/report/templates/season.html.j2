@@ -1475,6 +1475,35 @@
   </details>
   {% endif %}
 
+  {% if option.replan %}
+  {% set rp = option.replan %}
+  <details class="season-part replan">
+    <summary>Changes since the input schedule — {{ rp.rows|length }} of {{ rp.total }} match{{ '' if rp.total == 1 else 'es' }} moved, {{ rp.frozen }} frozen</summary>
+    {% if rp.rows %}
+    <table class="breakdown contingency-table">
+      <thead>
+        <tr><th>Fixture</th><th>From</th><th>To</th><th>Note</th></tr>
+      </thead>
+      <tbody>
+      {% for row in rp.rows %}
+        <tr>
+          <td>{{ row.fixture }}</td>
+          <td data-label="From">{{ row.from }}</td>
+          <td data-label="To">{{ row.to }}</td>
+          <td data-label="Note">{{ row.note }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="desc">No open match moved.</p>
+    {% endif %}
+    {% if rp.triggered %}<p class="desc">Contingencies triggered: {{ rp.triggered|join(', ') }}.</p>{% endif %}
+    {% if rp.retired %}<p class="desc">Contingencies retired: {{ rp.retired|join(', ') }}.</p>{% endif %}
+    {% if rp.fallbacks %}<p class="desc">Fallback dates planned: {{ rp.fallbacks[0] }} before, {{ rp.fallbacks[1] }} now.</p>{% endif %}
+  </details>
+  {% endif %}
+
   {% if option.contingency and (option.contingency.groups or option.contingency.uncovered) %}
   {% set cont = option.contingency %}
   <details class="season-part contingency">
