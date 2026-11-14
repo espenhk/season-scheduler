@@ -198,6 +198,29 @@ def test_clashes_are_ranked_not_fatal_when_no_clear_slot_exists():
     assert all("no clear slot was available" in w for w in plan.warnings)
 
 
+def test_trimming_a_default_day_recomputes_its_clashes():
+    """A re-plan's trim moves round 2's default from Mar 6 (clear) to Mar 7,
+    inside t0's hard rest window and t1's contingent one (#24)."""
+    world, league = _tiny_league(min_rest_days=5)
+    season = f.season(competitions=["league"], start=date(2026, 3, 1), end=date(2026, 3, 30))
+    commitments = f.commitment_set(
+        f.commitment("t0", date(2026, 3, 8), min_rest_days=1),
+        f.commitment("t1", date(2026, 3, 8), hard=False, min_rest_days=1),
+    )
+    frame = SeasonFrame.from_resolved(world, [], commitments)
+    reference = {league.id: {0: (date(2026, 3, 1),), 1: (date(2026, 3, 9),), 2: (date(2026, 3, 15),)}}
+
+    plan = plan_slots(
+        world, season, [league], build_calendar(world, season), frame, reference
+    )["league"]
+
+    slot = plan.chosen[1]
+    assert slot.default_day == date(2026, 3, 7)
+    assert slot.clashing_teams == ("t0",)
+    assert slot.contingent_clashes == 1
+    assert plan.clashing_rounds == {1: ("t0",)}
+
+
 def _slot(kind, start, end=None):
     from terminliste.model.slots import RoundSlot
 
