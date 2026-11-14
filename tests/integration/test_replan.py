@@ -67,7 +67,19 @@ def work(tmp_path_factory):
     rows = stale["options"][0]["matches"]
     victim = next(m for m in rows if (m["home"], m["away"], m["leg"]) == ("viking_m", "sarpsborg08_m", 2))
     assert victim["date"] > "2026-09-18"
-    victim["date"] = "2026-09-18"
+    # A day beside Viking's 17 Sep league-phase match that leaves both clubs'
+    # rest otherwise intact, so the commitment is the only thing it breaks.
+    teams = {victim["home"], victim["away"]}
+    played = [
+        date.fromisoformat(m["date"])
+        for m in rows
+        if m is not victim and teams & {m["home"], m["away"]}
+    ]
+    victim["date"] = next(
+        day.isoformat()
+        for day in (date(2026, 9, 18), date(2026, 9, 16), date(2026, 9, 19), date(2026, 9, 15))
+        if all(abs((day - other).days) > 2 for other in played)
+    )
     locked = next(m for m in rows if m["date"] >= LATE_LOCKED and m is not victim)
     locked["locked"] = True
     (work / "stale.json").write_text(json.dumps(stale))
@@ -112,10 +124,13 @@ def _check_revision(work, victim, locked, revised: dict) -> None:
     assert revised["hard_violations"] == 0
 
     moved = revised["replan"]["moved"]
-    assert [(m["home"], m["away"], m["from"]) for m in moved] == [
-        (victim["home"], victim["away"], victim["date"])
-    ]
-    assert moved[0]["to"] >= FREEZE
+    # The stale match is repaired; anything else that moves sits beside a round
+    # the outcomes just made certain, which depends on where the base put it.
+    key = (victim["home"], victim["away"], victim["date"])
+    repaired = [m for m in moved if (m["home"], m["away"], m["from"]) == key]
+    assert len(repaired) == 1 and repaired[0]["to"] >= FREEZE
+    settled = {"viking_m", "tromso_m", "brann_m"}
+    assert all({m["home"], m["away"]} & settled for m in moved)
     assert revised["replan"]["frozen"] == len(frozen)
 
 
@@ -147,9 +162,13 @@ def test_known_results_retire_and_trigger_contingencies(local):
 
 
 def test_the_diff_is_printed_and_reported(work, local):
-    run, _ = local
+    run, revised = local
+    victim = work[1]
+    move = next(m for m in revised["replan"]["moved"] if m["from"] == victim["date"])
+    start, end = (date.fromisoformat(move[k]) for k in ("from", "to"))
 
-    assert "Revision of" in run.stdout and "Fri 18 Sep -> Sun 20 Sep" in run.stdout
+    assert "Revision of" in run.stdout
+    assert f"{start:%a} {start.day} {start:%b} -> {end:%a} {end.day} {end:%b}" in run.stdout
     assert "Changes since the input schedule" in (work[0] / "local" / "2026.html").read_text()
 
 

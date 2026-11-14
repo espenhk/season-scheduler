@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import factories as f
 import pytest
 
 from terminliste.frame import build_season_frame
@@ -80,3 +81,17 @@ def test_the_plan_is_written_to_the_json(result, tmp_path):
     plan = json.loads(path.read_text(encoding="utf-8"))["options"][0]["contingency_plan"]
     assert plan["fallbacks"]
     assert {"match", "trigger", "from", "to", "kind"} <= set(plan["fallbacks"][0])
+
+
+def test_a_toppserien_match_on_a_womens_european_date_is_exposed_to_that_tie(result, frame):
+    _, request = result
+    planner = next(c.planner for c in request.constraints if hasattr(c, "planner"))
+    q3 = next(
+        c
+        for c in frame.commitments.contingent_for("brann_w")
+        if c.node_id == "brann_w/womens_champions_league_2026/q3"
+    )
+    league = request.world.competition("toppserien_2026")
+    match = f.match(league.id, "brann_w", "rosenborg_w", q3.date, "brann_stadion")
+
+    assert q3.node_id in planner.triggers_of(match)

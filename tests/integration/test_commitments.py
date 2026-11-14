@@ -8,6 +8,7 @@ import pytest
 
 from terminliste.frame import build_season_frame
 from terminliste.model.schema import ContingencyPolicy
+from terminliste.solvers.greedy import build_initial_schedule
 
 
 @pytest.fixture(scope="module")
@@ -74,6 +75,9 @@ def test_only_entry_rounds_are_hard_by_default(frame):
         "tromso_m/europa_league_2026/q2",
         "lillestrom_m/europa_league_2026/playoff",
         "brann_m/conference_league_2026/q2",
+        "brann_w/womens_champions_league_2026/q2",
+        "valerenga_w/womens_champions_league_2026/q2",
+        "rosenborg_w/womens_europa_cup_2026/q1",
         # Each cup's first round for the Eliteserien clubs
         *(f"{t}/cup_men_2026/r4" for t in frame.cup_trees if t.endswith("_m")),
         *(f"{t}/cup_men_2027/r1" for t in frame.cup_trees if t.endswith("_m")),
@@ -125,6 +129,53 @@ def test_cup_rounds_after_the_entry_round_are_contingent_with_compounding_probab
     assert by_node["brann_m/cup_men_2027/r4"].reached_probability == pytest.approx(0.85**3)
     assert by_node["brann_m/cup_men_2027/qf"].reached_probability == pytest.approx(0.85**3 * 0.5)
     assert not by_node["brann_m/cup_men_2027/r2"].hard
+
+
+def test_toppserien_entrants_get_commitments_from_the_womens_european_competitions(frame):
+    assert {
+        c.competition_id for c in frame.commitments.for_team("brann_w") if c.source == "uefa"
+    } == {"womens_champions_league_2026", "womens_europa_cup_2026"}
+
+
+def test_womens_europe_is_hard_only_at_entry_and_contingent_after(frame):
+    by_node = {c.node_id: c for c in frame.commitments}
+    assert by_node["brann_w/womens_champions_league_2026/q2"].hard
+    assert by_node["rosenborg_w/womens_europa_cup_2026/q1"].hard
+    for node in (
+        "brann_w/womens_champions_league_2026/q3",
+        "brann_w/womens_europa_cup_2026/q1",
+        "valerenga_w/womens_europa_cup_2026/q2",
+        "rosenborg_w/womens_europa_cup_2026/q2",
+    ):
+        assert not by_node[node].hard, node
+
+
+def test_no_toppserien_match_lands_on_a_hard_womens_european_date(world, season, frame):
+    league = world.competition("toppserien_2026")
+    matches, _, _ = build_initial_schedule(
+        world, season, [league], seed=1, commitments=frame.commitments
+    )
+    hard = [
+        c
+        for team in league.teams
+        for c in frame.commitments.hard_for(team)
+        if c.competition_id.startswith("womens_")
+    ]
+    assert hard
+    clashes = [
+        (m.home_team, m.away_team, m.date, c.node_id)
+        for m in matches
+        for c in hard
+        if c.team_id in (m.home_team, m.away_team) and c.clashes(m.date)
+    ]
+    assert not clashes
+
+
+def test_womens_uefa_weeks_never_touch_the_mens_clubs(frame):
+    womens = [w for w in frame.uefa_weeks if w.competition_id.startswith("womens_")]
+    assert womens
+    for week in womens:
+        assert all(t.endswith("_w") for t in week.teams), week.label
 
 
 def test_a_low_threshold_never_makes_lillestroms_exclusive_league_phases_both_hard(world, season):

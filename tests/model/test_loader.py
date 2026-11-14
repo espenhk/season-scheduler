@@ -532,6 +532,8 @@ def test_european_competitions_are_present_and_shaped_correctly(world):
         "champions_league_main_2026",
         "europa_league_main_2026",
         "conference_league_main_2026",
+        "womens_champions_league_2026",
+        "womens_europa_cup_2026",
     }
 
 
