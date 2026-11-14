@@ -47,6 +47,10 @@
     --warn-line: #ecd199;
     --bad-line: #f2c6c0;
     --flash: #ffd9a8;
+    /* A fixture that may move to a fallback day: its badge, ghost and calendar mark. */
+    --move-ink: #4338ca;
+    --move-line: #9b9ee0;
+    --move-tint: #eef0fe;
     /* Text on a solid --ink / --accent / --bad fill, and the tooltip's own dark box. */
     --on-ink: #ffffff;
     --on-ink-muted: #c9c9c4;
@@ -88,6 +92,9 @@
       --warn-line: #5d4a22;
       --bad-line: #5e2d28;
       --flash: #5a4120;
+      --move-ink: #b4b8ff;
+      --move-line: #5a5fb0;
+      --move-tint: #23264a;
       --on-ink: #1c1c1a;
       --on-ink-muted: #55554f;
       --on-accent: #0c1a25;
@@ -641,6 +648,10 @@
   .flag-good { background: var(--tint-good-strong); color: var(--good-ink); border-color: var(--good-line); }
   .flag-cost { background: var(--tint-warn-strong); color: var(--warn-ink); border-color: var(--warn-line); }
   .flag-broken { background: var(--bad); color: var(--on-bad); }
+  /* A move badge is a destination, not a cost: dashed indigo, like the ghost it points to. */
+  .flag-move { background: var(--move-tint); color: var(--move-ink); border: 1px dashed var(--move-line); }
+  .flag-move::before { content: "\21B7  "; content: "\21B7  " / ""; }
+  .flag-cost.flag-nofallback::before { content: "!  "; content: "!  " / ""; }
   /* A sign in front of each badge, so good, cost and broken differ without colour; the alt text keeps it out of speech. */
   .flag-good::before { content: "+ "; content: "+ " / ""; }
   .flag-cost::before { content: "\2212  "; content: "\2212  " / ""; }
@@ -649,6 +660,21 @@
   .tooltip { white-space: normal; text-align: left; }
   .tooltip .tt-head { display: block; font-weight: 700; }
   .tooltip .tt-detail { display: block; margin-top: 3px; }
+  .tooltip.tt-move { max-width: min(340px, 86vw); }
+  .tt-move-pair { display: flex; align-items: stretch; gap: 8px; margin-top: 7px; }
+  .tt-side { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; padding: 5px 8px; border-radius: 5px; background: rgba(255, 255, 255, 0.1); font-size: 12.5px; line-height: 1.35; }
+  .tt-move-pair .tt-side:last-child { background: rgba(255, 255, 255, 0.2); box-shadow: inset 0 0 0 1px var(--tip-muted); }
+  .tt-side b { font-size: 13.5px; }
+  .tt-k { color: var(--tip-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .tt-venue { color: var(--tip-muted); }
+  .tt-arrow { align-self: center; font-size: 16px; }
+  .tt-kind { display: block; margin-top: 6px; color: var(--tip-muted); font-size: 12px; }
+  .tt-triggers { margin: 6px 0 0; padding: 0; list-style: none; }
+  .tt-triggers li { margin-top: 3px; padding-left: 10px; border-left: 2px solid var(--tip-muted); }
+  .tt-sub { display: block; color: var(--tip-muted); font-size: 12px; }
+  .tt-chance { display: flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 12.5px; }
+  .tt-bar { flex: none; width: 56px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.25); overflow: hidden; }
+  .tt-bar i { display: block; height: 100%; background: var(--tip-fg); }
   .fx-row .flags { flex-wrap: wrap; min-width: 120px; }
   .comp-tag {
     /* Short names (e.g. "NM(m)") carry their own deliberate case, so no
@@ -892,9 +918,31 @@
   .section-list:not(:has(> details:not([hidden]))) { display: none; }
   .section-list > details { margin: 0; }
   .contingency-table { margin: 4px 0 8px; }
+  .cont-link { color: var(--accent); font-weight: 600; }
+  .cont-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+  .cont-chip { font-size: 12px; padding: 0 8px; border-radius: 9px; background: var(--move-tint); color: var(--move-ink); border: 1px dashed var(--move-line); }
+  .contingency-table td.cont-if { text-align: left; }
+  .contingency-table td.cont-day { white-space: nowrap; }
   .day-maybe { margin: 8px 0 0; padding: 0; list-style: none; color: var(--muted); font-size: 13px; }
   .day-maybe::before { content: "If they advance"; display: block; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
   .cal-maybe { color: var(--muted); font-size: 12px; line-height: 1; }
+  .cal-move { color: var(--move-ink); font-size: 12px; line-height: 1; font-weight: 700; }
+  /* A fallback day as a card: dashed and dimmed, so it reads as "maybe here" next to real fixtures. */
+  .fx-ghost { display: inline-block; max-width: 100%; border: 1px dashed var(--move-line); border-radius: 7px; background: var(--move-tint); }
+  .ghost-main {
+    display: block; width: 100%; font: inherit; font-size: 13px; color: var(--ink-2); text-align: left; cursor: pointer;
+    background: none; border: 0; border-radius: 7px; padding: 7px 12px 7px 10px;
+  }
+  .ghost-main:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .ghost-body { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; opacity: 0.85; }
+  .ghost-mark { color: var(--move-ink); font-weight: 700; }
+  .ghost-when { color: var(--move-ink); font-size: 12.5px; font-weight: 600; }
+  .ghost-why { color: var(--muted); font-size: 12px; white-space: normal; max-width: 44ch; }
+  .fx-ghost .vs { color: var(--muted); }
+  .fx-ghost .d { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .day-detail .fixtures > .fx-ghost { display: block; margin-top: 6px; }
+  .fx-ghost.lens-dim { opacity: 0.5; }
+  .fx-ghost.flash { background: var(--flash); }
   .section-list > details + details { border-top: 1px solid var(--line); }
   .section-list > details > summary { padding: 12px 0; }
   .section-list > details[open] { padding-bottom: 14px; }
@@ -1504,28 +1552,30 @@
   </details>
   {% endif %}
 
-  {% if option.contingency and (option.contingency.groups or option.contingency.uncovered) %}
+  {% if option.contingency and (option.contingency.rows or option.contingency.uncovered) %}
   {% set cont = option.contingency %}
+  {% set option_no = loop.index %}
   <details class="season-part contingency">
-    <summary>Contingency moves — {{ cont.moves }} fallback{{ '' if cont.moves == 1 else 's' }} if a later cup or European round is reached</summary>
-    {% for group in cont.groups %}
-    <h4 class="group-head">{{ group.trigger }} <span class="desc">({{ group.probability }})</span></h4>
+    <summary>Contingency moves — {{ cont.moves }} match{{ '' if cont.moves == 1 else 'es' }} may move if a later cup or European round is reached</summary>
+    {% if cont.rows %}
     <table class="breakdown contingency-table">
       <thead>
-        <tr><th>Fixture</th><th>From</th><th>To</th><th>Kind</th></tr>
+        <tr><th>Fixture</th><th>From</th><th>To</th><th>Shift</th><th>If</th><th>Kind</th></tr>
       </thead>
       <tbody>
-      {% for row in group.rows %}
+      {% for row in cont.rows %}
         <tr>
-          <td>{{ row.fixture }}</td>
-          <td data-label="From">{{ row.from }}</td>
-          <td data-label="To">{{ row.to }}</td>
+          <td><a class="cont-link" href="#option={{ option_no }}&amp;view=by-competition&amp;target=fx-{{ row.key }}">{{ row.fixture }}</a></td>
+          <td class="cont-day" data-label="From">{{ row.from }}</td>
+          <td class="cont-day" data-label="To">{{ row.to }}</td>
+          <td class="cont-day" data-label="Shift">{{ row.shift }}</td>
+          <td class="cont-if" data-label="If"><ul class="cont-chips">{% for t in row.triggers %}<li class="cont-chip">{{ t.team }}: {{ t.round }} <b>{{ t.pct }}%</b></li>{% endfor %}</ul></td>
           <td data-label="Kind">{{ row.kind }}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
-    {% endfor %}
+    {% endif %}
     {% if cont.uncovered %}
     <h4 class="group-head">No fallback found ({{ cont.uncovered|length }})</h4>
     <ul class="examples">{% for item in cont.uncovered %}<li>{{ item }}</li>{% endfor %}</ul>

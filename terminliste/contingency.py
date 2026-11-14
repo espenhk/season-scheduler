@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from bisect import bisect_left
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
@@ -58,6 +59,8 @@ class ContingencyPlan:
 
     fallbacks: dict[str, Fallback] = field(default_factory=dict)
     uncovered: list[str] = field(default_factory=list)
+    # The triggers of each uncovered match, so a report can say what exposes it.
+    uncovered_triggers: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     def moves(self, matches: list[Match]) -> list[ContingencyMove]:
         by_key = {m.key: m for m in matches}
@@ -132,6 +135,14 @@ class PlanFootprint:
             leg_edges=frozenset().union(*(p.leg_edges for p in parts)),
             keys=frozenset().union(*(p.keys for p in parts)),
         )
+
+
+def combined_probability(probabilities: Iterable[float]) -> float:
+    """Chance at least one of several independent events happens."""
+    stay = 1.0
+    for p in probabilities:
+        stay *= 1.0 - p
+    return 1.0 - stay
 
 
 def _date_of(match: Match) -> date:
@@ -318,10 +329,7 @@ class ContingencyPlanner:
 
     def disruption_probability(self, triggers: tuple[str, ...]) -> float:
         """Chance at least one trigger is reached, treating them as independent."""
-        stay = 1.0
-        for node_id in triggers:
-            stay *= 1.0 - self._node_probability[node_id]
-        return 1.0 - stay
+        return combined_probability(self._node_probability[node_id] for node_id in triggers)
 
     def _movable(self, match: Match) -> bool:
         competition = self._competitions.get(match.competition_id)
@@ -538,6 +546,7 @@ class ContingencyPlanner:
                 fallback = self._pick(match, triggers, index, leg_bounds, chosen, on_reserve, cache)
             if fallback is None:
                 plan.uncovered.append(match.key)
+                plan.uncovered_triggers[match.key] = triggers
                 continue
             plan.fallbacks[match.key] = fallback
             chosen.add(match, fallback)
@@ -673,5 +682,6 @@ __all__ = [
     "Fallback",
     "PlanFootprint",
     "ReasonCache",
+    "combined_probability",
     "plan_for",
 ]

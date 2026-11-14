@@ -50,7 +50,14 @@ from ..scoring.soft import PreferredWeekday
 from ..slot_planner import search_space_log10
 from ..solvers.base import Candidate, SearchStats, SolverResult, severity_of
 from . import payload
-from .contingency_view import contingency_view, maybe_by_day, replan_view, robustness_view
+from .contingency_view import (
+    MoveIndex,
+    contingency_view,
+    maybe_by_day,
+    moves_wire,
+    replan_view,
+    robustness_view,
+)
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -324,8 +331,12 @@ def _build_option(
     score = candidate.score
     limit = 200 if full_diagnostics else 4
     entries = _match_entries(world, candidate, dual_club_ids, competition_colors)
+    commitments = commitments or CommitmentSet()
+    move_index = MoveIndex(world, candidate.contingency_plan, candidate.matches, commitments)
+    move_triggers, move_wire = moves_wire(move_index)
     for uid, entry in enumerate(entries, start=len(shared_entries)):
         entry["uid"] = uid
+        entry["moves"] = move_wire.get(entry["key"])
     combined_entries = entries + shared_entries
     # Rules with at least one fixture to show, and how many.
     pinned = _pinned_fixture_counts(entries)
@@ -367,7 +378,7 @@ def _build_option(
         "soft": _soft_summary(score, gross, world, pinned),
         "fairness": fairness,
         "contingency": contingency_view(
-            world, candidate.contingency_plan, candidate.matches, commitments or CommitmentSet()
+            world, candidate.contingency_plan, candidate.matches, commitments, move_index
         ),
         "robustness": robustness_view(candidate.robustness),
         "replan": replan_view(world, candidate.replan),
@@ -388,6 +399,7 @@ def _build_option(
             score_order=[rule_index[r.constraint_id] for r in _ordered_results(score)],
             club_unpinned=_club_unpinned(world, candidate, rule_index),
             club_ranks=_club_ranks(fairness),
+            move_triggers=move_triggers,
             fairness=fairness,
             limit=limit,
             full=full_diagnostics,
@@ -1160,6 +1172,7 @@ def _match_entries(
         comp_color = competition_colors.get(match.competition_id, _DEFAULT_COMP_COLOR)
         entries.append(
             {
+                "key": match.key,
                 "date": match.date,
                 "kickoff_time": match.kickoff_time,
                 "home_team": match.home_team,
