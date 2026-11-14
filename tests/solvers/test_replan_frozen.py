@@ -295,3 +295,74 @@ def test_a_frozen_match_that_came_without_a_kickoff_stays_without_one(solver_nam
     assert check_frozen(spec, revised) == []
     assert all(m.kickoff_time is None for m in revised if m.key in spec.frozen_keys)
     assert any(m.kickoff_time for m in revised if m.key not in spec.frozen_keys)
+
+
+def _swap_two_rounds(base):
+    """`base` with the dates of two rounds of one league exchanged, as
+    `swap_rounds` leaves a searched schedule: round order no longer follows
+    date order. Returns the schedule, the round now in the later slot and the
+    day before the earlier slot starts."""
+    by_round: dict[int, list] = {}
+    for m in base:
+        if m.competition_id == "men":
+            by_round.setdefault(m.round_index, []).append(m.date)
+    chronological = sorted(by_round, key=lambda r: min(by_round[r]))
+    first, second = chronological[4], chronological[6]
+    shift = 7 * round((min(by_round[second]) - min(by_round[first])).days / 7)
+    out = []
+    for m in base:
+        if m.competition_id == "men" and m.round_index == first:
+            m = m.model_copy(update={"date": m.date + timedelta(days=shift)})
+        elif m.competition_id == "men" and m.round_index == second:
+            m = m.model_copy(update={"date": m.date - timedelta(days=shift)})
+        out.append(m)
+    return out, first, min(by_round[first]) - timedelta(days=1)
+
+
+@pytest.mark.parametrize("solver_name", SOLVERS)
+def test_rounds_out_of_date_order_keep_their_other_days(solver_name, base):
+    """Slot days are trimmed against the neighbouring weekends by date. By round
+    index the swapped rounds' neighbours are wrong, almost every day is cut and
+    an open match cannot leave its reference date."""
+    from terminliste.model.calendar import build_calendar
+
+    swapped, later_round, freeze = _swap_two_rounds(base)
+    spec = _spec(swapped, freeze=freeze)
+    victim = next(
+        m for m in _open(spec) if m.competition_id == "men" and m.round_index == later_round
+    )
+    commitments = CommitmentSet(
+        [f.commitment(victim.home_team, victim.date, min_rest_days=1, source="uefa")]
+    )
+    request = _request(spec, commitments)
+    plans = resolve_slot_plans(request, build_calendar(request.world, request.season))
+    slot = plans["men"].slot_of(later_round)
+    assert len(slot.days) > 1
+
+    result = _get_scheduler(solver_name).solve(request)
+
+    moved = diff_schedules(spec, result.best.matches).moved
+    assert result.best.score.feasible, result.best.score.hard_results()
+    assert [(m.home_team, m.away_team) for m in moved] == [(victim.home_team, victim.away_team)]
+    assert slot.contains(moved[0].to_date)
+
+
+@pytest.mark.parametrize("solver_name", SOLVERS)
+def test_only_matches_of_movable_teams_move(solver_name, base):
+    spec = _spec(base)
+    open_matches = [m for m in _open(spec) if m.date >= FREEZE + timedelta(days=20)]
+    victim = open_matches[0]
+    other = next(
+        m for m in open_matches if {m.home_team, m.away_team}.isdisjoint((victim.home_team, victim.away_team))
+    )
+    clashes = [
+        f.commitment(m.home_team, m.date, min_rest_days=1, source="uefa") for m in (victim, other)
+    ]
+    movable = frozenset({victim.home_team})
+    spec = spec.with_movable_teams(movable)
+    result = _get_scheduler(solver_name).solve(_request(spec, CommitmentSet(clashes)))
+
+    moved = diff_schedules(spec, result.best.matches).moved
+    assert moved
+    assert all(not movable.isdisjoint((m.home_team, m.away_team)) for m in moved)
+    assert other.key in spec.pinned_keys and victim.key not in spec.pinned_keys

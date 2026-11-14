@@ -181,7 +181,7 @@ class LocalSearchScheduler:
             seed = request.seed + restart * 7919
             try:
                 if replan is not None:
-                    initial, pinned, pin_warnings = list(replan.reference), set(replan.frozen_keys), []
+                    initial, pinned, pin_warnings = list(replan.reference), set(replan.pinned_keys), []
                 else:
                     initial, pinned, pin_warnings = build_initial_schedule(
                         request.world,

@@ -8,6 +8,7 @@ import copy
 import json
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -199,3 +200,64 @@ def test_a_partial_schedule_is_refused(work):
 
     assert run.returncode == 1
     assert "not a complete season" in run.stderr
+
+
+def test_a_replan_refuses_to_overwrite_the_schedule_it_revises(work):
+    folder, _, _ = work
+    before = (folder / "base" / "2026.json").read_text()
+    run = _cli("generate", "--from-schedule", str(folder / "base" / "2026.json"), "--out", str(folder / "base"))
+
+    assert run.returncode == 1
+    assert "overwrite" in run.stderr and "--out" in run.stderr
+    assert (folder / "base" / "2026.json").read_text() == before
+
+
+BODO_WINS = "bodo_glimt_m:\n  champions_league_2026: {playoff: won}\n"
+# A freeze through the middle of a round: Sun 9 Aug is open, Fri 7 Aug is not.
+MID_ROUND_FREEZE = "2026-08-09"
+
+
+def _narrowed(folder: Path, name: str, *extra: str):
+    (folder / "bodo.yml").write_text(BODO_WINS)
+    run = _generate(
+        "--from-schedule", str(folder / "base" / "2026.json"),
+        "--freeze-before", MID_ROUND_FREEZE,
+        "--outcomes", str(folder / "bodo.yml"),
+        "--out", str(folder / name),
+        *extra,
+    )
+    assert run.returncode == 0, run.stderr
+    return _option(folder / name / "2026.json")
+
+
+@pytest.mark.parametrize("solver", ["local", pytest.param("cpsat", marks=pytest.mark.skipif(
+    not HAS_ORTOOLS, reason="needs OR-Tools"))])
+def test_narrowing_a_cascade_moves_only_matches_of_the_teams_it_touches(work, world, season, solver):
+    """Bodø/Glimt reaching the Champions League play-off makes their qualifying
+    legs certain and rules out the Europa League branch. Every match that moves
+    involves a team whose commitments changed, and every frozen row is intact."""
+    from terminliste.frame import build_season_frame
+    from terminliste.replan import affected_teams, settle_frame
+
+    folder, _, _ = work
+    extra = ("--solver", "cpsat", "--time-budget", "60") if solver == "cpsat" else ()
+    revised = _narrowed(folder, f"bodo_{solver}", *extra)
+    base = _option(folder / "base" / "2026.json")["matches"]
+
+    freeze = date.fromisoformat(MID_ROUND_FREEZE)
+    outcomes = {"bodo_glimt_m": {"champions_league_2026": {"playoff": "won"}}}
+    affected = affected_teams(
+        settle_frame(build_season_frame(world, season)[0], freeze).commitments,
+        settle_frame(build_season_frame(world, season, outcomes)[0], freeze).commitments,
+    )
+    moved = revised["replan"]["moved"]
+    after = _row_texts(revised["matches"])
+    frozen = [m for m in base if m["date"] < MID_ROUND_FREEZE]
+
+    assert affected == {"bodo_glimt_m"}
+    assert moved, "Bodø's certain play-off should displace at least one match"
+    assert all({m["home"], m["away"]} & affected for m in moved)
+    assert all(m["from"] >= MID_ROUND_FREEZE and m["to"] >= MID_ROUND_FREEZE for m in moved)
+    assert all(after[_identity(m)] == json.dumps(m, sort_keys=True) for m in frozen)
+    assert len(frozen) > 150
+    assert "bodo_glimt_m/europa_league_main_2026/league" in revised["replan"]["contingencies_retired"]

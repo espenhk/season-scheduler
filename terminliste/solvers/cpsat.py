@@ -473,7 +473,7 @@ def _place_replan(problem: _Problem):
         for fixture in lg.plan.fixtures:
             old = reference[fixture.key]
             slot = lg.slot_plan.slot_of(fixture.round_index)
-            if fixture.key in spec.frozen_keys:
+            if fixture.key in spec.pinned_keys:
                 days = [old.date]
             else:
                 days = [
@@ -1255,7 +1255,7 @@ def _build_level_two(cp_model, problem: _Problem, placed: list[_Placed], previou
     if replan is not None:
         for item in placed:
             old = replan.reference_dates.get(item.key)
-            if item.key not in replan.frozen_keys and old in days[item.index]:
+            if item.key not in replan.pinned_keys and old in days[item.index]:
                 terms.append((_scaled(_STAY_WEIGHT), days[item.index][old]))
 
     for earlier in previous_dates:

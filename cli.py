@@ -52,6 +52,7 @@ from terminliste.model.travel import ApiTravelModel  # noqa: E402
 from terminliste.refdata import refresh_competition, refresh_travel_times  # noqa: E402
 from terminliste.replan import (  # noqa: E402
     ReplanError,
+    affected_teams,
     build_replan_spec,
     check_frozen,
     diff_schedules,
@@ -219,9 +220,22 @@ def cmd_generate(args: argparse.Namespace) -> int:
     frame, frame_warnings = _build_frame_or_exit(world, season, outcomes)
     replan = _replan_or_exit(world, competitions, args)
     if replan is not None:
+        if (Path(args.out) / f"{season.id}.json").resolve() == Path(args.from_schedule).resolve():
+            print(
+                f"FAIL: the result would overwrite {args.from_schedule}, the schedule being "
+                "revised; pass --out with another folder.",
+                file=sys.stderr,
+            )
+            return 1
         # What is already over constrains nothing; the unsettled frame stays
         # for the diff.
         planning_frame = settle_frame(frame, replan.freeze_before)
+        if outcomes:
+            # Only what the results touch may move.
+            unresolved = settle_frame(_build_frame_or_exit(world, season)[0], replan.freeze_before)
+            replan = replan.with_movable_teams(
+                affected_teams(unresolved.commitments, planning_frame.commitments)
+            )
     else:
         planning_frame = frame
     cup_schedules, commitments = planning_frame.cup_schedules, planning_frame.commitments

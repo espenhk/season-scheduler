@@ -189,7 +189,9 @@ def plan_league_slots(
     if reference is not None:
         # The dates the rounds already have stay playable.
         protected |= {day for days in reference.values() for day in days}
-    chosen = _trim_unusable_days(chosen, competition, protected)
+        chosen = _trim_in_date_order(chosen, competition, protected)
+    else:
+        chosen = _trim_unusable_days(chosen, competition, protected)
 
     exempt = competition.day_quota_exempt_rounds
     if not all(
@@ -216,6 +218,20 @@ def plan_league_slots(
             f"hard cup or UEFA commitment for {teams}; no clear slot was available"
         )
     return plan
+
+
+def _trim_in_date_order(
+    chosen: list[RoundSlot], competition: Competition, protected: set[date] | frozenset[date]
+) -> list[RoundSlot]:
+    """`_trim_unusable_days` for rounds that may sit in slots out of date
+    order (a searched schedule swaps rounds): neighbours are by date, not
+    round index."""
+    order = sorted(range(len(chosen)), key=lambda i: (chosen[i].start, chosen[i].end))
+    trimmed = _trim_unusable_days([chosen[i] for i in order], competition, protected)
+    result = list(chosen)
+    for position, i in enumerate(order):
+        result[i] = trimmed[position]
+    return result
 
 
 def _slots_of_reference(

@@ -477,6 +477,12 @@ reused as they are.
   `lost` ends the branch (the commitments after it go), `won` and `reached`
   make the round, and the ones before it, certain, so they turn hard. It also
   works without `--from-schedule`, to plan a season knowing them.
+- With `--outcomes`, only matches involving a team whose commitments the
+  results changed (a round ruled out, or made certain) may move; every other
+  open match stays on its date, in both solvers. Without it, every open match
+  is free but `schedule_stability` discourages moving it. The result is written
+  to `--out` as usual, and the command refuses an `--out` that would overwrite
+  the `--from-schedule` file.
 - Commitments whose rest days end before `DATE` are dropped, and a frozen match
   is never given a fallback date; a fallback is never planned for a day before
   `DATE`.

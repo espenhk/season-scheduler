@@ -45,6 +45,9 @@ class ReplanSpec:
     reference_dates: dict[str, date] = field(default_factory=dict)
     # Kickoff of each frozen match, none included: what was announced stays.
     kickoffs: dict[str, str | None] = field(default_factory=dict)
+    # With known results given, the only teams whose matches may move: those
+    # whose commitments they changed. None leaves every open match free.
+    movable_teams: frozenset[str] | None = None
 
     @classmethod
     def build(
@@ -88,8 +91,20 @@ class ReplanSpec:
             for competition_id, by_round in rounds.items()
         }
 
-    def is_frozen(self, match: Any) -> bool:
-        return match.key in self.frozen_keys
+    def with_movable_teams(self, teams: frozenset[str] | None) -> ReplanSpec:
+        return replace(self, movable_teams=teams)
+
+    @property
+    def pinned_keys(self) -> frozenset[str]:
+        """Matches no solver moves: the frozen ones, and the open ones that
+        involve no team in `movable_teams`."""
+        if self.movable_teams is None:
+            return self.frozen_keys
+        return self.frozen_keys | {
+            m.key
+            for m in self.reference
+            if self.movable_teams.isdisjoint((m.home_team, m.away_team))
+        }
 
 
 def build_replan_spec(
@@ -164,6 +179,21 @@ def settle_frame(frame: SeasonFrame, freeze_before: date | None) -> SeasonFrame:
         uefa_weeks=[w for w in frame.uefa_weeks if not over(w.date, w.min_rest_days)],
         cup_days=[d for d in frame.cup_days if not over(d.date, d.min_rest_days)],
     )
+
+
+def affected_teams(before: CommitmentSet, after: CommitmentSet) -> frozenset[str]:
+    """Teams whose commitments differ between the two sets: a round settled,
+    ruled out, or made certain."""
+
+    def signature(commitments: CommitmentSet, team: str) -> frozenset:
+        return frozenset(
+            (c.node_id, c.date, c.hard, round(c.reached_probability, 6))
+            for c in commitments.for_team(team)
+            if c.reached_probability > 0
+        )
+
+    teams = set(before.team_ids) | set(after.team_ids)
+    return frozenset(t for t in teams if signature(before, t) != signature(after, t))
 
 
 def check_frozen(spec: ReplanSpec, matches: Iterable[Match]) -> list[str]:
@@ -289,7 +319,8 @@ def settled_nodes(before: CommitmentSet, after: CommitmentSet) -> tuple[list[str
     (triggered) or no longer has at all (retired)."""
     maybe = {c.node_id for c in before if not c.hard}
     certain = {c.node_id for c in after if c.hard}
-    present = {c.node_id for c in after}
+    # A branch a result rules out stays in the tree at probability zero.
+    present = {c.node_id for c in after if c.reached_probability > 0}
     return sorted(maybe & certain), sorted(maybe - present)
 
 
@@ -302,6 +333,7 @@ __all__ = [
     "ReplanDiff",
     "ReplanError",
     "ReplanSpec",
+    "affected_teams",
     "build_replan_spec",
     "check_frozen",
     "diff_schedules",

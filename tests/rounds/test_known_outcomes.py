@@ -87,3 +87,18 @@ def test_later_sources_win_when_merged():
 def test_unknown_entries_are_rejected(world, season, outcomes):
     with pytest.raises(KnownOutcomeError):
         build_season_frame(world, season, outcomes)
+
+
+def test_winning_retires_the_branch_it_rules_out(world, season):
+    from terminliste.replan import settled_nodes
+
+    before = build_season_frame(world, season)[0].commitments
+    after = build_season_frame(
+        world, season, {"bodo_glimt_m": {"champions_league_2026": {"playoff": "won"}}}
+    )[0].commitments
+    triggered, retired = settled_nodes(before, after)
+
+    siblings = {c.node_id for c in before if c.node_id.startswith("bodo_glimt_m/europa_league_main_2026/")}
+    assert siblings and siblings <= set(retired)
+    assert "bodo_glimt_m/champions_league_2026/playoff" in triggered
+    assert not set(retired) & {c.node_id for c in after if c.reached_probability > 0}
