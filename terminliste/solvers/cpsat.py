@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import NamedTuple
 
+from ..contingency import plan_for
 from ..display import short_date
 from ..frame import SeasonFrame
 from ..model.calendar import SeasonCalendar, build_calendar, calendars_by_competition
@@ -37,10 +38,11 @@ from ..model.slots import RoundSlot, max_compatible_slots, slots_compatible
 from ..rounds.commitments import CommitmentSet
 from ..rounds.kickoff import assign_kickoff_times
 from ..scoring.base import evaluate
-from ..scoring.soft import ContingentCommitmentConflict
-from ..slot_planner import SlotPlan
+from ..scoring.soft import EXPECTED_DISRUPTION_WEIGHT
+from ..slot_planner import SlotPlan, contingent_slot_cost
 from .base import (
     Candidate,
+    Note,
     SearchStats,
     SolveRequest,
     SolverResult,
@@ -61,6 +63,8 @@ _MIN_REST_RELAX_PENALTY = 500.0
 # a round, and playing a round outside a weekend.
 _SLOT_DRIFT_WEIGHT = 0.3
 _EXTRA_SLOT_WEIGHT = 2.0
+_EXPOSED_DAY_WEIGHT = 1.0
+_NO_ESCAPE_WEIGHT = 30.0
 
 # Share of rounds a later pass may leave in an earlier pass's slot.
 _SLOT_REUSE_SHARE = 0.8
@@ -315,6 +319,7 @@ class CpSatScheduler:
                 round_slots={
                     (c, r): plans[c].chosen[r] for c in plans for r in range(plans[c].rounds)
                 },
+                contingency_plan=plan_for(matches, request.constraints),
             )
             candidates.append(candidate)
             plans_by_candidate[id(candidate)] = plans
@@ -324,6 +329,18 @@ class CpSatScheduler:
         chosen = select_diverse(candidates, request.top_n)
         for position, candidate in enumerate(chosen, start=1):
             candidate.label = f"Option {position}"
+        for candidate in chosen:
+            plan = candidate.contingency_plan
+            if plan is not None and plan.uncovered:
+                notes.append(
+                    Note(
+                        f"{candidate.label}: fallbacks are planned after solving, not by the "
+                        f"model, and {len(plan.uncovered)} exposed match(es) have none "
+                        f"(contingency_coverage): " + ", ".join(plan.uncovered[:5])
+                        + (" ..." if len(plan.uncovered) > 5 else ""),
+                        "warning",
+                    )
+                )
         if chosen and not any(c.score.feasible for c in chosen):
             notes.append(
                 error(
@@ -687,6 +704,15 @@ def _build_level_one(cp_model, problem: _Problem, cuts, tried) -> _LevelOne:
             for s in domain[(lg.id, r)]:
                 if lg.slots[s].kind != "weekend":
                     terms.append((-_scaled(_EXTRA_SLOT_WEIGHT), x[(lg.id, r, s)]))
+                crowded = contingent_slot_cost(lg.slots[s])
+                stuck = sum(
+                    _no_escape(
+                        problem.commitments, (fx.home_team, fx.away_team), list(lg.slots[s].days)
+                    )
+                    for fx in lg.round_fixtures[r]
+                )
+                if crowded or stuck:
+                    terms.append((-_scaled(crowded + _NO_ESCAPE_WEIGHT * stuck), x[(lg.id, r, s)]))
             if planned_slot is not None:
                 drift = model.NewIntVar(0, len(lg.slots), f"drift_{lg.id}_{r}")
                 model.Add(drift >= pos[(lg.id, r)] - planned_slot)
@@ -1033,16 +1059,26 @@ def _build_level_two(cp_model, problem: _Problem, placed: list[_Placed], previou
             if d in discouraged:
                 terms.append((-_scaled(venue_weight), var))
 
-    # Same price as the scorer's `ContingentCommitmentConflict`, so a day near a
-    # commitment the team only maybe reaches is steered away from (#8).
-    contingent_weight = ContingentCommitmentConflict.weight
+    # Same price scale as the scorer's `expected_disruption`, so a day near a
+    # commitment the team only maybe reaches is steered away from (#8). The
+    # fallbacks themselves are planned after solving (#9).
+    contingent_weight = EXPECTED_DISRUPTION_WEIGHT
     for item in placed:
-        for team_id in (item.fixture.home_team, item.fixture.away_team):
+        teams = (item.fixture.home_team, item.fixture.away_team)
+        if _no_escape(problem.commitments, teams, list(days[item.index])):
+            for d, var in days[item.index].items():
+                if _exposed(problem.commitments, teams, d):
+                    terms.append((-_scaled(_NO_ESCAPE_WEIGHT), var))
+        for team_id in teams:
             for commitment in problem.commitments.contingent_for(team_id):
                 for d, var in days[item.index].items():
                     shortfall = commitment.min_rest_days - (abs((d - commitment.date).days) - 1)
                     if shortfall > 0:
-                        penalty = contingent_weight * shortfall * commitment.reached_probability
+                        # The flat part keeps exposed days rare: the more days
+                        # an exposed match has, the likelier it has a fallback (#9).
+                        penalty = contingent_weight * (
+                            shortfall * commitment.reached_probability + _EXPOSED_DAY_WEIGHT
+                        )
                         terms.append((-_scaled(penalty), var))
 
     for club in world.dual_clubs():
@@ -1237,6 +1273,16 @@ def _commitment_clear(window: list[date], fixture, commitments: CommitmentSet) -
         if not commitments.blocked(fixture.home_team, day)
         and not commitments.blocked(fixture.away_team, day)
     ]
+
+
+def _exposed(commitments: CommitmentSet, teams, day: date) -> bool:
+    return any(c.clashes(day) for t in teams for c in commitments.contingent_for(t))
+
+
+def _no_escape(commitments: CommitmentSet, teams, days: list[date]) -> bool:
+    """Whether every day of the slot is near a commitment a team only maybe
+    reaches: a match there has no same-slot fallback (#9)."""
+    return all(_exposed(commitments, teams, d) for d in days)
 
 
 def _scaled(weight: float) -> int:

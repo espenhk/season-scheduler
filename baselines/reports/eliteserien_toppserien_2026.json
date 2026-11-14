@@ -47,14 +47,26 @@
       "count": 0
     },
     {
-      "constraint": "contingent_commitment_conflict",
-      "kind": "soft",
+      "constraint": "contingency_collision",
+      "kind": "hard",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "contingency_coverage",
+      "kind": "hard",
       "total": 0.0,
       "count": 0
     },
     {
       "constraint": "cup_round_conflict",
       "kind": "hard",
+      "total": 0.0,
+      "count": 0
+    },
+    {
+      "constraint": "expected_disruption",
+      "kind": "soft",
       "total": 0.0,
       "count": 0
     },
@@ -129,6 +141,12 @@
       "kind": "soft",
       "total": 40.0,
       "count": 10
+    },
+    {
+      "constraint": "reserve_date_unused",
+      "kind": "hard",
+      "total": 0.0,
+      "count": 0
     },
     {
       "constraint": "rest_comfort",

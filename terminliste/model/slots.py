@@ -21,7 +21,8 @@ class RoundSlot:
 
     `days` are the allowed dates inside `start`..`end`; `default_day` is where
     the round's matches sit unless a clash moves one. `clashing_teams` are the
-    teams with a hard cup or UEFA commitment too close to `default_day`.
+    teams with a hard cup or UEFA commitment too close to `default_day`;
+    `contingent_clashes` counts those with one they only maybe reach (#9).
     """
 
     competition_id: str
@@ -32,6 +33,7 @@ class RoundSlot:
     default_day: date
     label: str = ""
     clashing_teams: tuple[str, ...] = ()
+    contingent_clashes: int = 0
 
     def contains(self, day: date) -> bool:
         return self.start <= day <= self.end

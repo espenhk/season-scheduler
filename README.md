@@ -376,10 +376,42 @@ Everything reads the one `CommitmentSet` held by `SeasonFrame.commitments` and
 league slot when it is hard for someone), greedy placement and round pinning,
 local search's move filter, CP-SAT's candidate domains, `CommitmentConflict`
 (hard, ids `cup_round_conflict` and `european_commitment_conflict`) and
-`ContingentCommitmentConflict` (soft, weight 3.0 x rest shortfall x
-probability). The soft rule stands in for a planned fallback until contingency
-plans exist (#9). CP-SAT carries the same penalty in its Level 2 objective, a
-precomputed linear term per candidate day.
+the contingency rules below. CP-SAT carries a probability-weighted rest
+penalty in its Level 2 objective, a precomputed linear term per candidate day.
+
+#### Fallbacks and reserve dates
+
+A league match within rest distance of a contingent commitment is *exposed*:
+if that cup or UEFA round is reached, the match has to move. `ContingencyPlanner`
+(`terminliste/contingency.py`) gives every exposed match one `Fallback`
+(date, venue, kickoff, trigger nodes, kind) and the result is a
+`ContingencyPlan` on each `Candidate`, written to the JSON as
+`contingency_plan`. The planner is deterministic and runs inside every
+evaluation, so there is no separate search move: the base plan simply scores
+badly until each exposed match has a place to go. Kinds are tried in the
+order of `contingency_policy.fallback_kinds`: another day of the match's own
+Fri-Mon weekend (`same_slot`), a `Season.reserve_dates` midweek
+(`reserve_date`), or the next Saturday or Sunday (`next_free_slot`). A
+`same_slot` fallback may go earlier within the weekend; the other kinds go
+forward only, within `max_fallback_days` after the base date. A fallback must be valid in the
+scenario where its trigger is reached: rest against the team's other matches
+and hard commitments, plus every commitment that can come along with the
+trigger, one match per day, blackouts, venue booking, a dual club's home
+clash and leg order. Final-round matches and matches pinned by a hard
+requirement get no fallback. Reserve dates are kept free of league fixtures
+(`reserve_date_unused`, and the calendar never offers them), each hosts at most
+`capacity` displaced matches, and a cup round counts at most half its alive
+teams, since top-flight sides can meet in it.
+
+Rules: `contingency_coverage` (hard) every exposed match has a valid fallback;
+`contingency_collision` (hard) two fallbacks share a team, venue or club date
+only if their triggers can never both happen (one team's Europa League and
+Conference League play-offs can share; two teams' independent wins cannot);
+`expected_disruption` (soft, weight 3.0 x probability x move cost) steers the
+base plan away from likely moves. The slot planner also penalises a round slot
+that more than three teams share with a contingent commitment, since those
+matches cannot all be covered. CP-SAT plans the fallbacks after solving, so
+its schedule can still fail coverage.
 
 ### Main tournaments (Champions/Europa/Conference League)
 

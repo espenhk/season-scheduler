@@ -106,6 +106,7 @@ class ScheduleIndex:
         "home_dates_by_team",
         "away_dates_by_team",
         "away_venue_by_team_date",
+        "contingency",
     )
 
     def __init__(self, matches: list[Match]) -> None:
@@ -114,6 +115,9 @@ class ScheduleIndex:
         self.by_venue_date: dict[tuple[str, date], list[Match]] = {}
         self.by_date: dict[date, list[Match]] = {}
         self.by_competition: dict[str, list[Match]] = {}
+        # (planner, analysis) cached by the contingency rules (#9): the three
+        # of them read one plan per schedule.
+        self.contingency: tuple[object, object] | None = None
 
         for match in matches:
             self.by_team.setdefault(match.home_team, []).append(match)

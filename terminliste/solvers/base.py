@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Protocol
 
+from ..contingency import ContingencyPlan
 from ..frame import SeasonFrame
 from ..model.calendar import SeasonCalendar
 from ..model.loader import World
@@ -121,6 +122,9 @@ class Candidate:
     # Each round's slot, keyed by (competition_id, round_index), so the
     # day-within-slot step can read it without re-deriving it from dates.
     round_slots: dict[tuple[str, int], RoundSlot] = field(default_factory=dict)
+    # Fallback dates for matches a later cup or UEFA round may displace (#9);
+    # None when the season has no contingent commitments.
+    contingency_plan: ContingencyPlan | None = None
 
     def assignment(self) -> dict[str, object]:
         """Fixture key -> date, the fingerprint used for diversity checks."""

@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from ..contingency import ContingencyPlanner
 from ..model.schema import WEEKDAYS, Competition, FixedRequirement, FullRoundRequirement
 from ..rounds.commitments import CommitmentSet, CommitmentSource
 from .base import Constraint, ConstraintResult, EvalContext, Event, ScheduleIndex
@@ -443,6 +444,103 @@ class CommitmentConflict:
 
 
 @dataclass
+class ReserveDateUnused:
+    """No league fixture on a reserve date: those are kept for fallbacks (#9)."""
+
+    id: str = "reserve_date_unused"
+    kind: str = "hard"
+    weight: float = 1.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        count = 0
+        events: list[Event] = []
+        for day in sorted(ctx.season.reserve_date_set):
+            for match in index.by_date.get(day, ()):
+                count += 1
+                if ctx.detail:
+                    events.append(
+                        Event(
+                            delta=-self.weight,
+                            detail=f"{match.key} is on the reserve date {day}",
+                            match_keys=(match.key,),
+                        )
+                    )
+        return ConstraintResult(self.id, "hard", 0.0 - self.weight * count, count, events)
+
+
+@dataclass
+class ContingencyCoverage:
+    """Every match a possible later cup or UEFA round could displace has a
+    fallback that is valid once that round is reached (#9).
+
+    Valid means rest, one match per day, venue and global blackouts, venue
+    booking, club home clashes and leg order all hold on the fallback date,
+    counting the commitments that come along with the trigger.
+    """
+
+    planner: ContingencyPlanner
+    id: str = "contingency_coverage"
+    kind: str = "hard"
+    weight: float = 1.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        analysis = self.planner.analyse(index)
+        by_key = {m.key: m for m in index.matches} if ctx.detail else {}
+        events: list[Event] = []
+        count = len(analysis.plan.uncovered) + len(analysis.invalid)
+        if ctx.detail:
+            for key in analysis.plan.uncovered:
+                match = by_key[key]
+                triggers = ", ".join(analysis.triggers[key])
+                events.append(
+                    Event(
+                        delta=-self.weight,
+                        detail=(
+                            f"{key} on {match.date} has no valid fallback if {triggers} "
+                            f"is reached"
+                        ),
+                        match_keys=(key,),
+                    )
+                )
+            for key, reason in analysis.invalid:
+                events.append(
+                    Event(
+                        delta=-self.weight,
+                        detail=f"the fallback for {key} is not valid: {reason}",
+                        match_keys=(key,),
+                    )
+                )
+        return ConstraintResult(self.id, "hard", 0.0 - self.weight * count, count, events)
+
+
+@dataclass
+class ContingencyCollision:
+    """Two fallbacks may share a team, venue or club date only when their
+    triggers can never both fire, e.g. one team's Europa League play-off and
+    Conference League play-off. Independent teams' wins can (#9)."""
+
+    planner: ContingencyPlanner
+    id: str = "contingency_collision"
+    kind: str = "hard"
+    weight: float = 1.0
+
+    def evaluate(self, index: ScheduleIndex, ctx: EvalContext) -> ConstraintResult:
+        collisions = self.planner.analyse(index).collisions
+        events = [
+            Event(
+                delta=-self.weight,
+                detail=f"the fallbacks for {a} and {b} clash: {reason}",
+                match_keys=(a, b),
+            )
+            for a, b, reason in collisions
+            if ctx.detail
+        ]
+        return ConstraintResult(
+            self.id, "hard", 0.0 - self.weight * len(collisions), len(collisions), events
+        )
+
+
+@dataclass
 class FinalRoundSameSlot:
     """Every league's final round lands on one date, at one kickoff time, so
     no team gains an edge from kicking off after its rivals have finished.
@@ -637,6 +735,8 @@ __all__: list[str] = [
     "ClubHomeClash",
     "Constraint",
     "CommitmentConflict",
+    "ContingencyCollision",
+    "ContingencyCoverage",
     "FinalRoundSameSlot",
     "FixedDateRequirement",
     "FixedRoundDates",
@@ -644,6 +744,7 @@ __all__: list[str] = [
     "LegOrdering",
     "MinRestDays",
     "OneMatchPerTeamPerDay",
+    "ReserveDateUnused",
     "RoundDayQuota",
     "VenueDoubleBooking",
 ]

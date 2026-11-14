@@ -188,3 +188,16 @@ extra_round_slots:
   - {date: 2026-07-15, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round", verified: false}
   - {date: 2026-10-28, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round", verified: false}
   - {date: 2026-11-18, kind: midweek, competitions: [eliteserien_2026], reason: "Midweek round", verified: false}
+
+# Catch-up midweeks kept free of league fixtures: the fallback for a match
+# displaced by a later cup or UEFA round (#9). Placeholders chosen clear of cup
+# and UEFA dates, the midweek round candidates above and the FIFA windows.
+reserve_dates:
+  - {date: 2026-04-15, reason: "Catch-up midweek", verified: false}
+  - {date: 2026-07-22, reason: "Catch-up midweek", verified: false}
+  - {date: 2026-08-19, reason: "Catch-up midweek", verified: false}
+  - {date: 2026-09-09, reason: "Catch-up midweek", verified: false}
+  - {date: 2026-10-14, reason: "Catch-up midweek", verified: false}
+  - {date: 2026-11-04, reason: "Catch-up midweek", verified: false}
+  - {date: 2026-11-25, reason: "Catch-up midweek", verified: false}
+  - {date: 2026-12-02, reason: "Catch-up midweek", verified: false}

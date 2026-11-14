@@ -343,6 +343,7 @@ def season(
     end: date = date(2026, 12, 31),
     year: int = 2026,
     contingency_policy=None,
+    reserve_dates=None,
 ) -> Season:
     return Season(
         id=id,
@@ -362,6 +363,7 @@ def season(
         **({'contingency_policy': contingency_policy} if contingency_policy is not None else {}),
         discouraged_dates=discouraged_dates or [],
         extra_round_slots=extra_round_slots or [],
+        reserve_dates=reserve_dates or [],
     )
 
 

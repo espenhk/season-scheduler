@@ -11,10 +11,11 @@ from datetime import date, timedelta
 
 import factories as f
 
+from terminliste.contingency import ContingencyPlanner
 from terminliste.model.schema import Fixture
 from terminliste.scoring.base import EvalContext, evaluate
 from terminliste.scoring.hard import CommitmentConflict
-from terminliste.scoring.soft import ContingentCommitmentConflict
+from terminliste.scoring.soft import ExpectedDisruption
 from terminliste.solvers.cpsat import _commitment_clear
 from terminliste.solvers.greedy import (
     _COMMITMENT_CONFLICT,
@@ -74,7 +75,7 @@ def test_greedy_cpsat_and_hard_rule_agree_on_hard_commitments():
 def test_contingent_dates_are_a_greedy_nudge_and_a_soft_penalty():
     world, season = _world()
     ctx = EvalContext(world=world, season=season, travel=_StubTravel())
-    soft = ContingentCommitmentConflict(commitments=_COMMITMENTS)
+    soft = ExpectedDisruption(planner=ContingencyPlanner(world, season, [], _COMMITMENTS))
     day = date(2026, 8, 20)
 
     assert 0 < commitment_cost(_COMMITMENTS, _FIXTURE, day) < _COMMITMENT_CONFLICT
