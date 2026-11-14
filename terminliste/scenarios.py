@@ -16,7 +16,7 @@ import random
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
-from math import prod
+from math import fsum, prod
 
 from .contingency import ContingencyPlan
 from .model.loader import World
@@ -245,7 +245,7 @@ class ScenarioEvaluator:
         seed: int = DEFAULT_SEED,
     ) -> RobustnessReport:
         exhaustive, draws = self._draws(max(1, count), seed)
-        total = sum(weight for _, weight in draws) or 1.0
+        total = fsum(weight for _, weight in draws) or 1.0
         results = [
             (self._result(*self.score(matches, plan, played)), weight / total)
             for played, weight in draws
@@ -258,22 +258,23 @@ class ScenarioEvaluator:
                 failing_share[rule] += weight
                 failing_violations[rule] += weight * violations
         top = [
-            (rule, share, failing_violations[rule] / share)
+            (rule, min(1.0, share), failing_violations[rule] / share)
             for rule, share in sorted(failing_share.items(), key=lambda kv: (-kv[1], kv[0]))[
                 :TOP_FAILING_RULES
             ]
         ]
         worst = self._result(*self.score(matches, plan, self.worst_case_nodes(plan)))
+        points = [r.points for r, _ in results] or [base.points]
         return RobustnessReport(
             seed=seed,
             requested=count,
             exhaustive=exhaustive,
             outcomes=len(draws),
-            feasible_share=sum(w for r, w in results if r.feasible),
-            expected_moves=sum(r.moves * w for r, w in results),
+            feasible_share=min(1.0, fsum(w for r, w in results if r.feasible)),
+            expected_moves=fsum(r.moves * w for r, w in results),
             max_moves=max((r.moves for r, _ in results), default=0),
-            mean_points=sum(r.points * w for r, w in results),
-            min_points=min((r.points for r, _ in results), default=base.points),
+            mean_points=min(max(points), max(min(points), fsum(r.points * w for r, w in results))),
+            min_points=min(points),
             base_points=base.points,
             top_failing=top,
             worst_case=worst,
