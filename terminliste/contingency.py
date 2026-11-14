@@ -21,7 +21,7 @@ from .rounds.commitments import CommitmentSet
 if TYPE_CHECKING:
     from .scoring.base import ScheduleIndex
 
-# Soft cost of a move by kind, plus `_DAY_COST` per day moved; the order mirrors
+# Soft cost of a move by kind, plus `DAY_COST` per day moved; the order mirrors
 # the preference order in the policy.
 KIND_COST: dict[str, float] = {"same_slot": 1.0, "reserve_date": 2.0, "next_free_slot": 3.0}
 DAY_COST = 0.25

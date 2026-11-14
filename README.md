@@ -391,8 +391,9 @@ evaluation, so there is no separate search move: the base plan simply scores
 badly until each exposed match has a place to go. Kinds are tried in the
 order of `contingency_policy.fallback_kinds`: another day of the match's own
 Fri-Mon weekend (`same_slot`), a `Season.reserve_dates` midweek
-(`reserve_date`), or the next Saturday or Sunday (`next_free_slot`), all within
-`max_fallback_days` after the base date. A fallback must be valid in the
+(`reserve_date`), or the next Saturday or Sunday (`next_free_slot`). A
+`same_slot` fallback may go earlier within the weekend; the other kinds go
+forward only, within `max_fallback_days` after the base date. A fallback must be valid in the
 scenario where its trigger is reached: rest against the team's other matches
 and hard commitments, plus every commitment that can come along with the
 trigger, one match per day, blackouts, venue booking, a dual club's home

@@ -22,8 +22,8 @@ _EXTRA_SLOT_COST = 2.0
 _DISCOURAGED_COST = 3.0
 # A round next to a cup or UEFA date many teams may reach cannot give each of
 # them a fallback, so teams beyond the first few cost quadratically (#9).
-_CONTINGENT_FREE_TEAMS = 3
-_CONTINGENT_CLASH_COST = 10.0
+CONTINGENT_FREE_TEAMS = 3
+CONTINGENT_CLASH_COST = 10.0
 
 
 class SlotPlanningError(ValueError):
@@ -311,9 +311,15 @@ def _hard_dates(frame: SeasonFrame, team_id: str) -> list[tuple[date, int]]:
     return [(c.date, c.min_rest_days) for c in frame.commitments.hard_for(team_id)]
 
 
+def contingent_slot_cost(slot: RoundSlot) -> float:
+    """Penalty for a slot too many teams share with a contingent commitment;
+    CP-SAT's slot choice pays the same price."""
+    return CONTINGENT_CLASH_COST * max(0, slot.contingent_clashes - CONTINGENT_FREE_TEAMS) ** 2
+
+
 def _slot_cost(slot: RoundSlot, competition: Competition, calendar: SeasonCalendar) -> float:
     cost = _CLASH_COST * len(slot.clashing_teams)
-    cost += _CONTINGENT_CLASH_COST * max(0, slot.contingent_clashes - _CONTINGENT_FREE_TEAMS) ** 2
+    cost += contingent_slot_cost(slot)
     if slot.weekday != competition.preferred_weekday:
         cost += _OFF_WEEKDAY_COST
     if slot.kind != "weekend":
