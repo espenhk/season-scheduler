@@ -98,3 +98,36 @@ def test_reached_teams_on_a_cup_round_make_the_earlier_rounds_certain():
     assert [tree.probabilities[f"a/cup/{r}"] for r in ("r1", "r2", "r3", "r4")] == [1.0, 1.0, 1.0, 0.5]
     hard = {c.node_id for c in tree.commitments(1.0) if c.hard}
     assert hard == {"a/cup/r1", "a/cup/r2", "a/cup/r3"}
+
+
+def test_paths_enumerate_every_run_and_sum_to_one():
+    paths = dict(_fork(0.25).paths())
+
+    assert paths == {frozenset({"entry", "won"}): 0.25, frozenset({"entry", "lost"}): 0.75}
+
+
+def test_paths_never_play_exclusive_branches_together_and_keep_roots_independent():
+    tree = OutcomeTree("t")
+    tree.add(_node("cup1", on_win="cup2", source="cup"), root=True)
+    tree.add(_node("cup2", offset=14, source="cup"))
+    tree.add(_node("entry", offset=3, on_win="won", on_loss="lost"), root=True)
+    tree.add(_node("won", offset=10))
+    tree.add(_node("lost", offset=11))
+    tree.finalize()
+
+    paths = tree.paths()
+
+    assert sum(p for _, p in paths) == pytest.approx(1.0)
+    assert len(paths) == 4
+    assert all(not {"won", "lost"} <= played for played, _ in paths)
+    assert dict(paths)[frozenset({"cup1", "cup2", "entry", "won"})] == pytest.approx(0.25)
+
+
+def test_paths_honour_a_branch_already_known_to_have_been_taken():
+    tree = OutcomeTree("t")
+    tree.add(_node("entry", on_win="won", on_loss="lost"), root=True)
+    tree.add(_node("won", offset=7, known=True))
+    tree.add(_node("lost", offset=8))
+    tree.finalize()
+
+    assert tree.paths() == [(frozenset({"entry", "won"}), 1.0)]

@@ -22,6 +22,7 @@ from ..model.schema import Competition, Match, Season
 from ..model.slots import RoundSlot
 from ..rounds.commitments import CommitmentSet
 from ..rounds.cup_schedule import CupSchedule
+from ..scenarios import RobustnessReport
 from ..scoring.base import Constraint, EvalContext, Score
 from ..slot_planner import SlotPlan, plan_slots
 
@@ -125,6 +126,8 @@ class Candidate:
     # Fallback dates for matches a later cup or UEFA round may displace (#9);
     # None when the season has no contingent commitments.
     contingency_plan: ContingencyPlan | None = None
+    # How the plan holds up across cup and UEFA outcomes (#10); set on request.
+    robustness: RobustnessReport | None = None
 
     def assignment(self) -> dict[str, object]:
         """Fixture key -> date, the fingerprint used for diversity checks."""

@@ -28,6 +28,7 @@ from ..frame import build_playoff_weeks
 from ..model.calendar import build_calendar, calendars_by_competition
 from ..model.loader import World
 from ..model.schema import WEEKDAYS, Competition, Match, Season
+from ..rounds.commitments import CommitmentSet
 from ..rounds.cup_schedule import NEUTRAL_CUP_VENUE, CupRoundPlacement, CupSchedule
 from ..rounds.european_schedule import ResolvedLegs
 from ..scoring.base import (
@@ -49,6 +50,7 @@ from ..scoring.soft import PreferredWeekday
 from ..slot_planner import search_space_log10
 from ..solvers.base import Candidate, SearchStats, SolverResult, severity_of
 from . import payload
+from .contingency_view import contingency_view, maybe_by_day, robustness_view
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -82,6 +84,7 @@ def render_report(
     resolved_legs: ResolvedLegs | None = None,
     json_name: str | None = None,
     generated_at: datetime | None = None,
+    commitments: CommitmentSet | None = None,
 ) -> Path:
     """Render a solver result (or a single scored schedule) as one HTML page.
 
@@ -96,6 +99,9 @@ def render_report(
 
     `json_name` is the machine-readable twin written next to the page, linked
     from the header when given. `generated_at` defaults to now (UTC).
+
+    `commitments` word the contingency table's triggers and mark the days a
+    team plays only if it advances.
     """
     env = Environment(
         loader=FileSystemLoader(TEMPLATE_DIR),
@@ -143,6 +149,7 @@ def render_report(
             teams,
             rule_index,
             full_diagnostics,
+            commitments or CommitmentSet(),
         )
         for candidate in result.candidates
     ]
@@ -167,6 +174,8 @@ def render_report(
         "export": {"season": season.id},
         "tint": {"good": TINT_GOOD, "cost": TINT_COST},
         "preferred": _preferred_days(world, competitions),
+        # Dates a team plays only if it advances: one line per team and round.
+        "maybe": maybe_by_day(world, season, commitments or CommitmentSet()),
         "shared": [payload.shared_entry_wire(entry) for entry in shared_entries],
         "sharedByCompetition": payload.by_competition_wire(shared_views),
         "options": [option["client"] for option in options],
@@ -310,6 +319,7 @@ def _build_option(
     teams: dict[str, dict],
     rule_index: dict[str, int],
     full_diagnostics: bool = False,
+    commitments: CommitmentSet | None = None,
 ) -> dict:
     score = candidate.score
     limit = 200 if full_diagnostics else 4
@@ -356,6 +366,10 @@ def _build_option(
         "breakdown": [_result_row(r, world, pinned, full=True, gross=gross) for r in _ordered_results(score)],
         "soft": _soft_summary(score, gross, world, pinned),
         "fairness": fairness,
+        "contingency": contingency_view(
+            world, candidate.contingency_plan, candidate.matches, commitments or CommitmentSet()
+        ),
+        "robustness": robustness_view(candidate.robustness),
         "league_entries": entries,
         "client": payload.option_wire(
             entries=entries,
@@ -1850,6 +1864,11 @@ def write_json(result: SolverResult, output_path: Path) -> Path:
                 **(
                     {"contingency_plan": candidate.contingency_plan.to_dict(candidate.matches)}
                     if candidate.contingency_plan is not None
+                    else {}
+                ),
+                **(
+                    {"robustness": candidate.robustness.to_dict()}
+                    if candidate.robustness is not None
                     else {}
                 ),
             }

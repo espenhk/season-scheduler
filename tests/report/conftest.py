@@ -2,6 +2,7 @@
 
 from report_support import (  # noqa: F401
     browser,
+    maybe_url,
     midweek_url,
     other_months_url,
     report_url,

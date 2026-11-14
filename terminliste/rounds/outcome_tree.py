@@ -53,6 +53,7 @@ class OutcomeTree:
     warnings: list[str] = field(default_factory=list)
     _successors: dict[str, frozenset[str]] = field(default_factory=dict, repr=False)
     _roots_of: dict[str, frozenset[str]] = field(default_factory=dict, repr=False)
+    _win_chance: dict[str, float] = field(default_factory=dict, repr=False)
 
     def add(self, node: OutcomeNode, *, root: bool = False) -> None:
         self.nodes[node.node_id] = node
@@ -92,6 +93,7 @@ class OutcomeTree:
             if node.known_reached or any(self.nodes[s].known_reached for s in self._successors[node_id])
         }
         probabilities = {node_id: 0.0 for node_id in self.nodes}
+        self._win_chance = {}
         for root in self.roots:
             probabilities[root] = 1.0
         for node_id in order:
@@ -105,6 +107,7 @@ class OutcomeTree:
                 win_p = 1.0
             elif node.on_loss in known and node.on_win not in known:
                 win_p = 0.0
+            self._win_chance[node_id] = win_p
             if node.on_win is not None:
                 probabilities[node.on_win] += mass * win_p
             if node.on_loss is not None:
@@ -133,6 +136,33 @@ class OutcomeTree:
             visit(node_id)
         order.reverse()
         return order
+
+    def paths(self) -> list[tuple[frozenset[str], float]]:
+        """Every distinct set of nodes the team can end up playing, with its
+        probability. Separate roots (e.g. a cup and a UEFA entry) are played
+        independently, so the probabilities sum to 1."""
+        combined: dict[frozenset[str], float] = {frozenset(): 1.0}
+        for root in self.roots:
+            merged: dict[frozenset[str], float] = {}
+            for played, p in combined.items():
+                for extra, q in self._walk(root):
+                    key = played | extra
+                    merged[key] = merged.get(key, 0.0) + p * q
+            combined = merged
+        return sorted(combined.items(), key=lambda item: sorted(item[0]))
+
+    def _walk(self, node_id: str) -> list[tuple[frozenset[str], float]]:
+        node = self.nodes[node_id]
+        win_p = self._win_chance[node_id]
+        outcomes: dict[frozenset[str], float] = {}
+        for target, p in ((node.on_win, win_p), (node.on_loss, 1.0 - win_p)):
+            if p <= 0.0:
+                continue
+            branches = [(frozenset(), 1.0)] if target is None else self._walk(target)
+            for played, q in branches:
+                key = played | {node_id}
+                outcomes[key] = outcomes.get(key, 0.0) + p * q
+        return list(outcomes.items())
 
     def co_occur(self, a: str, b: str) -> bool:
         """Whether some scenario plays both nodes: one must lead to the other,
