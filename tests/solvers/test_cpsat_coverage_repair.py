@@ -137,3 +137,33 @@ def test_a_slot_choice_with_uncovered_matches_is_cut_and_level_one_re_solved(mon
 
     assert len(calls) == 2
     assert result.best is not None and result.best.score.feasible
+
+
+def test_a_coverage_cut_stays_in_its_pass(monkeypatch):
+    from terminliste.solvers import cpsat
+
+    learned_seen = []
+    real_pass = cpsat._run_pass
+
+    def spy(*args):
+        learned_seen.append(args[-1])
+        return real_pass(*args)
+
+    cut_rounds = []
+
+    def repair(cp, problem, placed, previous_dates, matches, deadline, seed, relax):
+        if not cut_rounds:
+            cut_rounds.append(cpsat._rounds_of([matches[0].key]))
+            return matches, [matches[0].key]
+        return matches, []
+
+    monkeypatch.setattr(cpsat, "_run_pass", spy)
+    monkeypatch.setattr(cpsat, "_repair_coverage", repair)
+    monkeypatch.setattr(cpsat, "_LEVEL_ONE_BUDGET_SHARE", 0.1)
+    monkeypatch.setattr(cpsat, "_FIRST_SOLVE_SHARE", 0.1)
+    monkeypatch.setattr(cpsat, "_has_contingency", lambda request: True)
+    _get_scheduler("cpsat").solve(_cpsat_request(top_n=2))
+
+    assert cut_rounds
+    # `learned` is shared by every pass, so it must hold proven conflicts only.
+    assert all(rounds != cut_rounds[0] for _, rounds in learned_seen[0])

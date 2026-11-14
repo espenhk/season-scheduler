@@ -439,8 +439,8 @@ base plan away from likely moves. The slot planner also penalises a round slot
 that more than three teams share with a contingent commitment, since those
 matches cannot all be covered. CP-SAT does not model fallbacks: after each
 Level 2 solve it runs the planner, bans the days of matches left uncovered and
-re-solves, and when a match runs out of days it cuts that Level 1 slot choice
-and re-solves Level 1 (#53). A schedule can still fail coverage if the budget
+re-solves, and if repairs still leave matches uncovered it cuts that Level 1
+slot choice for their rounds, within the pass, and re-solves Level 1 (#53). A schedule can still fail coverage if the budget
 runs out first.
 
 #### Scenario evaluation (#10)

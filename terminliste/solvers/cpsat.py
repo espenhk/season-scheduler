@@ -514,6 +514,8 @@ def _run_pass(
     repairable = _has_contingency(request)
     cuts: list[_LevelOneSolution] = list(previous)
     tried = learned
+    # Coverage failures are not proven conflicts, so they stay with this pass.
+    coverage_cuts: list = []
     failed_culprits: list[list[str]] = []
     # The schedule with the fewest matches lacking a fallback, kept in case no
     # Level 1 choice gets them all covered.
@@ -533,7 +535,7 @@ def _run_pass(
         remaining = deadline - time.perf_counter()
         if remaining <= 1.0:
             break
-        level_one = _build_level_one(cp_model, problem, cuts, tried)
+        level_one = _build_level_one(cp_model, problem, cuts, tried + coverage_cuts)
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = max(1.0, remaining * _LEVEL_ONE_BUDGET_SHARE)
         solver.parameters.num_search_workers = 8
@@ -615,11 +617,11 @@ def _run_pass(
                 request.seed + pass_index + attempt, relaxed_model,
             )
             if uncovered and attempt + 1 < _MAX_LEVEL_TWO_RETRIES:
-                # No day left for these matches under this slot choice: the slot is the
-                # problem, so Level 1 must not repeat it.
+                # Repairs left these matches uncovered, so Level 1 must not repeat
+                # this slot choice for their rounds.
                 if best is None or len(uncovered) < best[0]:
                     best = (len(uncovered), solution, matches)
-                tried.append((solution, _rounds_of(uncovered)))
+                coverage_cuts.append((solution, _rounds_of(uncovered)))
                 continue
             if best is not None and len(uncovered) >= best[0]:
                 _, solution, matches = best
