@@ -457,3 +457,27 @@ def test_the_plan_is_recomputed_when_a_move_lands_on_a_cell_it_reads(kind):
     assert scorer.tracker.replans == before + 1
     scorer.accept()
     _assert_agrees(scorer, working, request)
+
+
+def test_rejecting_a_move_after_a_team_lost_all_its_away_matches_does_not_crash():
+    """A team with no away matches has no entry in the away indexes; an edit
+    that stays empty must not leave an undo step that deletes it."""
+    constraints, ctx, working = _crowded_state()
+    request = SimpleNamespace(constraints=constraints, ctx=ctx)
+    scorer = DeltaScorer(working, constraints, ctx)
+    team = "h_w"
+    for i, match in enumerate(working):
+        if match.away_team == team:
+            match.home_team, match.away_team = match.away_team, match.home_team
+            match.venue = ctx.world.team(match.home_team).home_venue
+            scorer.propose([i])
+            scorer.accept()
+    assert team not in scorer.live.away_venues
+
+    i = next(i for i, m in enumerate(working) if m.home_team == team)
+    undo = [ls._snap(i, working[i])]
+    working[i].date += timedelta(days=1)
+    scorer.propose([i])
+    ls._restore(working, undo)
+    scorer.reject()
+    _assert_agrees(scorer, working, request)

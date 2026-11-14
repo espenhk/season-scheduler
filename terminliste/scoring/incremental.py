@@ -142,7 +142,7 @@ class LiveIndex(ScheduleIndex):
         self._avbd = None
         for store, key, old in reversed(self._log):
             if old is _MISSING:
-                del store[key]
+                store.pop(key, None)  # an empty edit never created the entry
             else:
                 store[key] = old
         self._log = []
@@ -653,6 +653,7 @@ class DeltaScorer:
         """
         live = self.live
         matches = self.matches
+        live.contingency = None
         changed = list(dict.fromkeys(changed))
         old_fields = [live._fields[i] for i in changed]
         live.sync(changed)
@@ -807,4 +808,6 @@ class DeltaScorer:
         if self.tracker is not None:
             self.tracker.reject()
             self.live.contingency = (self._planner, self.tracker.analysis)
+        else:
+            self.live.contingency = None
         self._pending = None

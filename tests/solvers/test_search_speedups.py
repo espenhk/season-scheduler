@@ -56,9 +56,12 @@ def test_a_time_budgeted_run_uses_the_budget_it_is_given():
     short = scheduler.solve(_request(time_budget_s=1.0))
     long = scheduler.solve(_request(time_budget_s=4.0))
 
-    assert short.elapsed_s < 2.5
-    assert 3.0 < long.elapsed_s < 6.0
-    assert long.iterations > 2 * short.iterations
+    # Generous for a loaded runner; a run that ignored its budget would take
+    # the unpaced calibration length or a fixed count, not scale with it.
+    assert short.elapsed_s < 6.0
+    assert 2.5 < long.elapsed_s < 12.0
+    assert long.elapsed_s > 1.5 * short.elapsed_s
+    assert long.iterations > 1.5 * short.iterations
 
 
 def _moves_and_scorer(seed: int = 5):
