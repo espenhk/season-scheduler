@@ -59,16 +59,25 @@ global_blackouts:
   - {date: 2027-05-17, reason: "Grunnlovsdagen — national day, no matches"}
 
 # International windows and the World Cup break, scoped to the competitions
-# they actually stop. Men's windows are per the FIFA calendar; the Eliteserien
-# pauses for the World Cup. Women's windows are approximate (verified: false)
-# until FIFA's exact dates are confirmed.
+# they actually stop. Men's windows are per FIFA's 2025-2030 men's calendar;
+# the June window sits inside the Eliteserien World Cup break. Women's windows
+# are per FIFA's 2026-2029 women's calendar, cross-checked against Norway's
+# 2026 qualifier dates (3/7 Mar, 14/18 Apr, 5/9 Jun, 9/13 Oct, 1/5 Dec); the
+# 24 Feb - 7 Mar 2026 window ends before the season starts, so it is omitted.
 global_blackout_ranges:
   - {start: 2026-03-23, end: 2026-03-31, gender: men, reason: "FIFA window (men)"}
   - {start: 2026-05-26, end: 2026-07-03, competitions: [eliteserien_2026], reason: "World Cup break (Eliteserien)"}
   - {start: 2026-09-21, end: 2026-10-06, gender: men, reason: "FIFA window (men)"}
   - {start: 2026-11-09, end: 2026-11-17, gender: men, reason: "FIFA window (men)"}
-  # Approximate (verified: false) — FIFA's 2027 men's window, placed as in 2026.
+  # FIFA's March 2027 men's window, for the cup rounds that run into 2027 (#5).
   - {start: 2027-03-22, end: 2027-03-30, gender: men, reason: "FIFA window (men)"}
+  - {start: 2026-04-07, end: 2026-04-18, gender: women, reason: "FIFA window (women)"}
+  - {start: 2026-06-01, end: 2026-06-09, gender: women, reason: "FIFA window (women)"}
+  - {start: 2026-10-05, end: 2026-10-13, gender: women, reason: "FIFA window (women)"}
+  - {start: 2026-11-24, end: 2026-12-05, gender: women, reason: "FIFA window (women)"}
+  # The women's cup runs into 2027 (#5).
+  - {start: 2027-02-23, end: 2027-03-06, gender: women, reason: "FIFA window (women)"}
+  - {start: 2027-04-13, end: 2027-04-24, gender: women, reason: "FIFA window (women)"}
 
 # Dates that are legal but discouraged; scheduling here costs
 # `soft_venue_preference` points rather than being rejected outright.
@@ -177,7 +186,7 @@ rivalry_fixtures:
 
 # Single-day round candidates beyond the Fri-Mon weekends. The planner takes
 # one only when it beats the weekend it overlaps or the weekends run short (#6).
-# With the World Cup break, three FIFA windows and the cup weekends removed,
+# With the World Cup break, three men's FIFA windows and the cup weekends removed,
 # Eliteserien has only 28 usable weekends for 30 rounds, hence the midweek
 # candidates. The midweek dates are placeholders chosen clear of cup and UEFA dates.
 extra_round_slots:
