@@ -62,11 +62,13 @@ def work(tmp_path_factory):
     (work / "results.yml").write_text(OUTCOMES)
 
     # The schedule to revise is the base with one stale entry: Viking's second
-    # meeting with Sarpsborg 08 sits on a day Viking's Europa League league
-    # phase (now certain) rules out. One late match is locked.
+    # meeting with Sarpsborg 08, home or away, sits on a day Viking's Europa
+    # League league phase (now certain) rules out. One late match is locked.
     stale = json.loads((work / "base" / "2026.json").read_text())
     rows = stale["options"][0]["matches"]
-    victim = next(m for m in rows if (m["home"], m["away"], m["leg"]) == ("viking_m", "sarpsborg08_m", 2))
+    victim = next(
+        m for m in rows if {m["home"], m["away"]} == {"viking_m", "sarpsborg08_m"} and m["leg"] == 2
+    )
     assert victim["date"] > "2026-09-18"
     # A day beside Viking's 17 Sep league-phase match that leaves both clubs'
     # rest otherwise intact, so the commitment is the only thing it breaks.
