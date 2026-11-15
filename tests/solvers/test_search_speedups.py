@@ -89,6 +89,30 @@ def _moves_and_scorer(seed: int = 5):
     return working, ls._MoveSet(working, pinned, request, calendars, live=scorer.live), scorer
 
 
+def test_scattered_idle_draws_do_not_end_a_run_early(monkeypatch):
+    real_apply = ls._MoveSet.apply
+    calls = {"n": 0}
+
+    def every_other_draw_idle(self, rng):
+        calls["n"] += 1
+        return None if calls["n"] % 2 else real_apply(self, rng)
+
+    # Well under the ~200 idle draws this run makes in total.
+    monkeypatch.setattr(ls, "_MAX_IDLE_DRAWS", 20)
+    monkeypatch.setattr(ls._MoveSet, "apply", every_other_draw_idle)
+    result = ls.LocalSearchScheduler(restarts=1).solve(_request(iterations=200, time_budget_s=1.0))
+
+    assert result.iterations == 200
+
+
+def test_a_schedule_with_nothing_movable_still_stops(monkeypatch):
+    monkeypatch.setattr(ls, "_MAX_IDLE_DRAWS", 3)
+    monkeypatch.setattr(ls._MoveSet, "apply", lambda self, rng: None)
+    result = ls.LocalSearchScheduler(restarts=1).solve(_request(iterations=200, time_budget_s=1.0))
+
+    assert result.iterations == 0
+
+
 def test_the_live_index_neighbour_check_agrees_with_scanning_every_match():
     working, moves, scorer = _moves_and_scorer()
     rng = random.Random(3)

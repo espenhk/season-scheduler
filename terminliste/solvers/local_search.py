@@ -527,11 +527,14 @@ def _anneal(
 
         undo = moves.apply(rng)
         if undo is None:
-            # A schedule with nothing movable would otherwise spin here.
+            # A schedule with nothing movable would otherwise spin here. Only a
+            # run of idle draws counts: a fifth or so of draws on a real season
+            # find nothing to move, which must not cut a long run short.
             idle_draws += 1
             if idle_draws > _MAX_IDLE_DRAWS:
                 break
             continue
+        idle_draws = 0
         done += 1
         operator = moves.last_operator
         tried[operator] += 1
