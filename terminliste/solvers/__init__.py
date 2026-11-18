@@ -5,11 +5,13 @@ from .base import (
     SearchStats,
     SolveRequest,
     SolverResult,
+    SolverRun,
     divergence,
     select_diverse,
 )
 from .greedy import build_initial_schedule, plan_competitions
 from .local_search import LocalSearchScheduler
+from .multi import parse_solver_names, solve_many
 
 __all__ = [
     "Candidate",
@@ -19,10 +21,13 @@ __all__ = [
     "SearchStats",
     "SolveRequest",
     "SolverResult",
+    "SolverRun",
     "build_initial_schedule",
     "divergence",
+    "parse_solver_names",
     "plan_competitions",
     "select_diverse",
+    "solve_many",
 ]
 
 

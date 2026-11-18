@@ -84,6 +84,8 @@ from terminliste.solvers import (  # noqa: E402
     SolveRequest,
     SolverResult,
     get_scheduler,
+    parse_solver_names,
+    solve_many,
 )
 
 # TheSportsDB's league-name string per competition. Unconfirmed against a live
@@ -265,7 +267,11 @@ def cmd_generate(args: argparse.Namespace) -> int:
         return 1
     _print_slot_plans(world, season, competitions, slot_plans)
 
-    scheduler = get_scheduler(args.solver)
+    try:
+        solver_names = parse_solver_names(args.solver)
+    except ValueError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
     # Terminal only (#34): piped output would fill a CI log with
     # carriage-return updates that mean nothing once flattened to lines.
     live = sys.stdout.isatty()
@@ -288,11 +294,14 @@ def cmd_generate(args: argparse.Namespace) -> int:
         progress=_print_progress if live else None,
     )
 
-    print(f"\nSolving with {scheduler.name} (budget {args.time_budget:.0f}s, seed {args.seed})...")
     for warning in frame_warnings:
         print(f"  ⚠ {warning}")
+
+    def announce(scheduler) -> None:
+        print(f"\nSolving with {scheduler.name} (budget {args.time_budget:.0f}s, seed {args.seed})...")
+
     try:
-        result = scheduler.solve(request)
+        result = solve_many(solver_names, request, get_scheduler, announce)
     except RuntimeError as exc:
         if live:
             print()
@@ -615,6 +624,11 @@ def _print_summary(result: SolverResult) -> None:
     _print_search_stats(result.search_stats)
     for note in result.notes:
         print(f"  note: {note}")
+    for run in result.runs:
+        if run.status != "ok":
+            print(f"  {run.solver}: {run.status} — {run.message}")
+        else:
+            print(f"  {run.solver}: {run.options} option(s), {run.elapsed_s:.1f}s")
     for candidate in result.candidates:
         badge = "feasible" if candidate.score.feasible else f"{candidate.score.hard_violations} HARD VIOLATIONS"
         print(f"  {candidate.label}: {candidate.score.points:.0f}/100 ({badge})")
@@ -709,7 +723,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_generate = sub.add_parser("generate", help="solve a season and write an HTML + JSON report")
     p_generate.add_argument("--season", default="2026")
-    p_generate.add_argument("--solver", choices=["local", "cpsat"], default="local")
+    p_generate.add_argument(
+        "--solver",
+        action="append",
+        metavar="{local,cpsat}",
+        help=(
+            "solver to run; repeat or comma-separate to compare several "
+            "(e.g. --solver local --solver cpsat), each giving --top-n options. Default: local"
+        ),
+    )
     p_generate.add_argument("--seed", type=int, default=42)
     p_generate.add_argument("--top-n", type=int, default=3)
     p_generate.add_argument(

@@ -1270,6 +1270,31 @@
 </div>
 {% endif %}
 
+{% if solver_groups %}
+<section class="solvers" aria-labelledby="solvers-title">
+  <h2 id="solvers-title">Solvers side by side</h2>
+  <p class="desc">Every option is scored by the same rules. Runtime is for the solver's whole run, not per option.</p>
+  {% for group in solver_groups %}
+  <h3>{{ group.solver }} <small>· {{ group.elapsed }}</small></h3>
+  {% if group.status != 'ok' %}
+  <p class="notes error" role="alert">Not run: {{ group.message }}</p>
+  {% else %}
+  <table class="cmp">
+    <thead><tr><th scope="col">Option</th><th scope="col">Score</th><th scope="col">Hard violations</th><th scope="col">Soft points</th></tr></thead>
+    <tbody>
+      {% for row in group.rows %}
+      <tr>
+        <th scope="row"><button type="button" class="cmp-open" data-option="{{ row.index }}">{{ row.label }}</button></th>
+        <td>{{ row.points }}</td><td>{{ row.hard }}</td><td>{{ row.soft }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% endfor %}
+</section>
+{% endif %}
+
 {% if comparison %}
 <section class="compare" aria-labelledby="compare-title">
   <h2 id="compare-title">Compare the {{ options|length }} options</h2>
