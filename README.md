@@ -30,6 +30,14 @@ python -m pytest tests/
 `--solver cpsat` uses OR-Tools for a near-optimal search — install it with
 `poetry install --with football-scheduler-cpsat` (or `pip install ortools`).
 
+Repeat `--solver` (or comma-separate it) to compare backends on the same input:
+`--solver local --solver cpsat` yields `--top-n` (default 3) options per solver,
+all scored by the same rules, grouped by solver in the report and tagged
+`solver`/`index` in the JSON. Options differ because local search restarts from
+different seeds and CP-SAT re-solves with earlier options' fixtures penalised;
+both then pass through `select_diverse`. A solver that cannot run (e.g. OR-Tools
+missing) is noted and skipped; the others still produce options.
+
 `validate`, `generate` and `score` never touch the network — everything
 about them is exactly as reproducible as the YAML in `data/`.
 `refresh-reference-data` and `refresh-travel-times` are the two commands that

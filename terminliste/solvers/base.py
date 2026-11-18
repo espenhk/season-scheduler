@@ -121,6 +121,10 @@ class Candidate:
     score: Score
     label: str = ""
     seed: int = 0
+    # Which backend produced it and its 1-based place among that backend's
+    # options; set when `generate` runs several solvers side by side (#81).
+    solver: str = ""
+    index: int = 0
     # Each round's slot, keyed by (competition_id, round_index), so the
     # day-within-slot step can read it without re-deriving it from dates.
     round_slots: dict[tuple[str, int], RoundSlot] = field(default_factory=dict)
@@ -166,6 +170,18 @@ def severity_of(note: str) -> str:
 
 
 @dataclass
+class SolverRun:
+    """How one backend fared in a multi-solver run (#81)."""
+
+    solver: str
+    status: str = "ok"  # "ok", or "unavailable" when the backend could not run
+    elapsed_s: float = 0.0
+    iterations: int = 0
+    options: int = 0
+    message: str = ""
+
+
+@dataclass
 class SolverResult:
     candidates: list[Candidate] = field(default_factory=list)
     solver: str = ""
@@ -174,6 +190,8 @@ class SolverResult:
     notes: list[str] = field(default_factory=list)
     search_stats: SearchStats = field(default_factory=SearchStats)
     slot_plans: dict[str, SlotPlan] = field(default_factory=dict)
+    # One entry per requested solver; empty for a single-solver run.
+    runs: list[SolverRun] = field(default_factory=list)
 
     @property
     def best(self) -> Candidate | None:

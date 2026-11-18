@@ -208,6 +208,7 @@ def render_report(
         run_facts=_run_facts(result),
         options=options,
         comparison=comparison,
+        solver_groups=_solver_groups(result, options),
         search_stats=_search_stats_view(result.search_stats),
         all_clubs=sorted(world.clubs.values(), key=lambda c: c.name),
         warnings=warnings or [],
@@ -318,6 +319,35 @@ def _run_facts(result: SolverResult) -> dict:
         "iterations": result.iterations,
         "elapsed": f"{result.elapsed_s:.1f}s",
     }
+
+
+def _solver_groups(result: SolverResult, options: list[dict]) -> list[dict]:
+    """Options grouped by solver with each run's time, or [] for a one-solver run (#81)."""
+    if not result.runs:
+        return []
+    groups = []
+    for run in result.runs:
+        rows = [
+            {
+                "label": option["label"],
+                "index": i,
+                "points": option["points_text"],
+                "hard": candidate.score.hard_violations,
+                "soft": round(candidate.score.soft_total, 1),
+            }
+            for i, (candidate, option) in enumerate(zip(result.candidates, options, strict=True))
+            if candidate.solver == run.solver
+        ]
+        groups.append(
+            {
+                "solver": run.solver,
+                "status": run.status,
+                "message": run.message,
+                "elapsed": f"{run.elapsed_s:.1f}s",
+                "rows": rows,
+            }
+        )
+    return groups
 
 
 def _build_option(
@@ -1856,6 +1886,23 @@ def write_json(
         "iterations": result.iterations,
         "elapsed_s": round(result.elapsed_s, 2),
         "notes": [{"text": str(n), "severity": severity_of(n)} for n in result.notes],
+        **(
+            {
+                "solvers": [
+                    {
+                        "solver": run.solver,
+                        "status": run.status,
+                        "elapsed_s": round(run.elapsed_s, 2),
+                        "iterations": run.iterations,
+                        "options": run.options,
+                        **({"message": run.message} if run.message else {}),
+                    }
+                    for run in result.runs
+                ]
+            }
+            if result.runs
+            else {}
+        ),
         "search_stats": {
             "investigated": stats.investigated,
             "feasible": stats.feasible,
@@ -1867,6 +1914,7 @@ def write_json(
         "options": [
             {
                 "label": candidate.label,
+                **({"solver": candidate.solver, "index": candidate.index} if candidate.solver else {}),
                 "seed": candidate.seed,
                 "hard_violations": candidate.score.hard_violations,
                 "soft_total": round(candidate.score.soft_total, 2),
